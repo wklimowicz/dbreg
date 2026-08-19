@@ -989,9 +989,11 @@ execute_compress_strategy = function(inputs) {
     inputs[["fe_components"]][lengths(inputs[["fe_components"]]) > 1L],
     use.names = FALSE
   ))
+  simple_fes = inputs[["fe"]][lengths(inputs[["fe_components"]]) == 1L]
   selected_cols = c(xvars_sql, inputs[["fe"]], composite_components)
   all_cols_sql = paste(selected_cols[nzchar(selected_cols)], collapse = ", ")
   group_cols = unique(c(xvar_names, inputs[["fe"]], composite_components))
+  cell_key_cols = unique(c(xvar_names, simple_fes, composite_components))
   group_cols_sql = paste(group_cols, collapse = ", ")
   moment_terms = build_weighted_moment_terms(
     y_sql = inputs[["yvar"]],
@@ -1121,6 +1123,7 @@ execute_compress_strategy = function(inputs) {
       from_statement = from_statement,
       group_cols = group_cols,
       group_exprs = c(spec_columns[["sql"]], inputs[["fe"]], composite_components),
+      cell_key_cols = cell_key_cols,
       yvar = inputs[["yvar"]],
       cluster_var = inputs[["cluster_var"]],
       compressed_dat = compressed_dat,

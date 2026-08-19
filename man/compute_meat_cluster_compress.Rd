@@ -9,6 +9,7 @@ compute_meat_cluster_compress(
   from_statement,
   group_cols,
   group_exprs = group_cols,
+  cell_key_cols = group_cols,
   yvar,
   cluster_var,
   compressed_dat,

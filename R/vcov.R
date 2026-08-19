@@ -287,6 +287,7 @@ compute_meat_cluster_sql = function(conn, cte_sql, vars, yvar, betahat,
 #' @keywords internal
 compute_meat_cluster_compress = function(conn, from_statement, group_cols,
                                          group_exprs = group_cols,
+                                         cell_key_cols = group_cols,
                                          yvar, cluster_var, compressed_dat,
                                          X, yhat, weights = NULL) {
   group_select_sql = paste(
@@ -318,9 +319,10 @@ compute_meat_cluster_compress = function(conn, from_statement, group_cols,
 
   cluster_cell_df = dbGetQuery(conn, cluster_cell_sql)
 
-  # Create cell key for matching (same grouping as compress strategy)
-  compressed_dat[["cell_key"]] = composite_fe_key(compressed_dat, group_cols)
-  cluster_cell_df[["cell_key"]] = composite_fe_key(cluster_cell_df, group_cols)
+  # Composite FE ranks are needed for the design matrix, but their source
+  # components provide a stable key across the SQL result and compressed data.
+  compressed_dat[["cell_key"]] = composite_fe_key(compressed_dat, cell_key_cols)
+  cluster_cell_df[["cell_key"]] = composite_fe_key(cluster_cell_df, cell_key_cols)
 
   # Add yhat to compressed_dat and create lookup
   compressed_dat[["yhat"]] = yhat

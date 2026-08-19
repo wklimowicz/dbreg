@@ -6,6 +6,8 @@
 #'
 #' @param object A `dbreg` object.
 #' @param fe Should the fixed effects be included? Default is `FALSE`.
+#' @param collin Should regressors removed for collinearity be returned as `NA`?
+#'   Default is `FALSE`.
 #' @param ... Additional arguments. Currently unused, except to capture
 #' superseded arguments.
 #' @examples
@@ -25,7 +27,7 @@
 #' head(predict(mod, newdata = airquality))
 #' head(predict(mod, newdata = airquality, interval = "confidence"))
 #' @export
-coef.dbreg = function(object, fe = FALSE, ...) {
+coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
   
   # superseded args handled through ...
   dots = list(...)
@@ -38,19 +40,22 @@ coef.dbreg = function(object, fe = FALSE, ...) {
   }
   
   ct = object[["coeftable"]]
-  
-  if (!isTRUE(fe) && !is.null(object[["fe"]])) {
-    coef_names = object[["coef_names"]]
-    if (!is.null(coef_names)) {
-      ct = ct[coef_names, , drop = FALSE]
-    } else {
-      xvars = object[["xvars"]]
-      ct = ct[xvars, , drop = FALSE]
-    }
+  out = if (isTRUE(collin) && !is.null(object[["collin.coef"]])) {
+    object[["collin.coef"]]
+  } else {
+    setNames(ct[, "estimate"], rownames(ct))
   }
   
-  out = ct[, "estimate"]
-  names(out) = rownames(ct)
+  if (!isTRUE(fe) && !is.null(object[["fe"]])) {
+    coef_names = if (isTRUE(collin)) object[["coef_names_all"]] else object[["coef_names"]]
+    if (!is.null(coef_names)) {
+      out = out[intersect(coef_names, names(out))]
+    } else {
+      xvars = object[["xvars"]]
+      if (isTRUE(collin)) xvars = unique(c(xvars, object[["collin.var"]]))
+      out = out[intersect(xvars, names(out))]
+    }
+  }
   out
 }
 
@@ -212,7 +217,7 @@ predict.dbreg = function(
   }
  
   if (interval != "none") {
-    vcovm = vcov(object)
+    vcovm = vcov(object, fe = TRUE)
     dof = object[["df_residual"]]
     if (interval == "confidence") {
       ses = sqrt(Matrix::rowSums((mm %*% vcovm) * mm))
@@ -238,11 +243,21 @@ predict.dbreg = function(
 #' Variance-covariance matrix for dbreg objects
 #'
 #' @param object A `dbreg` object.
+#' @param fe Should covariance rows and columns for explicit fixed-effect
+#'   coefficients be included? Default is `FALSE`.
 #' @param ... Additional arguments (currently unused).
 #' @inherit coef.dbreg examples
 #' @export
-vcov.dbreg = function(object, ...) {
-  object[["vcov"]]
+vcov.dbreg = function(object, fe = FALSE, ...) {
+  out = object[["vcov"]]
+  normalized_names = standardize_coef_names(rownames(out))
+  dimnames(out) = list(normalized_names, normalized_names)
+  if (!isTRUE(fe)) {
+    visible = names(coef(object, fe = FALSE))
+    visible = intersect(visible, rownames(out))
+    out = out[visible, visible, drop = FALSE]
+  }
+  out
 }
 
 #' Confidence intervals for dbreg objects
@@ -298,4 +313,3 @@ confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...) {
   
   ci
 }
-

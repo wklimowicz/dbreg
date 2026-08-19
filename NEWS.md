@@ -6,6 +6,15 @@ _This NEWS file is best viewed on our [website](https://grantmcdermott.com/dbreg
 
 New features
 
+- `sql_only = TRUE` now returns a structured, inspectable query plan when the
+  `"demean"` strategy requires alternating projections, including model-frame,
+  design-matrix, projection, convergence, and final-moments SQL templates.
+- `coef()` and `tidy()` gain a `collin = TRUE` option that restores regressors
+  removed for collinearity as `NA`; fitted objects retain the corresponding
+  full named `collin.coef` vector.
+- Fitted objects now retain sample, covariance, clustering, small-sample
+  correction, and alternating-projection diagnostics. `glance()` reports these
+  fields, and `fe_tol` and `fe_max_iter` provide per-fit AP controls.
 - Added support for weighted regression via the new `weights` argument. Accepts
   a column name string and is compatible with all strategies and SE types (iid,
   HC1, clustered). (#12)
@@ -19,6 +28,11 @@ New features
 
 Bug fixes
 
+- `vcov()` now normalizes and subsets covariance names to exactly match
+  `coef()`; use `fe = TRUE` with both methods to include explicit FE terms.
+- Unsupported formula expressions now fail before SQL execution instead of
+  being silently reduced to their underlying variable names. Missing cluster
+  identifiers are also included in complete-case filtering.
 - Fixed a typo in `<dbreg.object>$coeftable` column names that was obscuring
   some downstream functions, e.g. stars in `modelsummary::modelsummary`. (#62) 
 - Fixed `dbreg_is_balanced_panel()` to correctly detect unbalanced panels with

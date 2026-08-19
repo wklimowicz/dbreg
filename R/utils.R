@@ -238,6 +238,29 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
 #' @keywords internal
 parse_regression_formula = function(fml) {
   fml = Formula(fml)
+
+  validate_expression = function(expr, allowed_calls, component) {
+    if (is.symbol(expr) || is.numeric(expr)) {
+      return(invisible(NULL))
+    }
+    if (!is.call(expr)) {
+      stop("Unsupported ", component, " expression: ", deparse(expr), call. = FALSE)
+    }
+    call_name = as.character(expr[[1]])
+    if (!call_name %in% allowed_calls) {
+      stop(
+        "Unsupported ", component, " expression `", deparse(expr), "`. ",
+        "Supported terms are column names and the operators ",
+        paste(sprintf("`%s`", allowed_calls), collapse = ", "), ".",
+        call. = FALSE
+      )
+    }
+    for (arg in as.list(expr)[-1]) {
+      validate_expression(arg, allowed_calls, component)
+    }
+    invisible(NULL)
+  }
+
   # Extract outcome variable (LHS)
   yvar = all.vars(formula(fml, lhs = 1, rhs = 0))
   if (length(yvar) != 1) {
@@ -246,6 +269,7 @@ parse_regression_formula = function(fml) {
   
   # Extract RHS part 1: variables and term structure
   rhs1 = formula(fml, lhs = 0, rhs = 1)
+  validate_expression(rhs1[[2]], c("+", ":", "*", "("), "regressor")
   tt = terms(rhs1)
   term_labels = attr(tt, "term.labels")
   xvars = all.vars(rhs1)  # unique variable names
@@ -257,7 +281,9 @@ parse_regression_formula = function(fml) {
   
   # Extract fixed effects (RHS part 2, after |)
   fe = if (length(fml)[2] > 1) {
-    all.vars(formula(fml, lhs = 0, rhs = 2))
+    rhs2 = formula(fml, lhs = 0, rhs = 2)
+    validate_expression(rhs2[[2]], c("+", "("), "fixed-effect")
+    all.vars(rhs2)
   } else {
     NULL
   }
@@ -269,6 +295,56 @@ parse_regression_formula = function(fml) {
     term_labels = term_labels,
     has_interactions = has_interactions,
     fe = fe
+  )
+}
+
+#' Compute model-frame sample diagnostics
+#' @keywords internal
+compute_sample_diagnostics = function(conn, from_statement, yvar, xvars, fe,
+                                       weights = NULL, cluster_var = NULL) {
+  variables = c(yvar, xvars, fe, weights, cluster_var)
+  roles = c(
+    "outcome",
+    rep("regressor", length(xvars)),
+    rep("fixed_effect", length(fe)),
+    rep("weight", length(weights)),
+    rep("cluster", length(cluster_var))
+  )
+  aliases = paste0("n_missing_", seq_along(variables))
+  terms = c(
+    sql_count(conn, "n_input"),
+    sprintf(
+      "SUM(CASE WHEN %s IS NULL THEN 1 ELSE 0 END) AS %s",
+      variables,
+      aliases
+    )
+  )
+  if (!is.null(weights)) {
+    terms = c(
+      terms,
+      sprintf("SUM(CASE WHEN %s <= 0 THEN 1 ELSE 0 END) AS n_nonpositive_weight", weights)
+    )
+  }
+  audit_sql = paste0(
+    "SELECT\n  ", paste(terms, collapse = ",\n  "),
+    "\nFROM (SELECT * ", from_statement, ") AS dbreg_input"
+  )
+  counts = dbGetQuery(conn, audit_sql)
+  detail = data.frame(
+    role = roles,
+    variable = variables,
+    n_missing = as.numeric(counts[1, aliases, drop = TRUE]),
+    row.names = NULL
+  )
+  list(
+    n_input = as.numeric(counts[["n_input"]]),
+    n_nonpositive_weight = if (!is.null(weights)) {
+      as.numeric(counts[["n_nonpositive_weight"]])
+    } else {
+      0
+    },
+    detail = detail,
+    query_string = audit_sql
   )
 }
 

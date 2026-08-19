@@ -79,9 +79,11 @@
 #' This distinction only matters for small samples. For large datasets
 #' (`dbreg`'s target use case), the difference is negligible and hence we
 #' default to the simple `"full"` option.
-#' @param sql_only Logical indicating whether only the underlying compression
-#'   SQL query should be returned (i.e., no computation will be performed).
-#'   Default is `FALSE`.
+#' @param sql_only Logical indicating whether SQL should be returned without
+#'   fitting the model. Alternating-projection fits return a structured
+#'   `dbreg_query_plan` containing model-frame, design-matrix, initialization,
+#'   projection, convergence, and final-moments SQL. Other strategies return
+#'   their primary SQL query. Default is `FALSE`.
 #' @param data_only Logical indicating whether only the compressed dataset
 #'   should be returned (i.e., no regression is run). Default is `FALSE`.
 #' @param drop_missings Logical indicating whether incomplete cases (i.e., rows
@@ -94,6 +96,10 @@
 #'   console? Defaults to `FALSE`. This can be overridden for a single call
 #'   by supplying `verbose = TRUE`, or set globally via
 #'   `options(dbreg.verbose = TRUE)`.
+#' @param fe_tol Non-negative numeric convergence tolerance for alternating
+#'   projections. Defaults to `options(dbreg.ap_tol = 1e-10)`.
+#' @param fe_max_iter Positive integer maximum number of alternating-projection
+#'   cycles. Defaults to `options(dbreg.ap_max_iter = 100L)`.
 #' @param ... Additional arguments. Currently ignored, except to handle
 #'   superseded arguments for backwards compatibility.
 #'
@@ -342,6 +348,8 @@ dbreg = function(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   ...
 ) {
 
@@ -379,7 +387,9 @@ dbreg = function(
     compress_ratio = compress_ratio,
     compress_nmax = compress_nmax,
     drop_missings = drop_missings,
-    verbose = verbose
+    verbose = verbose,
+    fe_tol = fe_tol,
+    fe_max_iter = fe_max_iter
   )
 
   # Choose strategy (mutates inputs[["is_balanced"]], inputs[["compression_ratio_est"]])
@@ -424,7 +434,9 @@ process_dbreg_inputs = function(
   compress_ratio,
   compress_nmax,
   drop_missings,
-  verbose
+  verbose,
+  fe_tol,
+  fe_max_iter
 ) {
   vcov_type_req = vcov
   cluster_var = cluster
@@ -433,6 +445,7 @@ process_dbreg_inputs = function(
   conn = db_setup[["conn"]]
   own_conn = db_setup[["own_conn"]]
   from_statement = db_setup[["from_statement"]]
+  input_from_statement = from_statement
 
   # Parse formula using shared helper
   fml_parsed = parse_regression_formula(fml)
@@ -442,6 +455,15 @@ process_dbreg_inputs = function(
   term_labels = fml_parsed[["term_labels"]]
   has_interactions = fml_parsed[["has_interactions"]]
   fe = fml_parsed[["fe"]]
+
+  if (length(fe_tol) != 1 || !is.numeric(fe_tol) || !is.finite(fe_tol) || fe_tol < 0) {
+    stop("`fe_tol` must be one finite, non-negative number.", call. = FALSE)
+  }
+  if (length(fe_max_iter) != 1 || !is.numeric(fe_max_iter) ||
+      !is.finite(fe_max_iter) || fe_max_iter < 1 || fe_max_iter != as.integer(fe_max_iter)) {
+    stop("`fe_max_iter` must be a positive integer.", call. = FALSE)
+  }
+  fe_max_iter = as.integer(fe_max_iter)
 
   # Validate weights
   if (!is.null(weights)) {
@@ -470,6 +492,10 @@ process_dbreg_inputs = function(
       stop("Weights must be non-negative.")
     }
   }
+
+  sample_diagnostics = compute_sample_diagnostics(
+    conn, input_from_statement, yvar, xvars, fe, weights, cluster_var
+  )
 
   # Heuristic for continuous regressors (only if data passed)
   is_continuous = function(v) {
@@ -518,6 +544,9 @@ process_dbreg_inputs = function(
       if (!is.null(fe)) {
         where_clauses = c(where_clauses, paste0(fe, " IS NOT NULL"))
       }
+      if (!is.null(cluster_var)) {
+        where_clauses = c(where_clauses, paste0(cluster_var, " IS NOT NULL"))
+      }
     }
     if (!is.null(weights)) {
       where_clauses = c(where_clauses, paste0(weights, " > 0"))
@@ -550,7 +579,11 @@ process_dbreg_inputs = function(
     verbose = verbose,
     any_continuous = any_continuous,
     is_balanced = NULL,
-    own_conn = own_conn
+    own_conn = own_conn,
+    input_from_statement = input_from_statement,
+    sample_diagnostics = sample_diagnostics,
+    fe_tol = fe_tol,
+    fe_max_iter = fe_max_iter
   ), parent = emptyenv())
 }
 
@@ -695,6 +728,116 @@ dbreg_is_balanced_panel = function(conn, from_statement, fe) {
     return(NA)
   }
   res[["n_distinct_counts"]] == 1 && res[["n_cells"]] == res[["n_expected"]]
+}
+
+#' Build an inspectable alternating-projection query plan
+#' @keywords internal
+dbreg_ap_query_plan = function(conn, from_statement, fe, yvar, xvars_sql,
+                               xvar_names, weights = NULL,
+                               cluster_var = NULL, tol, max_iter) {
+  backend = detect_backend(conn)[["name"]]
+  weights_expr = sql_weight_expr(weights)
+  if (is.null(weights_expr)) weights_expr = "1.0"
+  vars_all = c(yvar, xvar_names)
+  tilde_names = paste0(vars_all, "_tilde")
+  id_cols = unique(c(fe, cluster_var))
+  id_cols = setdiff(id_cols, c(yvar, xvar_names))
+  id_cols = id_cols[!is.na(id_cols) & nzchar(id_cols)]
+
+  model_cols = c(
+    id_cols,
+    sprintf("%s AS %s", yvar, yvar),
+    sprintf("%s AS %s", xvars_sql, xvar_names),
+    sprintf("%s AS __w", weights_expr)
+  )
+  model_frame_sql = paste0(
+    "SELECT ", paste(model_cols, collapse = ", "), " ", from_statement
+  )
+  initialization_sql = paste0(
+    "SELECT ",
+    paste(c(
+      id_cols,
+      "__w",
+      sprintf("%s AS %s_tilde", yvar, yvar),
+      sprintf("%s AS %s_tilde", xvar_names, xvar_names)
+    ), collapse = ", "),
+    " FROM (<model_frame_sql>) dbreg_ap_base"
+  )
+
+  projection_sql = setNames(vapply(fe, function(fe_k) {
+    if (backend == "spark") {
+      transformed = sprintf(
+        "%s - SUM(__w * %s) OVER (PARTITION BY %s) / ",
+        tilde_names, tilde_names, fe_k
+      )
+      transformed = paste0(
+        transformed,
+        sprintf("SUM(__w) OVER (PARTITION BY %s) AS %s", fe_k, tilde_names)
+      )
+      return(paste0(
+        "SELECT ", paste(c(id_cols, "__w", transformed), collapse = ", "),
+        " FROM <ap_current>"
+      ))
+    }
+    means = sprintf(
+      "SUM(__w * %s) / SUM(__w) AS %s_mean", vars_all, vars_all
+    )
+    updated = sprintf(
+      "t.%s_tilde - m.%s_mean AS %s_tilde", vars_all, vars_all, vars_all
+    )
+    paste0(
+      "WITH means AS (SELECT ", fe_k, ", ", paste(means, collapse = ", "),
+      " FROM <ap_current> GROUP BY ", fe_k, ") ",
+      "SELECT ", paste(c(sprintf("t.%s", id_cols), "t.__w", updated), collapse = ", "),
+      " FROM <ap_current> t JOIN means m ON t.", fe_k, " = m.", fe_k
+    )
+  }, character(1)), fe)
+
+  convergence_sql = setNames(vapply(fe, function(fe_k) {
+    diagnostics = sprintf(
+      "SELECT ABS(SUM(__w * %s) / SUM(__w)) AS max_abs ", tilde_names
+    )
+    diagnostics = paste0(diagnostics, "FROM <ap_current> GROUP BY ", fe_k)
+    paste0(
+      "SELECT MAX(max_abs) AS max_abs FROM (",
+      paste(diagnostics, collapse = " UNION ALL "),
+      ") dbreg_ap_diagnostics"
+    )
+  }, character(1)), fe)
+
+  moment_terms = build_weighted_moment_terms(
+    y_sql = paste0(yvar, "_tilde"),
+    x_sql = paste0(xvar_names, "_tilde"),
+    x_aliases = xvar_names,
+    weights_expr = "__w",
+    alias_mode = "indices",
+    prefix_terms = sql_count(conn, "n_total")
+  )
+  final_moments_sql = paste0(
+    "SELECT ", paste(moment_terms, collapse = ", "), " FROM <ap_converged>"
+  )
+
+  structure(list(
+    strategy = "demean",
+    iterative = TRUE,
+    backend = backend,
+    tolerance = tol,
+    max_iterations = max_iter,
+    model_frame_sql = model_frame_sql,
+    design_matrix = data.frame(
+      term = standardize_coef_names(xvar_names),
+      sql = xvars_sql,
+      row.names = NULL
+    ),
+    initialization_sql = initialization_sql,
+    projection_sql = projection_sql,
+    convergence_sql = convergence_sql,
+    final_moments_sql = final_moments_sql,
+    note = paste(
+      "Projection and convergence statements are templates.",
+      "They repeat until convergence, so the exact executed sequence is data-dependent."
+    )
+  ), class = "dbreg_query_plan")
 }
 
 #' Alternating projections (AP) for exact multi-way FE demeaning
@@ -1274,6 +1417,9 @@ choose_strategy = function(inputs) {
 #' @keywords internal
 finalize_dbreg_result = function(result, inputs, chosen_strategy) {
   if (inputs[["sql_only"]]) {
+    if (inherits(result, "dbreg_query_plan")) {
+      return(result)
+    }
     cat(result)
     return(invisible(result))
   }
@@ -1281,6 +1427,20 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy) {
     return(result)
   }
   result[["strategy"]] = chosen_strategy
+  estimates = setNames(result[["coeftable"]][, "estimate"], rownames(result[["coeftable"]]))
+  dropped = setdiff(result[["collin.var"]], names(estimates))
+  result[["collin.coef"]] = c(estimates, setNames(rep(NA_real_, length(dropped)), dropped))
+  result[["vcov_type"]] = inputs[["vcov_type_req"]]
+  result[["cluster_var"]] = inputs[["cluster_var"]]
+  result[["ssc"]] = if (inputs[["vcov_type_req"]] == "cluster") inputs[["ssc"]] else NULL
+  result[["n_clusters"]] = attr(result[["vcov"]], "n_clusters")
+  result[["n_params"]] = attr(result[["vcov"]], "n_params")
+  result[["sample_diagnostics"]] = inputs[["sample_diagnostics"]]
+  result[["nobs_input"]] = inputs[["sample_diagnostics"]][["n_input"]]
+  result[["nobs_dropped"]] = result[["nobs_input"]] - result[["nobs_orig"]]
+  result[["ap_converged"]] = if (is.null(result[["ap_iterations"]])) NA else TRUE
+  result[["ap_tolerance"]] = if (is.null(result[["ap_iterations"]])) NA_real_ else inputs[["fe_tol"]]
+  result[["ap_max_iter"]] = if (is.null(result[["ap_iterations"]])) NA_integer_ else inputs[["fe_max_iter"]]
   class(result) = c("dbreg", class(result))
   result
 }

@@ -103,6 +103,27 @@ print.dbreg = function(x, fe = FALSE, ...) {
   invisible(ct)
 }
 
+#' Print an alternating-projection SQL query plan
+#' @param x A query plan returned by `dbreg(..., sql_only = TRUE)`.
+#' @param ... Additional arguments, currently unused.
+#' @export
+print.dbreg_query_plan = function(x, ...) {
+  cat("dbreg alternating-projection query plan\n")
+  cat("Backend:", x[["backend"]], "| tolerance:", x[["tolerance"]],
+      "| max iterations:", x[["max_iterations"]], "\n\n")
+  cat("Model frame SQL:\n", x[["model_frame_sql"]], "\n\n", sep = "")
+  cat("Design matrix:\n")
+  print(x[["design_matrix"]], row.names = FALSE)
+  cat("\nInitialization SQL:\n", x[["initialization_sql"]], "\n", sep = "")
+  cat("\nProjection templates:\n")
+  for (nm in names(x[["projection_sql"]])) {
+    cat("[", nm, "]\n", x[["projection_sql"]][[nm]], "\n", sep = "")
+  }
+  cat("\nFinal moments SQL:\n", x[["final_moments_sql"]], "\n\n", sep = "")
+  cat(x[["note"]], "\n")
+  invisible(x)
+}
+
 # stolen from Laurent here:
 # https://github.com/lrberge/fixest/blob/5523d48ef4a430fa2e82815ca589fc8a47168fe7/R/miscfuns.R#L3758
 print_coeftable = function(
@@ -236,4 +257,3 @@ print.dbbinsreg = function(x, ...) {
   
   invisible(x)
 }
-

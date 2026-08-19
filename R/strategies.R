@@ -232,7 +232,18 @@ execute_demean_strategy = function(inputs) {
       message("[dbreg] Using alternating projections for FE demeaning")
     }
     if (isTRUE(use_ap) && inputs[["sql_only"]]) {
-      stop("[dbreg] sql_only is not supported for alternating projections.", call. = FALSE)
+      return(dbreg_ap_query_plan(
+        conn = inputs[["conn"]],
+        from_statement = inputs[["from_statement"]],
+        fe = inputs[["fe"]],
+        yvar = yvar,
+        xvars_sql = xvars_sql,
+        xvar_names = xvar_names,
+        weights = inputs[["weights"]],
+        cluster_var = cluster_var,
+        tol = inputs[["fe_tol"]],
+        max_iter = inputs[["fe_max_iter"]]
+      ))
     }
   }
   if (length(inputs[["fe"]]) == 1) {
@@ -336,7 +347,9 @@ execute_demean_strategy = function(inputs) {
         xvar_names = xvar_names,
         weights = inputs[["weights"]],
         cluster_var = cluster_var,
-        verbose = inputs[["verbose"]]
+        verbose = inputs[["verbose"]],
+        max_iter = inputs[["fe_max_iter"]],
+        tol = inputs[["fe_tol"]]
       )
       ap_backend_info = ap_res[["backend_info"]]
       ap_tables = if (!is.null(ap_res[["all_tables"]])) {
@@ -660,6 +673,7 @@ execute_demean_strategy = function(inputs) {
     yvar = yvar,
     xvars = standardize_coef_names(xvar_names_kept),
     collin.var = standardize_coef_names(collin_vars),
+    coef_names_all = standardize_coef_names(xvar_names),
     fe = inputs[["fe"]],
     weights = inputs[["weights"]],
     query_string = demean_sql,
@@ -1058,6 +1072,12 @@ execute_compress_strategy = function(inputs) {
   XtX = crossprod(Xw)
   XtY = crossprod(Xw, Yw)
 
+  design_pattern_all = paste0("^(", paste(standardize_coef_names(design_vars), collapse = "|"), ")")
+  coef_names_all = standardize_coef_names(colnames(X))
+  coef_names_all = coef_names_all[
+    coef_names_all != "(Intercept)" & grepl(design_pattern_all, coef_names_all)
+  ]
+
   # Detect and handle collinearity
   collin = detect_collinearity(XtX, XtY, verbose = inputs[["verbose"]])
   XtX = collin[["XtX"]]
@@ -1155,6 +1175,7 @@ execute_compress_strategy = function(inputs) {
       xvars = standardize_coef_names(inputs[["xvars"]]),
       collin.var = standardize_coef_names(collin_vars),
       coef_names = coef_names,
+      coef_names_all = coef_names_all,
       fe = inputs[["fe"]],
       weights = inputs[["weights"]],
       query_string = query_string,

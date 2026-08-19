@@ -20,10 +20,13 @@ process_dbreg_inputs(
   compress_ratio,
   compress_nmax,
   drop_missings,
-  verbose
+  verbose,
+  fe_tol,
+  fe_max_iter
 )
 }
 \description{
-Process and validate dbreg inputs
+Returns an environment (not a list) so that downstream functions can mutate
+shared state in place via reference semantics.
 }
 \keyword{internal}

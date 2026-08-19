@@ -24,3 +24,13 @@ expect_error(
   dbreg(Temp ~ Wind, conn = fake_conn, data = airquality),
   "In-memory data frames are only supported with DuckDB connections"
 )
+
+# Unsupported expressions must not be silently simplified by all.vars().
+expect_error(
+  dbreg(Temp ~ I(Wind^2) | Month, data = airquality),
+  "Unsupported regressor expression"
+)
+expect_error(
+  dbreg(Temp ~ Wind | Month ^ Day, data = airquality),
+  "Unsupported fixed-effect expression"
+)

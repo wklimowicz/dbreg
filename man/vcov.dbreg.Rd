@@ -4,10 +4,13 @@
 \alias{vcov.dbreg}
 \title{Variance-covariance matrix for dbreg objects}
 \usage{
-\method{vcov}{dbreg}(object, ...)
+\method{vcov}{dbreg}(object, fe = FALSE, ...)
 }
 \arguments{
 \item{object}{A `dbreg` object.}
+
+\item{fe}{Should covariance rows and columns for explicit fixed-effect
+coefficients be included? Default is `FALSE`.}
 
 \item{...}{Additional arguments (currently unused).}
 }

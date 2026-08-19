@@ -6,7 +6,7 @@
 \alias{glance.dbreg}
 \title{Tidiers for `dbreg` objects}
 \usage{
-\method{tidy}{dbreg}(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE, ...)
+\method{tidy}{dbreg}(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE, collin = FALSE, ...)
 
 \method{glance}{dbreg}(x, ...)
 }
@@ -20,6 +20,9 @@ Default is `FALSE`.}
 \item{conf.level}{Confidence level for intervals. Default is 0.95.}
 
 \item{fe}{Should the fixed effects be tidied too? Default is `FALSE`.}
+
+\item{collin}{Should regressors removed for collinearity be included with
+`NA` values? Default is `FALSE`.}
 
 \item{...}{Additional arguments to tidying method. Currently unused except to
 handle superseded arguments.}

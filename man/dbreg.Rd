@@ -21,6 +21,8 @@ dbreg(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   ...
 )
 }
@@ -109,9 +111,11 @@ This distinction only matters for small samples. For large datasets
 (\code{dbreg}'s target use case), the difference is negligible and hence we
 default to the simple \code{"full"} option.}
 
-\item{sql_only}{Logical indicating whether only the underlying compression
-SQL query should be returned (i.e., no computation will be performed).
-Default is \code{FALSE}.}
+\item{sql_only}{Logical indicating whether SQL should be returned without
+fitting the model. Alternating-projection fits return a structured
+\code{dbreg_query_plan} containing model-frame, design-matrix, initialization,
+projection, convergence, and final-moments SQL. Other strategies return
+their primary SQL query. Default is \code{FALSE}.}
 
 \item{data_only}{Logical indicating whether only the compressed dataset
 should be returned (i.e., no regression is run). Default is \code{FALSE}.}
@@ -127,6 +131,12 @@ to skip some internal checks. (Even then, it probably isn't worth it.)}
 console? Defaults to \code{FALSE}. This can be overridden for a single call
 by supplying \code{verbose = TRUE}, or set globally via
 \code{options(dbreg.verbose = TRUE)}.}
+
+\item{fe_tol}{Non-negative numeric convergence tolerance for alternating
+projections. Defaults to \code{options(dbreg.ap_tol = 1e-10)}.}
+
+\item{fe_max_iter}{Positive integer maximum number of alternating-projection
+cycles. Defaults to \code{options(dbreg.ap_max_iter = 100L)}.}
 
 \item{...}{Additional arguments. Currently ignored, except to handle
 superseded arguments for backwards compatibility.}

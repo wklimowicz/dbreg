@@ -12,8 +12,8 @@
 #' `fml = y ~ x1 + x2 | fe1 + f2`. Interaction terms are supported using
 #' standard R syntax (`:` for interactions, `*` for main effects plus
 #' interaction). Composite fixed effects use `^`, for example
-#' `y ~ x | school + subject ^ cohort`. Transformations and literals are not
-#' yet supported.
+#' `y ~ x | school + subject ^ cohort`. The transformations `I(x^2)` and
+#' `I(x^3)` are supported; other transformations and literals are rejected.
 #' @param conn Database connection, e.g. created with
 #' \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
 #' ephemeral (in-memory). If no connection is provided, then an ephemeral
@@ -40,6 +40,9 @@
 #' or NULL (default) for unweighted regression. Weights must be non-negative;
 #' rows with zero weight are dropped. Weighted regressions support `"iid"`,
 #' `"hc1"`, and clustered SEs, and are compatible with all strategies.
+#' @param factor_refs Optional named list or vector selecting reference levels
+#'   for categorical regressors, for example `factor_refs = c(group = "control")`.
+#'   Supplying a reference also treats a numeric column as categorical.
 #' @param vcov Character string or formula denoting the desired type of variance-
 #' covariance correction / standard errors. Options are `"iid"` (default),
 #' `"hc1"` (heteroskedasticity-consistent), or a one-sided formula like
@@ -282,6 +285,10 @@
 #' # Interactions: does the effect of Time vary by Diet?
 #' # (Diet main effects are collinear with Chick FE, so these drop out)
 #' dbreg(weight ~ Time * Diet | Chick, data = ChickWeight)
+#'
+#' # Restricted polynomial transformations and explicit factor references
+#' dbreg(weight ~ Time + I(Time^2), data = ChickWeight)
+#' dbreg(weight ~ Diet + Time, data = ChickWeight, factor_refs = c(Diet = "2"))
 #' 
 #' #
 #' ## DBI connection ----
@@ -340,6 +347,7 @@ dbreg = function(
   data = NULL,
   path = NULL,
   weights = NULL,
+  factor_refs = NULL,
   vcov = c("iid", "hc1"),
   strategy = c("auto", "compress", "moments", "demean", "within", "mundlak"),
   compress_ratio = NULL,
@@ -380,6 +388,7 @@ dbreg = function(
     data = data,
     path = path,
     weights = weights,
+    factor_refs = factor_refs,
     vcov = vcov,
     cluster = cluster,
     ssc = ssc,
@@ -427,6 +436,7 @@ process_dbreg_inputs = function(
   data,
   path,
   weights,
+  factor_refs,
   vcov,
   cluster,
   ssc,
@@ -456,10 +466,23 @@ process_dbreg_inputs = function(
   xvars = fml_parsed[["xvars"]]
   term_labels = fml_parsed[["term_labels"]]
   has_interactions = fml_parsed[["has_interactions"]]
+  has_transformations = fml_parsed[["has_transformations"]]
   fe = fml_parsed[["fe"]]
   fe_labels = fml_parsed[["fe_labels"]]
   fe_components = fml_parsed[["fe_components"]]
   fe_source_vars = unique(unlist(fe_components, use.names = FALSE))
+
+  if (!is.null(factor_refs)) {
+    factor_refs = as.list(factor_refs)
+    if (is.null(names(factor_refs)) || any(!nzchar(names(factor_refs))) ||
+        any(lengths(factor_refs) != 1)) {
+      stop("`factor_refs` must be a named list or vector of reference levels.", call. = FALSE)
+    }
+    unknown_refs = setdiff(names(factor_refs), xvars)
+    if (length(unknown_refs)) {
+      stop("Reference level supplied for non-regressor: ", paste(unknown_refs, collapse = ", "), call. = FALSE)
+    }
+  }
 
   if (length(fe_tol) != 1 || !is.numeric(fe_tol) || !is.finite(fe_tol) || fe_tol < 0) {
     stop("`fe_tol` must be one finite, non-negative number.", call. = FALSE)
@@ -569,6 +592,9 @@ process_dbreg_inputs = function(
     xvars = xvars,
     term_labels = term_labels,
     has_interactions = has_interactions,
+    has_transformations = has_transformations,
+    has_sql_expressions = has_interactions || has_transformations || length(factor_refs) > 0,
+    factor_refs = factor_refs,
     fe = fe,
     fe_labels = fe_labels,
     fe_components = fe_components,
@@ -1441,6 +1467,7 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy) {
   result[["collin.coef"]] = c(estimates, setNames(rep(NA_real_, length(dropped)), dropped))
   result[["fe_labels"]] = inputs[["fe_labels"]]
   result[["fe_components"]] = inputs[["fe_components"]]
+  result[["factor_refs"]] = inputs[["factor_refs"]]
   result[["vcov_type"]] = inputs[["vcov_type_req"]]
   result[["cluster_var"]] = inputs[["cluster_var"]]
   result[["ssc"]] = if (inputs[["vcov_type_req"]] == "cluster") inputs[["ssc"]] else NULL

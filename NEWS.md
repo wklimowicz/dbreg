@@ -12,6 +12,10 @@ New features
 - `coef()` and `tidy()` gain a `collin = TRUE` option that restores regressors
   removed for collinearity as `NA`; fitted objects retain the corresponding
   full named `collin.coef` vector.
+- Regression formulas now support the restricted SQL transformations `I(x^2)`
+  and `I(x^3)`, including interactions, with stable coefficient names. The new
+  `factor_refs` argument selects explicit reference levels for categorical or
+  numeric-coded categorical regressors.
 - Fixed-effect formulas now support collision-safe composite dimensions with
   `^`, such as `y ~ x | school + subject ^ cohort`. Composite identifiers are
   generated from the component tuple and work with compression and demeaning/AP

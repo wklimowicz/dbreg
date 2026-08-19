@@ -10,7 +10,8 @@ sql_model_matrix(
   table,
   expand = c("all", "interactions"),
   sep = "_x_",
-  fe_vars = character()
+  fe_vars = character(),
+  factor_refs = NULL
 )
 }
 \arguments{
@@ -31,6 +32,8 @@ kept as-is for grouping)}
 \item{fe_vars}{Character vector of fixed effect variable names. These are
 treated as "in the model" for determining whether to drop reference levels
 in interactions.}
+
+\item{factor_refs}{Optional named list of categorical reference levels.}
 }
 \value{
 List with:

@@ -18,6 +18,7 @@ process_dbreg_inputs(
   strategy,
   sql_only,
   data_only,
+  diagnostics,
   compress_ratio,
   compress_nmax,
   drop_missings,

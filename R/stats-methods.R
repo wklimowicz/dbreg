@@ -59,39 +59,177 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
   out
 }
 
+#' Materialize fixed-effect columns for prediction
+#' @keywords internal
+materialize_prediction_fes = function(object, newdata) {
+  fe = object[["fe"]]
+  if (!length(fe)) return(newdata)
+
+  for (i in seq_along(fe)) {
+    components = object[["fe_components"]][[i]]
+    missing_components = setdiff(components, names(newdata))
+    if (length(missing_components)) {
+      # Stored compressed data from older objects may only contain the already
+      # materialized simple FE column.
+      if (length(components) == 1L && fe[[i]] %in% names(newdata)) next
+      stop(
+        "Fixed effect `", object[["fe_labels"]][[i]],
+        "` requires columns: ", paste(missing_components, collapse = ", "),
+        call. = FALSE
+      )
+    }
+    values = if (length(components) > 1L) {
+      composite_fe_key(newdata, components)
+    } else {
+      newdata[[components]]
+    }
+    training_levels = object[["fe_levels"]][[fe[[i]]]]
+    if (length(training_levels)) {
+      unseen = setdiff(unique(as.character(values)), training_levels)
+      unseen = unseen[!is.na(unseen)]
+      if (length(unseen)) {
+        stop(
+          "newdata contains fixed-effect levels not seen during fitting for `",
+          object[["fe_labels"]][[i]], "`.",
+          call. = FALSE
+        )
+      }
+      newdata[[fe[[i]]]] = factor(values, levels = training_levels)
+    } else {
+      newdata[[fe[[i]]]] = factor(values)
+    }
+  }
+  newdata
+}
+
+weighted_group_mean = function(x, group, weights = NULL) {
+  if (is.null(weights)) {
+    return(ave(x, group, FUN = function(value) mean(value, na.rm = TRUE)))
+  }
+  ave(seq_along(x), group, FUN = function(index) {
+    sum(x[index] * weights[index], na.rm = TRUE) /
+      sum(weights[index], na.rm = TRUE)
+  })
+}
+
+demean_prediction_data = function(matrix, groups, weights = NULL,
+                                   tol = 1e-10, max_iter = 1000L) {
+  out = as.matrix(matrix)
+  for (iter in seq_len(max_iter)) {
+    max_mean = 0
+    for (group in groups) {
+      means = vapply(seq_len(ncol(out)), function(j) {
+        weighted_group_mean(out[, j], group, weights)
+      }, numeric(nrow(out)))
+      out = out - means
+      max_mean = max(max_mean, abs(means), na.rm = TRUE)
+    }
+    if (is.finite(max_mean) && max_mean <= tol) return(out)
+  }
+  stop("Prediction demeaning did not converge.", call. = FALSE)
+}
+
+dbreg_prediction_matrix = function(object, newdata) {
+  spec = object[["model_spec"]]
+  if (is.null(spec)) {
+    stop("This fitted object does not contain reusable design metadata.", call. = FALSE)
+  }
+  if (!is.null(object[["weights"]]) && !object[["weights"]] %in% names(newdata)) {
+    stop(
+      "newdata is missing the fitted weight column: ", object[["weights"]],
+      call. = FALSE
+    )
+  }
+  newdata = materialize_prediction_fes(object, newdata)
+  design_alias = evaluate_model_spec(spec, newdata)
+  design = design_alias
+  colnames(design) = spec[["columns"]][["name"]]
+  strategy = object[["strategy"]]
+
+  if (strategy == "demean") {
+    groups = lapply(object[["fe"]], function(fe) newdata[[fe]])
+    weights = if (!is.null(object[["weights"]])) newdata[[object[["weights"]]]] else NULL
+    tolerance = object[["ap_tolerance"]]
+    if (is.null(tolerance) || is.na(tolerance)) tolerance = 1e-10
+    iterations = object[["ap_max_iter"]]
+    if (is.null(iterations) || is.na(iterations)) iterations = 1000L
+    design = demean_prediction_data(
+      design, groups, weights,
+      tol = tolerance,
+      max_iter = iterations
+    )
+    y_offset = 0
+    if (object[["yvar"]] %in% names(newdata)) {
+      y = matrix(newdata[[object[["yvar"]]]], ncol = 1)
+      y_within = demean_prediction_data(
+        y, groups, weights,
+        tol = tolerance,
+        max_iter = iterations
+      )
+      y_offset = y[, 1] - y_within[, 1]
+    } else {
+      message(
+        "Outcome '", object[["yvar"]],
+        "' not found in newdata. Returning within-group predictions (demean strategy only)."
+      )
+    }
+    matrix = design
+  } else if (strategy == "mundlak") {
+    plan = object[["mundlak_plan"]]
+    means = matrix(0, nrow(design), nrow(plan))
+    weights = if (!is.null(object[["weights"]])) newdata[[object[["weights"]]]] else NULL
+    for (i in seq_len(nrow(plan))) {
+      source = match(plan[["source_alias"]][[i]], spec[["columns"]][["alias"]])
+      means[, i] = weighted_group_mean(
+        design[, source], newdata[[plan[["fe"]][[i]]]], weights
+      )
+    }
+    colnames(means) = plan[["name"]]
+    matrix = cbind("(Intercept)" = 1, design, means)
+    y_offset = 0
+  } else if (strategy == "compress") {
+    matrix_data = as.data.frame(as.matrix(design_alias))
+    for (fe in object[["fe"]]) matrix_data[[fe]] = newdata[[fe]]
+    matrix = Matrix::sparse.model.matrix(
+      reformulate(c(colnames(design_alias), object[["fe"]])),
+      matrix_data
+    )
+    design_idx = match(spec[["columns"]][["alias"]], colnames(matrix))
+    colnames(matrix)[design_idx] = spec[["columns"]][["name"]]
+    y_offset = 0
+  } else {
+    matrix = cbind("(Intercept)" = 1, design)
+    y_offset = 0
+  }
+
+  coefficients = names(coef(object, fe = TRUE))
+  missing = setdiff(coefficients, colnames(matrix))
+  if (length(missing)) {
+    stop(
+      "Prediction matrix is missing fitted columns: ",
+      paste(missing, collapse = ", "),
+      call. = FALSE
+    )
+  }
+  list(matrix = matrix[, coefficients, drop = FALSE], offset = y_offset)
+}
+
 #' Predict method for dbreg objects
 #'
 #' @param object A `dbreg` object.
-#' @param newdata Data frame for predictions. Required for objects that were
-#'   estimated using the `"mundlak"` and `"moments"` strategies, since `dbreg`
-#'   does not retain any data for these estimations.
-#' @param interval Type of interval to compute: `"none"` (default), 
-#'   `"confidence"`, or `"prediction"`. Note that `"confidence"` intervals
-#'   reflect uncertainty in the estimated mean, while `"prediction"` intervals
-#'   additionally account for residual variance. See
-#'   \code{\link[stats]{predict.lm}} for details.
-#' @param level Confidence level for intervals. Default is 0.95.
-#' @param ... Additional arguments (currently unused).
-#' 
-#' @section Predicting on "demean" strategy objects:
-#' 
-#' Predicting on `dbreg` objects should generally work as expected. However,
-#' predictions from `"demean"` strategy models carry two important caveats:
-#' 
-#' 1. Predictions require group means to transform back to the original scale.
-#' If `newdata` contains the outcome variable, group means are computed from
-#' `newdata` and used to return level predictions. If the outcome is absent,
-#' within-group predictions (deviations from group means) are returned instead,
-#' with a message.
-#' 
-#' 2. Confidence/prediction intervals are not supported. A demeaned model cannot
-#' account for uncertainty in the fixed-effects (since these were absorbed at
-#' estimation time), which in turn would yield intervals that are too narrow.
-#' Requesting intervals for `"demean"` strategy models will return point
-#' predictions with a message. Users should re-estimate with a different
-#' strategy if intervals are needed.
+#' @param newdata Data frame for predictions. Required for objects estimated by
+#'   strategies that do not retain data.
+#' @param interval Type of interval: `"none"`, `"confidence"`, or
+#'   `"prediction"`.
+#' @param level Confidence level for intervals.
+#' @param ... Additional arguments, currently unused.
 #'
-#' @seealso [dbreg()] for examples.
+#' Demean predictions use the fitted expanded design and alternating
+#' projections. If the outcome is present, its absorbed component is added back;
+#' otherwise within-group predictions are returned. Intervals remain unsupported
+#' because uncertainty in absorbed fixed effects is unavailable.
+#'
+#' @seealso [dbreg()]
 #' @inherit coef.dbreg examples
 #' @importFrom stats model.matrix reformulate ave update as.formula coef vcov qt
 #' @importFrom Matrix sparse.model.matrix
@@ -123,132 +261,13 @@ predict.dbreg = function(
     }
   }
 
-  # Extract common components from object
   betas = coef(object, fe = TRUE)
-  fml = object[["fml"]]
-  fe = object[["fe"]]
-  xvars = object[["xvars"]]
-  yvar = object[["yvar"]]
-
-  factor_refs = object[["factor_refs"]]
-  if (length(factor_refs)) {
-    for (variable in names(factor_refs)) {
-      newdata[[variable]] = stats::relevel(
-        factor(newdata[[variable]]),
-        ref = as.character(factor_refs[[variable]])
-      )
-    }
-  }
-
-  fe_components = object[["fe_components"]]
-  if (!is.null(fe_components)) {
-    for (i in seq_along(fe_components)) {
-      if (length(fe_components[[i]]) > 1) {
-        fe_name = fe[[i]]
-        missing_components = setdiff(fe_components[[i]], names(newdata))
-        if (length(missing_components)) {
-          stop(
-            "Composite fixed effect `", object[["fe_labels"]][[i]],
-            "` requires columns: ", paste(missing_components, collapse = ", "),
-            call. = FALSE
-          )
-        }
-        newdata[[fe_name]] = do.call(
-          interaction,
-          c(
-            as.list(newdata[, fe_components[[i]], drop = FALSE]),
-            list(drop = TRUE, lex.order = TRUE)
-          )
-        )
-      }
-    }
-  }
-
-  # Ensure FE columns are factors
-  for (f in fe) {
-    newdata[[f]] = factor(newdata[[f]])
-  }
-
-  if (strategy == "demean") {
-    # demean: compute group means from newdata to demean predictors
-    has_y = yvar %in% names(newdata)
-    mean_fn = function(y) mean(y, na.rm = TRUE)
-    
-    if (length(fe) == 1) {
-      fe1 = fe[1]
-      # Demean X using group means from newdata
-      mm = sapply(xvars, function(v) {
-        x_mean = ave(newdata[[v]], newdata[[fe1]], FUN = mean_fn)
-        newdata[[v]] - x_mean
-      })
-      
-      if (has_y) {
-        y_group_mean = ave(newdata[[yvar]], newdata[[fe1]], FUN = mean_fn)
-      } else {
-        y_group_mean = 0
-        message(sprintf(
-          "Outcome '%s' not found in newdata. Returning within-group predictions (demean strategy only).",
-          yvar
-        ))
-      }
-      
-    } else {
-      # 2-FE: double demeaning
-      fe1 = fe[1]
-      fe2 = fe[2]
-      
-      # Demean X using double-demeaning from newdata
-      mm = sapply(xvars, function(v) {
-        x_u = ave(newdata[[v]], newdata[[fe1]], FUN = mean_fn)
-        x_t = ave(newdata[[v]], newdata[[fe2]], FUN = mean_fn)
-        x_o = mean_fn(newdata[[v]])
-        newdata[[v]] - x_u - x_t + x_o
-      })
-      
-      if (has_y) {
-        y_u = ave(newdata[[yvar]], newdata[[fe1]], FUN = mean_fn)
-        y_t = ave(newdata[[yvar]], newdata[[fe2]], FUN = mean_fn)
-        y_o = mean_fn(newdata[[yvar]])
-        y_group_mean = y_u + y_t - y_o
-      } else {
-        y_group_mean = 0
-        message(sprintf(
-          "Outcome '%s' not found in newdata. Returning within-group predictions (demean strategy only).",
-          yvar
-        ))
-      }
-    }
-    
-  } else if (strategy == "mundlak") {
-    # Create group means for Mundlak prediction
-    gmeans = c()
-    for (x in xvars) {
-      for (f in fe) {
-        demean_x = paste0(x, "_bar_", f)
-        gmeans = c(gmeans, demean_x)
-        newdata[[demean_x]] = ave(
-          newdata[[x]],
-          newdata[[f]],
-          FUN = function(y) mean(y, na.rm = TRUE)
-        )
-      }
-    }
-
-    # recast as Mundlak formula
-    fml_xvars = formula(fml, lhs = 0, rhs = 1)
-    fml = update(fml_xvars, as.formula(paste("~ . +", paste(gmeans, collapse = " + "))))
-
-    mm = sparse.model.matrix(fml, data = newdata)
-  } else {
-    # compress/moments: use sparse model matrix with FE dummies
-    mm = sparse.model.matrix(reformulate(c(xvars, fe)), data = newdata)
-  }
+  prediction = dbreg_prediction_matrix(object, newdata)
+  mm = prediction[["matrix"]]
 
   # Generate predictions
   fit = as.vector(mm %*% betas)
-  if (strategy == "demean") {
-    fit = fit + y_group_mean
-  }
+  fit = fit + prediction[["offset"]]
  
   if (interval != "none") {
     vcovm = vcov(object, fe = TRUE)
@@ -284,13 +303,15 @@ predict.dbreg = function(
 #' @export
 vcov.dbreg = function(object, fe = FALSE, ...) {
   out = object[["vcov"]]
-  normalized_names = standardize_coef_names(rownames(out))
+  metadata = attributes(out)[setdiff(names(attributes(out)), c("dim", "dimnames"))]
+  normalized_names = rownames(out)
   dimnames(out) = list(normalized_names, normalized_names)
   if (!isTRUE(fe)) {
     visible = names(coef(object, fe = FALSE))
     visible = intersect(visible, rownames(out))
     out = out[visible, visible, drop = FALSE]
   }
+  for (name in names(metadata)) attr(out, name) = metadata[[name]]
   out
 }
 

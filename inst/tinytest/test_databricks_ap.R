@@ -65,7 +65,7 @@ ap_dat[["y"]] = 0.7 * ap_dat[["x1"]] - 0.25 * ap_dat[["x2"]] +
 con = dbConnect(duckdb::duckdb())
 dbWriteTable(con, "databricks_ap_fixture", ap_dat)
 
-run_window_ap = function(chunk_cycles) {
+run_window_ap = function(chunk_cycles, materialize_source = FALSE) {
   dbreg:::dbreg_window_alternating_projections(
     conn = con,
     from_statement = "FROM databricks_ap_fixture",
@@ -77,12 +77,14 @@ run_window_ap = function(chunk_cycles) {
     cluster_var = "cluster",
     max_iter = 100L,
     tol = 1e-10,
-    chunk_cycles = chunk_cycles
+    chunk_cycles = chunk_cycles,
+    materialize_source = materialize_source
   )
 }
 
 window_fit_1 = run_window_ap(1L)
 window_fit_3 = run_window_ap(3L)
+window_fit_materialized = run_window_ap(3L, materialize_source = TRUE)
 
 window_coef = function(ap_result) {
   moments = dbGetQuery(con, paste0(
@@ -105,6 +107,7 @@ window_coef = function(ap_result) {
 
 coef_1 = window_coef(window_fit_1)
 coef_3 = window_coef(window_fit_3)
+coef_materialized = window_coef(window_fit_materialized)
 reference = feols(
   y ~ x1 + x2 | fe1 + fe2 + fe3,
   data = ap_dat,
@@ -115,13 +118,15 @@ reference = feols(
 expect_equal(coef_1, as.numeric(coef(reference)), tolerance = 1e-8)
 expect_equal(coef_3, as.numeric(coef(reference)), tolerance = 1e-8)
 expect_equal(coef_1, coef_3, tolerance = 1e-10)
+expect_equal(coef_1, coef_materialized, tolerance = 1e-10)
 expect_true(window_fit_1[["iterations"]] > 3L)
 expect_true(window_fit_1[["max_abs"]] < 1e-10)
 expect_true(window_fit_3[["iterations"]] %% 3L == 0L)
 expect_true(window_fit_3[["max_abs"]] < 1e-10)
 expect_equal(length(window_fit_3[["all_tables"]]), 2L)
+expect_equal(length(window_fit_materialized[["all_tables"]]), 3L)
 
-for (result in list(window_fit_1, window_fit_3)) {
+for (result in list(window_fit_1, window_fit_3, window_fit_materialized)) {
   for (table_name in result[["all_tables"]]) {
     dbreg:::drop_ap_table_if_exists(con, table_name, result[["backend_info"]])
   }
@@ -142,7 +147,7 @@ expect_error(
     con, "FROM databricks_ap_fixture", c("fe1", "fe2"),
     "y", "x1", "x1", "obs_weight", tol = Inf
   ),
-  "finite, non-negative"
+  "finite, positive"
 )
 
 expect_error(
@@ -155,7 +160,7 @@ expect_error(
     xvar_names = c("x1", "x2"),
     weights = "obs_weight",
     max_iter = 2L,
-    tol = 0,
+    tol = 1e-30,
     chunk_cycles = 3L
   ),
   "did not converge within 2 iterations"

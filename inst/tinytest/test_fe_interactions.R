@@ -71,3 +71,24 @@ sql_composite = dbreg(
   sql_only = TRUE
 )
 expect_true(grepl("DENSE_RANK\\(\\) OVER \\(ORDER BY subject, cohort\\)", sql_composite))
+
+# Compression retains tuple components for stored-data and newdata prediction.
+expect_equal(
+  predict(fit_compress_composite, newdata = dat_fe),
+  predict(fit_compress_manual, newdata = dat_fe),
+  tolerance = 1e-8
+)
+expect_silent(predict(fit_compress_composite))
+
+# Generated identifiers never shadow similarly named source columns.
+name_collision = transform(
+  dat_fe,
+  dbreg_fe_1__ = 1L,
+  dbreg_internal_fe_1__ = 1L
+)
+fit_name_collision = dbreg(
+  y ~ x | subject ^ cohort,
+  data = name_collision,
+  strategy = "demean"
+)
+expect_equal(coef(fit_name_collision), coef(fit_manual), tolerance = 1e-8)

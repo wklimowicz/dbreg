@@ -91,6 +91,9 @@
 #'   their primary SQL query. Default is `FALSE`.
 #' @param data_only Logical indicating whether only the compressed dataset
 #'   should be returned (i.e., no regression is run). Default is `FALSE`.
+#' @param diagnostics Logical indicating whether to run an additional input scan
+#'   for per-variable missingness and dropped-row diagnostics. Default is
+#'   `FALSE`; estimation-sample counts remain available without this scan.
 #' @param drop_missings Logical indicating whether incomplete cases (i.e., rows
 #'   where any of the dependent, independent or FE variables are
 #'   missing) should be dropped. The default is `TRUE`, according with standard
@@ -356,6 +359,7 @@ dbreg = function(
   ssc = c("full", "nested"),
   sql_only = FALSE,
   data_only = FALSE,
+  diagnostics = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
   fe_tol = getOption("dbreg.ap_tol", 1e-10),
@@ -395,6 +399,7 @@ dbreg = function(
     strategy = strategy,
     sql_only = sql_only,
     data_only = data_only,
+    diagnostics = diagnostics,
     compress_ratio = compress_ratio,
     compress_nmax = compress_nmax,
     drop_missings = drop_missings,
@@ -443,6 +448,7 @@ process_dbreg_inputs = function(
   strategy,
   sql_only,
   data_only,
+  diagnostics,
   compress_ratio,
   compress_nmax,
   drop_missings,
@@ -472,6 +478,25 @@ process_dbreg_inputs = function(
   fe_components = fml_parsed[["fe_components"]]
   fe_source_vars = unique(unlist(fe_components, use.names = FALSE))
 
+  composite = which(lengths(fe_components) > 1L)
+  if (length(composite)) {
+    source_names = if (!is.null(data)) {
+      names(data)
+    } else {
+      names(dbGetQuery(
+        conn,
+        paste0("SELECT * FROM (SELECT * ", from_statement, ") dbreg_schema LIMIT 0")
+      ))
+    }
+    reserved = unique(c(source_names, yvar, xvars, fe_source_vars, weights, cluster_var))
+    for (i in composite) {
+      candidate = paste0("dbreg_internal_fe_", i, "__")
+      while (candidate %in% reserved) candidate = paste0(candidate, "_")
+      fe[[i]] = candidate
+      reserved = c(reserved, candidate)
+    }
+  }
+
   if (!is.null(factor_refs)) {
     factor_refs = as.list(factor_refs)
     if (is.null(names(factor_refs)) || any(!nzchar(names(factor_refs))) ||
@@ -484,8 +509,8 @@ process_dbreg_inputs = function(
     }
   }
 
-  if (length(fe_tol) != 1 || !is.numeric(fe_tol) || !is.finite(fe_tol) || fe_tol < 0) {
-    stop("`fe_tol` must be one finite, non-negative number.", call. = FALSE)
+  if (length(fe_tol) != 1 || !is.numeric(fe_tol) || !is.finite(fe_tol) || fe_tol <= 0) {
+    stop("`fe_tol` must be one finite, positive number.", call. = FALSE)
   }
   if (length(fe_max_iter) != 1 || !is.numeric(fe_max_iter) ||
       !is.finite(fe_max_iter) || fe_max_iter < 1 || fe_max_iter != as.integer(fe_max_iter)) {
@@ -521,9 +546,16 @@ process_dbreg_inputs = function(
     }
   }
 
-  sample_diagnostics = compute_sample_diagnostics(
-    conn, input_from_statement, yvar, xvars, fe_source_vars, weights, cluster_var
-  )
+  if (!is.logical(diagnostics) || length(diagnostics) != 1L || is.na(diagnostics)) {
+    stop("`diagnostics` must be TRUE or FALSE.", call. = FALSE)
+  }
+  sample_diagnostics = if (isTRUE(sql_only) || !isTRUE(diagnostics)) {
+    NULL
+  } else {
+    compute_sample_diagnostics(
+      conn, input_from_statement, yvar, xvars, fe_source_vars, weights, cluster_var
+    )
+  }
 
   # Heuristic for continuous regressors (only if data passed)
   is_continuous = function(v) {
@@ -585,6 +617,15 @@ process_dbreg_inputs = function(
     ")
   }
   from_statement = add_composite_fe_columns(from_statement, fe, fe_components)
+  table_ref = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
+  model_spec = build_model_spec(
+    formula = fml,
+    conn = conn,
+    table = table_ref,
+    fe_vars = unique(c(fe, fe_source_vars)),
+    factor_refs = factor_refs,
+    reserved_names = unique(c(yvar, xvars, fe, fe_source_vars, weights, cluster_var))
+  )
 
   list2env(list(
     fml = fml,
@@ -609,6 +650,7 @@ process_dbreg_inputs = function(
     strategy = strategy,
     sql_only = sql_only,
     data_only = data_only,
+    diagnostics = diagnostics,
     compress_ratio = compress_ratio,
     compress_nmax = compress_nmax,
     verbose = verbose,
@@ -617,6 +659,7 @@ process_dbreg_inputs = function(
     own_conn = own_conn,
     input_from_statement = input_from_statement,
     sample_diagnostics = sample_diagnostics,
+    model_spec = model_spec,
     fe_tol = fe_tol,
     fe_max_iter = fe_max_iter
   ), parent = emptyenv())
@@ -768,7 +811,7 @@ dbreg_is_balanced_panel = function(conn, from_statement, fe) {
 #' Build an inspectable alternating-projection query plan
 #' @keywords internal
 dbreg_ap_query_plan = function(conn, from_statement, fe, yvar, xvars_sql,
-                               xvar_names, weights = NULL,
+                               xvar_names, xvar_labels = xvar_names, weights = NULL,
                                cluster_var = NULL, tol, max_iter) {
   backend = detect_backend(conn)[["name"]]
   weights_expr = sql_weight_expr(weights)
@@ -829,14 +872,15 @@ dbreg_ap_query_plan = function(conn, from_statement, fe, yvar, xvars_sql,
   }, character(1)), fe)
 
   convergence_sql = setNames(vapply(fe, function(fe_k) {
+    aliases = sprintf("dbreg_mean_%04d", seq_along(tilde_names))
     diagnostics = sprintf(
-      "SELECT ABS(SUM(__w * %s) / SUM(__w)) AS max_abs ", tilde_names
+      "ABS(SUM(__w * %s) / SUM(__w)) AS %s", tilde_names, aliases
     )
-    diagnostics = paste0(diagnostics, "FROM <ap_current> GROUP BY ", fe_k)
     paste0(
-      "SELECT MAX(max_abs) AS max_abs FROM (",
-      paste(diagnostics, collapse = " UNION ALL "),
-      ") dbreg_ap_diagnostics"
+      "SELECT MAX(GREATEST(", paste(aliases, collapse = ", "),
+      ")) AS max_abs FROM (SELECT ", fe_k, ", ",
+      paste(diagnostics, collapse = ", "),
+      " FROM <ap_current> GROUP BY ", fe_k, ") dbreg_group_means"
     )
   }, character(1)), fe)
 
@@ -860,7 +904,7 @@ dbreg_ap_query_plan = function(conn, from_statement, fe, yvar, xvars_sql,
     max_iterations = max_iter,
     model_frame_sql = model_frame_sql,
     design_matrix = data.frame(
-      term = standardize_coef_names(xvar_names),
+      term = xvar_labels,
       sql = xvars_sql,
       row.names = NULL
     ),
@@ -1035,7 +1079,7 @@ dbreg_alternating_projections = function(
       message("[AP] iter ", iter, ": max abs mean = ", sprintf("%.4e", max_abs))
     }
 
-    if (is.finite(max_abs) && max_abs < tol) {
+    if (is.finite(max_abs) && max_abs <= tol) {
       success = TRUE
       return(list(
         table = cur_table,
@@ -1081,6 +1125,7 @@ dbreg_window_alternating_projections = function(
   max_iter = getOption("dbreg.ap_max_iter", 100L),
   tol = getOption("dbreg.ap_tol", 1e-10),
   chunk_cycles = getOption("dbreg.spark_ap_chunk_cycles", 3L),
+  materialize_source = getOption("dbreg.spark_ap_materialize_source", FALSE),
   backend_info = detect_backend(conn)
 ) {
   is_positive_integer = function(x) {
@@ -1093,11 +1138,15 @@ dbreg_window_alternating_projections = function(
   if (!is_positive_integer(chunk_cycles)) {
     stop("`dbreg.spark_ap_chunk_cycles` must be a positive integer.", call. = FALSE)
   }
-  if (!is.numeric(tol) || length(tol) != 1L || !is.finite(tol) || tol < 0) {
-    stop("`dbreg.ap_tol` must be one finite, non-negative number.", call. = FALSE)
+  if (!is.numeric(tol) || length(tol) != 1L || !is.finite(tol) || tol <= 0) {
+    stop("`dbreg.ap_tol` must be one finite, positive number.", call. = FALSE)
   }
   max_iter = as.integer(max_iter)
   chunk_cycles = as.integer(chunk_cycles)
+  if (!is.logical(materialize_source) || length(materialize_source) != 1L ||
+      is.na(materialize_source)) {
+    stop("`dbreg.spark_ap_materialize_source` must be TRUE or FALSE.", call. = FALSE)
+  }
 
   if (backend_info[["name"]] != "duckdb") {
     validate_databricks_ap_backend(backend_info)
@@ -1127,7 +1176,8 @@ dbreg_window_alternating_projections = function(
   )
   current_name = paste0("dbreg_ap_cur_", seed)
   alternate_name = paste0("dbreg_ap_alt_", seed)
-  all_tables = c(current_name, alternate_name)
+  source_name = paste0("dbreg_ap_source_", seed)
+  all_tables = c(if (materialize_source) source_name, current_name, alternate_name)
 
   success = FALSE
   on.exit({
@@ -1138,15 +1188,22 @@ dbreg_window_alternating_projections = function(
     }
   }, add = TRUE)
 
+  base_cols = c(
+    id_cols,
+    sprintf("%s AS __w", weights_expr),
+    sprintf("%s AS %s_tilde", yvar, yvar),
+    sprintf("%s AS %s_tilde", xvars_sql, xvar_names)
+  )
+  if (materialize_source) {
+    source_sql = paste0(
+      "SELECT ", paste(base_cols, collapse = ", "), " ", from_statement
+    )
+    create_ap_table_as(conn, source_name, source_sql, backend_info)
+  }
+
   build_chunk_sql = function(source_table, cycles, first_chunk) {
     ctes = character()
-    if (first_chunk) {
-      base_cols = c(
-        id_cols,
-        sprintf("%s AS __w", weights_expr),
-        sprintf("%s AS %s_tilde", yvar, yvar),
-        sprintf("%s AS %s_tilde", xvars_sql, xvar_names)
-      )
+    if (first_chunk && !materialize_source) {
       ctes = sprintf(
         "base AS (SELECT %s %s)",
         paste(base_cols, collapse = ", "),
@@ -1184,16 +1241,18 @@ dbreg_window_alternating_projections = function(
   }
 
   convergence_sql = function(table_name) {
-    diagnostics = unlist(lapply(fe, function(fe_k) {
-      vapply(tilde_names, function(v) {
-        sprintf(
-          "SELECT ABS(SUM(__w * %s) / SUM(__w)) AS max_abs FROM %s GROUP BY %s",
-          v,
-          table_name,
-          fe_k
-        )
-      }, character(1))
-    }), use.names = FALSE)
+    diagnostics = vapply(fe, function(fe_k) {
+      aliases = sprintf("dbreg_mean_%04d", seq_along(tilde_names))
+      means = sprintf(
+        "ABS(SUM(__w * %s) / SUM(__w)) AS %s", tilde_names, aliases
+      )
+      paste0(
+        "SELECT MAX(GREATEST(", paste(aliases, collapse = ", "),
+        ")) AS max_abs FROM (SELECT ", fe_k, ", ",
+        paste(means, collapse = ", "), " FROM ", table_name,
+        " GROUP BY ", fe_k, ") dbreg_group_means"
+      )
+    }, character(1))
     paste0(
       "SELECT MAX(max_abs) AS max_abs FROM (",
       paste(diagnostics, collapse = " UNION ALL "),
@@ -1210,7 +1269,8 @@ dbreg_window_alternating_projections = function(
   while (completed_cycles < max_iter) {
     cycles = min(chunk_cycles, max_iter - completed_cycles)
     target_table = if (first_chunk) current_name else alternate_table
-    chunk_sql = build_chunk_sql(current_table, cycles, first_chunk)
+    chunk_source = if (first_chunk && materialize_source) source_name else current_table
+    chunk_sql = build_chunk_sql(chunk_source, cycles, first_chunk)
     create_ap_table_as(conn, target_table, chunk_sql, backend_info)
 
     if (first_chunk) {
@@ -1242,7 +1302,7 @@ dbreg_window_alternating_projections = function(
         ": max abs mean = ", sprintf("%.4e", max_abs)
       )
     }
-    if (is.finite(max_abs) && max_abs < tol) {
+    if (is.finite(max_abs) && max_abs <= tol) {
       success = TRUE
       return(list(
         table = current_table,
@@ -1474,8 +1534,13 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy) {
   result[["n_clusters"]] = attr(result[["vcov"]], "n_clusters")
   result[["n_params"]] = attr(result[["vcov"]], "n_params")
   result[["sample_diagnostics"]] = inputs[["sample_diagnostics"]]
-  result[["nobs_input"]] = inputs[["sample_diagnostics"]][["n_input"]]
+  result[["nobs_input"]] = if (is.null(inputs[["sample_diagnostics"]])) {
+    NA_real_
+  } else {
+    inputs[["sample_diagnostics"]][["n_input"]]
+  }
   result[["nobs_dropped"]] = result[["nobs_input"]] - result[["nobs_orig"]]
+  result[["model_spec"]] = inputs[["model_spec"]]
   result[["ap_converged"]] = if (is.null(result[["ap_iterations"]])) NA else TRUE
   result[["ap_tolerance"]] = if (is.null(result[["ap_iterations"]])) NA_real_ else inputs[["fe_tol"]]
   result[["ap_max_iter"]] = if (is.null(result[["ap_iterations"]])) NA_integer_ else inputs[["fe_max_iter"]]

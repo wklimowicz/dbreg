@@ -98,7 +98,9 @@
 #'   superseded arguments for backwards compatibility.
 #'
 #' @return A list of class "dbreg" containing various slots, including a table
-#' of coefficients (which the associated `print` method will display).
+#' of coefficients (which the associated `print` method will display). Fits that
+#' use alternating projections also contain `ap_iterations`, the number of
+#' completed projection cycles, and `ap_max_abs`, the final convergence metric.
 #'
 #' @section Acceleration Strategies:
 #'
@@ -197,6 +199,20 @@
 #' 
 #' _Tip: set `dbreg(..., verbose = TRUE)` to print information about the auto
 #' strategy decision criteria._
+#'
+#' @section Databricks alternating projections:
+#'
+#' On Databricks, weighted, unbalanced, or multi-way fixed-effect demeaning uses
+#' bounded window-function AP chunks materialized in session-scoped temporary
+#' tables. This requires Databricks SQL or Databricks Runtime 18.1 or later and
+#' a connector that preserves one session across statements. Connectors that
+#' rewrite SQL must use native-query mode; for the Databricks ODBC driver,
+#' configure `useNativeQuery = TRUE`.
+#'
+#' The number of complete AP cycles per materialized chunk is controlled by
+#' `options(dbreg.spark_ap_chunk_cycles = 3L)`. This bounds query-plan depth but
+#' does not cap convergence. Total cycles and convergence remain controlled by
+#' `dbreg.ap_max_iter` (default 100) and `dbreg.ap_tol` (default `1e-10`).
 #'
 #' @references
 #' Arkhangelsky, D. & Imbens, G. (2024)
@@ -696,7 +712,25 @@ dbreg_alternating_projections = function(
   max_iter = getOption("dbreg.ap_max_iter", 100L),
   tol = getOption("dbreg.ap_tol", 1e-10)
 ) {
-  backend = detect_backend(conn)[["name"]]
+  backend_info = detect_backend(conn)
+  backend = backend_info[["name"]]
+  if (backend == "spark") {
+    validate_databricks_ap_backend(backend_info)
+    return(dbreg_window_alternating_projections(
+      conn = conn,
+      from_statement = from_statement,
+      fe = fe,
+      yvar = yvar,
+      xvars_sql = xvars_sql,
+      xvar_names = xvar_names,
+      weights = weights,
+      cluster_var = cluster_var,
+      verbose = verbose,
+      max_iter = max_iter,
+      tol = tol,
+      backend_info = backend_info
+    ))
+  }
   weights_expr = sql_weight_expr(weights)
   if (is.null(weights_expr)) {
     weights_expr = "1.0"
@@ -716,13 +750,14 @@ dbreg_alternating_projections = function(
   alt_table = temp_table_name(paste0("dbreg_ap_alt_", seed), backend)
   mean_table = temp_table_name(paste0("dbreg_ap_m_", seed), backend)
 
+  created_tables = c(base_table, cur_table, alt_table, mean_table)
+
   success = FALSE
   on.exit({
     if (!success) {
-      drop_table_if_exists(conn, cur_table, backend)
-      drop_table_if_exists(conn, alt_table, backend)
-      drop_table_if_exists(conn, mean_table, backend)
-      drop_table_if_exists(conn, base_table, backend)
+      for (tbl in unique(created_tables)) {
+        drop_table_if_exists(conn, tbl, backend)
+      }
     }
   }, add = TRUE)
 
@@ -766,6 +801,7 @@ dbreg_alternating_projections = function(
         " GROUP BY ",
         fe_k
       )
+
       create_temp_table_as(conn, mean_table, mean_sql, backend)
 
       update_cols = c(
@@ -823,7 +859,221 @@ dbreg_alternating_projections = function(
 
     if (is.finite(max_abs) && max_abs < tol) {
       success = TRUE
-      return(list(table = cur_table, base_table = base_table))
+      return(list(
+        table = cur_table,
+        base_table = base_table,
+        all_tables = created_tables,
+        iterations = iter,
+        max_abs = max_abs,
+        backend_info = backend_info
+      ))
+    }
+  }
+
+  stop(
+    "[dbreg] Alternating projections did not converge within ",
+    max_iter,
+    " iterations (max abs mean = ",
+    sprintf("%.4e", max_abs),
+    ").\n\n",
+    "Options:\n",
+    "  - Increase tolerance: options(dbreg.ap_tol = 1e-7)\n",
+    "  - Increase iterations: options(dbreg.ap_max_iter = 500)\n",
+    "  - Use strategy = 'mundlak' (single-pass CRE estimator, no iteration needed)",
+    call. = FALSE
+  )
+}
+
+#' Window-function alternating projections for Databricks
+#'
+#' Materializes bounded chunks of complete AP cycles and ping-pongs between two
+#' session-scoped tables. DuckDB may call this function directly in local tests.
+#'
+#' @keywords internal
+dbreg_window_alternating_projections = function(
+  conn,
+  from_statement,
+  fe,
+  yvar,
+  xvars_sql,
+  xvar_names,
+  weights,
+  cluster_var = NULL,
+  verbose = FALSE,
+  max_iter = getOption("dbreg.ap_max_iter", 100L),
+  tol = getOption("dbreg.ap_tol", 1e-10),
+  chunk_cycles = getOption("dbreg.spark_ap_chunk_cycles", 3L),
+  backend_info = detect_backend(conn)
+) {
+  is_positive_integer = function(x) {
+    is.numeric(x) && length(x) == 1L && is.finite(x) && x >= 1 &&
+      x <= .Machine[["integer.max"]] && x == floor(x)
+  }
+  if (!is_positive_integer(max_iter)) {
+    stop("`dbreg.ap_max_iter` must be a positive integer.", call. = FALSE)
+  }
+  if (!is_positive_integer(chunk_cycles)) {
+    stop("`dbreg.spark_ap_chunk_cycles` must be a positive integer.", call. = FALSE)
+  }
+  if (!is.numeric(tol) || length(tol) != 1L || !is.finite(tol) || tol < 0) {
+    stop("`dbreg.ap_tol` must be one finite, non-negative number.", call. = FALSE)
+  }
+  max_iter = as.integer(max_iter)
+  chunk_cycles = as.integer(chunk_cycles)
+
+  if (backend_info[["name"]] != "duckdb") {
+    validate_databricks_ap_backend(backend_info)
+  }
+
+  weights_expr = sql_weight_expr(weights)
+  if (is.null(weights_expr)) weights_expr = "1.0"
+
+  vars_all = c(yvar, xvar_names)
+  tilde_names = paste0(vars_all, "_tilde")
+  id_cols = unique(c(fe, cluster_var))
+  id_cols = id_cols[!is.na(id_cols) & id_cols != ""]
+  reserved_cols = c("__w", tilde_names)
+  collisions = intersect(id_cols, reserved_cols)
+  if (length(collisions)) {
+    stop(
+      "[dbreg] Fixed-effect or cluster column conflicts with an internal AP column: ",
+      paste(collisions, collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  seed = paste0(
+    format(Sys.time(), "%Y%m%d_%H%M%S"),
+    "_",
+    sprintf("%06d", sample.int(1e6, 1))
+  )
+  current_name = paste0("dbreg_ap_cur_", seed)
+  alternate_name = paste0("dbreg_ap_alt_", seed)
+  all_tables = c(current_name, alternate_name)
+
+  success = FALSE
+  on.exit({
+    if (!success) {
+      for (tbl in all_tables) {
+        drop_ap_table_if_exists(conn, tbl, backend_info)
+      }
+    }
+  }, add = TRUE)
+
+  build_chunk_sql = function(source_table, cycles, first_chunk) {
+    ctes = character()
+    if (first_chunk) {
+      base_cols = c(
+        id_cols,
+        sprintf("%s AS __w", weights_expr),
+        sprintf("%s AS %s_tilde", yvar, yvar),
+        sprintf("%s AS %s_tilde", xvars_sql, xvar_names)
+      )
+      ctes = sprintf(
+        "base AS (SELECT %s %s)",
+        paste(base_cols, collapse = ", "),
+        from_statement
+      )
+      previous = "base"
+    } else {
+      previous = source_table
+    }
+
+    stage = 0L
+    for (cycle in seq_len(cycles)) {
+      for (fe_k in fe) {
+        stage = stage + 1L
+        stage_name = paste0("s", stage)
+        transformed = sprintf(
+          "%s - SUM(__w * %s) OVER (PARTITION BY %s) / SUM(__w) OVER (PARTITION BY %s) AS %s",
+          tilde_names,
+          tilde_names,
+          fe_k,
+          fe_k,
+          tilde_names
+        )
+        select_cols = c(id_cols, "__w", transformed)
+        ctes = c(ctes, sprintf(
+          "%s AS (SELECT %s FROM %s)",
+          stage_name,
+          paste(select_cols, collapse = ", "),
+          previous
+        ))
+        previous = stage_name
+      }
+    }
+    paste0("WITH ", paste(ctes, collapse = ", "), " SELECT * FROM ", previous)
+  }
+
+  convergence_sql = function(table_name) {
+    diagnostics = unlist(lapply(fe, function(fe_k) {
+      vapply(tilde_names, function(v) {
+        sprintf(
+          "SELECT ABS(SUM(__w * %s) / SUM(__w)) AS max_abs FROM %s GROUP BY %s",
+          v,
+          table_name,
+          fe_k
+        )
+      }, character(1))
+    }), use.names = FALSE)
+    paste0(
+      "SELECT MAX(max_abs) AS max_abs FROM (",
+      paste(diagnostics, collapse = " UNION ALL "),
+      ") dbreg_ap_diagnostics"
+    )
+  }
+
+  completed_cycles = 0L
+  first_chunk = TRUE
+  current_table = NULL
+  alternate_table = alternate_name
+  max_abs = NA_real_
+
+  while (completed_cycles < max_iter) {
+    cycles = min(chunk_cycles, max_iter - completed_cycles)
+    target_table = if (first_chunk) current_name else alternate_table
+    chunk_sql = build_chunk_sql(current_table, cycles, first_chunk)
+    create_ap_table_as(conn, target_table, chunk_sql, backend_info)
+
+    if (first_chunk) {
+      current_table = target_table
+      first_chunk = FALSE
+    } else {
+      previous_table = current_table
+      current_table = target_table
+      alternate_table = previous_table
+    }
+    completed_cycles = completed_cycles + cycles
+
+    diagnostic = tryCatch(
+      dbGetQuery(conn, convergence_sql(current_table)),
+      error = function(e) {
+        stop(
+          "[dbreg] Failed to query a Databricks AP temporary table. Ensure the ",
+          "connector preserves one session and passes native SQL unchanged. ",
+          "Database error: ", conditionMessage(e),
+          call. = FALSE
+        )
+      }
+    )
+    max_abs = as.numeric(diagnostic[["max_abs"]][1])
+
+    if (isTRUE(verbose)) {
+      message(
+        "[AP] iter ", completed_cycles,
+        ": max abs mean = ", sprintf("%.4e", max_abs)
+      )
+    }
+    if (is.finite(max_abs) && max_abs < tol) {
+      success = TRUE
+      return(list(
+        table = current_table,
+        base_table = NULL,
+        all_tables = all_tables,
+        iterations = completed_cycles,
+        max_abs = max_abs,
+        backend_info = backend_info
+      ))
     }
   }
 

@@ -15,7 +15,8 @@ compute_meat_sql(
   cte_name = "demeaned",
   has_intercept = FALSE,
   vars_sql = NULL,
-  weights_expr = NULL
+  weights_expr = NULL,
+  numeric_type = "FLOAT"
 )
 }
 \description{

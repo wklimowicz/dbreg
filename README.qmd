@@ -189,6 +189,24 @@ dbreg(
 
 Result: we get the same coefficient and standard error estimates as earlier.
 
+::: {.callout-note}
+## Databricks multi-way demeaning
+
+On Databricks, weighted, unbalanced, and multi-way fixed-effect models with
+`strategy = "demean"` use session-scoped temporary tables. This requires
+Databricks SQL or Databricks Runtime 18.1 or later and a connector that keeps
+one session across statements. Connectors that rewrite SQL must enable native
+queries; with the Databricks ODBC driver, set `useNativeQuery = TRUE`.
+
+The implementation is not restricted to ODBC. Databricks is detected from the
+metadata exposed by the DBI connection, so JDBC, ADBC, and other connectors can
+use the same path when they expose compatible session and SQL behavior.
+
+`options(dbreg.spark_ap_chunk_cycles = 3L)` controls how many complete
+alternating-projection cycles are included in each bounded query. Convergence
+is still controlled by `dbreg.ap_tol` and `dbreg.ap_max_iter`.
+:::
+
 ::: {.callout-tip}
 ## Create Temporary Views
 

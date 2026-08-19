@@ -12,7 +12,8 @@ fit_diag = dbreg(
   weights = "w",
   cluster = ~cl,
   strategy = "demean",
-  ssc = "nested"
+  ssc = "nested",
+  diagnostics = TRUE
 )
 
 g_diag = glance(fit_diag)
@@ -85,3 +86,21 @@ expect_equal(length(coef(collin_fit, collin = TRUE)), 2L)
 expect_equal(sum(is.na(coef(collin_fit, collin = TRUE))), 1L)
 expect_false(anyNA(tidy(collin_fit)$estimate))
 expect_equal(sum(is.na(tidy(collin_fit, collin = TRUE)$estimate)), 1L)
+
+# Mundlak means participate in the same collinearity handling as base terms.
+mundlak_collin = transform(ap_dat, group_constant = fe1)
+mundlak_collin_fit = dbreg(
+  y ~ x + group_constant | fe1,
+  data = mundlak_collin,
+  strategy = "mundlak"
+)
+expect_true(length(mundlak_collin_fit$collin.var) >= 1L)
+
+expect_error(
+  dbreg(
+    y ~ x + x_bar_fe1 | fe1,
+    data = transform(ap_dat, x_bar_fe1 = rnorm(nrow(ap_dat))),
+    strategy = "mundlak"
+  ),
+  "duplicate coefficient names"
+)

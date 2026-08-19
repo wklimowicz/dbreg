@@ -11,6 +11,7 @@ dbreg_ap_query_plan(
   yvar,
   xvars_sql,
   xvar_names,
+  xvar_labels = xvar_names,
   weights = NULL,
   cluster_var = NULL,
   tol,

@@ -17,6 +17,7 @@ dbreg_window_alternating_projections(
   max_iter = getOption("dbreg.ap_max_iter", 100L),
   tol = getOption("dbreg.ap_tol", 1e-10),
   chunk_cycles = getOption("dbreg.spark_ap_chunk_cycles", 3L),
+  materialize_source = getOption("dbreg.spark_ap_materialize_source", FALSE),
   backend_info = detect_backend(conn)
 )
 }

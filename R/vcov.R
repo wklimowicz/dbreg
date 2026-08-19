@@ -286,35 +286,43 @@ compute_meat_cluster_sql = function(conn, cte_sql, vars, yvar, betahat,
 #'
 #' @keywords internal
 compute_meat_cluster_compress = function(conn, from_statement, group_cols,
+                                         group_exprs = group_cols,
+                                         cell_key_cols = group_cols,
                                          yvar, cluster_var, compressed_dat,
                                          X, yhat, weights = NULL) {
-  group_cols_sql = paste(group_cols, collapse = ", ")
+  group_select_sql = paste(
+    ifelse(group_exprs == group_cols, group_exprs,
+           paste0(group_exprs, " AS ", group_cols)),
+    collapse = ", "
+  )
+  group_by_sql = paste(group_exprs, collapse = ", ")
   weights_expr = sql_weight_expr(weights)
 
   # Query cluster-by-cell sufficient statistics
   if (is.null(weights_expr)) {
     cluster_cell_sql = paste0(
-      "SELECT ", cluster_var, ", ", group_cols_sql, ",\n",
+      "SELECT ", cluster_var, ", ", group_select_sql, ",\n",
       "  COUNT(*) AS n_gc,\n",
       "  SUM(", yvar, ") AS sum_y_gc\n",
       from_statement, "\n",
-      "GROUP BY ", cluster_var, ", ", group_cols_sql
+      "GROUP BY ", cluster_var, ", ", group_by_sql
     )
   } else {
     cluster_cell_sql = paste0(
-      "SELECT ", cluster_var, ", ", group_cols_sql, ",\n",
+      "SELECT ", cluster_var, ", ", group_select_sql, ",\n",
       "  SUM(", weights_expr, ") AS sum_w_gc,\n",
       "  SUM((", weights_expr, ") * (", yvar, ")) AS sum_wy_gc\n",
       from_statement, "\n",
-      "GROUP BY ", cluster_var, ", ", group_cols_sql
+      "GROUP BY ", cluster_var, ", ", group_by_sql
     )
   }
 
   cluster_cell_df = dbGetQuery(conn, cluster_cell_sql)
 
-  # Create cell key for matching (same grouping as compress strategy)
-  compressed_dat[["cell_key"]] = interaction(compressed_dat[, group_cols, drop = FALSE])
-  cluster_cell_df[["cell_key"]] = interaction(cluster_cell_df[, group_cols, drop = FALSE])
+  # Composite FE ranks are needed for the design matrix, but their source
+  # components provide a stable key across the SQL result and compressed data.
+  compressed_dat[["cell_key"]] = composite_fe_key(compressed_dat, cell_key_cols)
+  cluster_cell_df[["cell_key"]] = composite_fe_key(cluster_cell_df, cell_key_cols)
 
   # Add yhat to compressed_dat and create lookup
   compressed_dat[["yhat"]] = yhat

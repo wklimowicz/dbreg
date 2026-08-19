@@ -23,6 +23,15 @@ New features
 - Fitted objects now retain sample, covariance, clustering, small-sample
   correction, and alternating-projection diagnostics. `glance()` reports these
   fields, and `fe_tol` and `fe_max_iter` provide per-fit AP controls.
+- Formula expansion is retained as collision-safe model metadata and reused by
+  every fitting strategy and `predict()`, including powers, factor references,
+  interactions, and composite fixed effects.
+- Databricks factor levels are discovered in one scan and AP convergence now
+  aggregates all model columns in one pass per fixed effect. Optional source
+  materialization for complex upstream queries is controlled by
+  `options(dbreg.spark_ap_materialize_source = TRUE)`.
+- Detailed input missingness diagnostics are now opt-in with
+  `diagnostics = TRUE`, avoiding an extra full-table scan during normal fits.
 - Added support for weighted regression via the new `weights` argument. Accepts
   a column name string and is compatible with all strategies and SE types (iid,
   HC1, clustered). (#12)

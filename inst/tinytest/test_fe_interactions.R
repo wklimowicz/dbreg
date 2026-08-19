@@ -54,6 +54,50 @@ fit_compress_manual = dbreg(
 )
 expect_equal(coef(fit_compress_composite), coef(fit_compress_manual), tolerance = 1e-8)
 
+# Clustered compression matches the composite FE cells through their source
+# components, not the generated ranking column.
+dat_fe$cluster = sample(1:12, nrow(dat_fe), TRUE)
+fit_cluster_composite = dbreg(
+  y ~ x | cohort ^ fsm,
+  data = dat_fe,
+  vcov = ~cluster,
+  strategy = "compress"
+)
+fit_cluster_manual = dbreg(
+  y ~ x | cohort_fsm,
+  data = dat_fe,
+  vcov = ~cluster,
+  strategy = "compress"
+)
+expect_equal(coef(fit_cluster_composite), coef(fit_cluster_manual), tolerance = 1e-8)
+expect_equal(vcov(fit_cluster_composite), vcov(fit_cluster_manual), tolerance = 1e-8)
+
+dat_fe$weight = runif(nrow(dat_fe), 0.2, 2)
+fit_weighted_cluster_composite = dbreg(
+  y ~ x | cohort ^ fsm,
+  data = dat_fe,
+  weights = "weight",
+  vcov = ~cluster,
+  strategy = "compress"
+)
+fit_weighted_cluster_manual = dbreg(
+  y ~ x | cohort_fsm,
+  data = dat_fe,
+  weights = "weight",
+  vcov = ~cluster,
+  strategy = "compress"
+)
+expect_equal(
+  coef(fit_weighted_cluster_composite),
+  coef(fit_weighted_cluster_manual),
+  tolerance = 1e-8
+)
+expect_equal(
+  vcov(fit_weighted_cluster_composite),
+  vcov(fit_weighted_cluster_manual),
+  tolerance = 1e-8
+)
+
 # Tuple ranking distinguishes values that delimiter concatenation would collide.
 collision_dat = data.frame(
   a = c("a_b", "a", "a_b", "a"),
@@ -71,3 +115,24 @@ sql_composite = dbreg(
   sql_only = TRUE
 )
 expect_true(grepl("DENSE_RANK\\(\\) OVER \\(ORDER BY subject, cohort\\)", sql_composite))
+
+# Compression retains tuple components for stored-data and newdata prediction.
+expect_equal(
+  predict(fit_compress_composite, newdata = dat_fe),
+  predict(fit_compress_manual, newdata = dat_fe),
+  tolerance = 1e-8
+)
+expect_silent(predict(fit_compress_composite))
+
+# Generated identifiers never shadow similarly named source columns.
+name_collision = transform(
+  dat_fe,
+  dbreg_fe_1__ = 1L,
+  dbreg_internal_fe_1__ = 1L
+)
+fit_name_collision = dbreg(
+  y ~ x | subject ^ cohort,
+  data = name_collision,
+  strategy = "demean"
+)
+expect_equal(coef(fit_name_collision), coef(fit_manual), tolerance = 1e-8)

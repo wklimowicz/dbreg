@@ -20,6 +20,7 @@ dbreg(
   ssc = c("full", "nested"),
   sql_only = FALSE,
   data_only = FALSE,
+  diagnostics = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
   fe_tol = getOption("dbreg.ap_tol", 1e-10),
@@ -126,6 +127,10 @@ their primary SQL query. Default is \code{FALSE}.}
 
 \item{data_only}{Logical indicating whether only the compressed dataset
 should be returned (i.e., no regression is run). Default is \code{FALSE}.}
+
+\item{diagnostics}{Logical indicating whether to run an additional input scan
+for per-variable missingness and dropped-row diagnostics. Default is
+\code{FALSE}; estimation-sample counts remain available without this scan.}
 
 \item{drop_missings}{Logical indicating whether incomplete cases (i.e., rows
 where any of the dependent, independent or FE variables are

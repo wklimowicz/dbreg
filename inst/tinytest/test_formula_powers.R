@@ -104,3 +104,56 @@ expect_error(
   dbreg(y ~ grp, data = dat_power, factor_refs = c(grp = "missing")),
   "was not found"
 )
+
+# Prediction reuses the exact fitted expansion for every strategy.
+for (strategy in c("moments", "compress")) {
+  fit = dbreg(y ~ x + I(x^2) + I(x^3), data = dat_power, strategy = strategy)
+  expect_equal(
+    predict(fit, newdata = dat_power),
+    as.numeric(predict(lm_power, newdata = dat_power)),
+    tolerance = 1e-6
+  )
+}
+
+fit_power_demean = dbreg(
+  y ~ x + I(x^2) + I(x^3) | fe,
+  data = dat_power,
+  strategy = "demean"
+)
+expect_equal(
+  predict(fit_power_demean, newdata = dat_power),
+  as.numeric(predict(fixest_power, newdata = dat_power)),
+  tolerance = 1e-5
+)
+
+# A source name that resembles the old power alias remains an ordinary term.
+dat_collision = transform(dat_power, x__pow2 = rev(x))
+fit_collision = dbreg(
+  y ~ x__pow2 + I(x^2),
+  data = dat_collision,
+  strategy = "moments"
+)
+lm_collision = lm(y ~ x__pow2 + I(x^2), data = dat_collision)
+expect_equal(names(coef(fit_collision)), names(coef(lm_collision)))
+expect_equal(
+  predict(fit_collision, newdata = dat_collision),
+  as.numeric(predict(lm_collision, newdata = dat_collision)),
+  tolerance = 1e-6
+)
+
+# Opaque design aliases avoid user regressors and weight columns.
+dat_internal_name = transform(
+  dat_power,
+  dbreg_internal_x_0001__ = rev(x),
+  dbreg_internal_x_0002__ = seq_len(nrow(dat_power)) / 10
+)
+fit_internal_name = dbreg(
+  y ~ x + dbreg_internal_x_0001__,
+  data = dat_internal_name,
+  weights = "dbreg_internal_x_0002__",
+  strategy = "moments"
+)
+expect_equal(
+  names(coef(fit_internal_name)),
+  c("(Intercept)", "x", "dbreg_internal_x_0001__")
+)

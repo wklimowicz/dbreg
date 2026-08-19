@@ -31,7 +31,7 @@ standardize_coef_names = function(x) {
 #' @keywords internal
 gen_coeftable = function(betahat, vcov_mat, df_residual) {
   coefs = as.numeric(betahat)
-  names(coefs) = standardize_coef_names(rownames(betahat))
+  names(coefs) = rownames(betahat)
   ses = sqrt(Matrix::diag(vcov_mat))
   tstats = coefs / ses
   pvals = 2 * pt(-abs(tstats), df_residual)
@@ -383,6 +383,16 @@ add_composite_fe_columns = function(from_statement, fe, fe_components) {
     "FROM (SELECT dbreg_source.*, ", paste(expressions, collapse = ", "),
     " FROM (SELECT * ", from_statement, ") AS dbreg_source) AS dbreg_model_frame"
   )
+}
+
+# Encode a fixed-effect tuple without delimiter collisions. Length prefixes make
+# values such as c("a|b", "c") distinct from c("a", "b|c").
+composite_fe_key = function(data, components) {
+  encoded = lapply(components, function(component) {
+    value = as.character(data[[component]])
+    paste0(nchar(value, type = "bytes"), ":", value)
+  })
+  do.call(paste, c(encoded, sep = "|"))
 }
 
 #' Compute model-frame sample diagnostics

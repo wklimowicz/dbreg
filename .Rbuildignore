@@ -2,6 +2,7 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
 ^\.github$
+^\.tmp$
 ^LICENSE\.md$
 ^\_benchmarks/
 SCRATCH/

@@ -348,47 +348,107 @@ backend_supports_count_big = function(conn) {
   grepl("sql server|azure sql|microsoft sql server", dbms)
 }
 
+#' Interpret backend metadata
+#'
+#' Kept separate from `detect_backend()` so capability detection can be tested
+#' without constructing connector-specific DBI connection objects.
+#'
+#' @param info A list returned by `DBI::dbGetInfo()`.
+#' @param connection_string Optional connector connection-string metadata.
+#' @param connection_class Character vector of connection classes.
+#' @return List of backend name and capabilities.
+#' @keywords internal
+backend_info_from_metadata = function(
+  info = list(),
+  connection_string = NULL,
+  connection_class = character()
+) {
+  flatten_metadata = function(x) {
+    if (is.null(x)) {
+      return(character())
+    }
+    if (is.list(x)) {
+      return(unlist(x, recursive = TRUE, use.names = TRUE))
+    }
+    as.character(x)
+  }
+
+  info_flat = flatten_metadata(info)
+  connection_flat = flatten_metadata(connection_string)
+  metadata = tolower(paste(c(info_flat, connection_flat, connection_class), collapse = " "))
+  dbms = tolower(paste(info[["dbms.name"]], collapse = " "))
+  is_databricks = grepl("databricks", metadata)
+
+  native_query = NA
+  named_connection = connection_flat[!is.na(names(connection_flat))]
+  if (length(named_connection)) {
+    key_names = tolower(sub("^.*\\.", "", names(named_connection)))
+    native_value = named_connection[key_names == "usenativequery"]
+    if (length(native_value)) {
+      native_value = tolower(as.character(native_value[[1]]))
+      if (native_value %in% c("1", "true", "yes")) {
+        native_query = TRUE
+      } else if (native_value %in% c("0", "false", "no")) {
+        native_query = FALSE
+      }
+    }
+  }
+  if (is.na(native_query) && length(connection_flat)) {
+    connection_text = paste(connection_flat, collapse = ";")
+    native_match = regmatches(
+      connection_text,
+      regexpr("(?i)useNativeQuery\\s*=\\s*([012]|true|false)", connection_text, perl = TRUE)
+    )
+    if (length(native_match) && nzchar(native_match)) {
+      native_value = tolower(sub("^.*=\\s*", "", native_match))
+      if (native_value %in% c("1", "true")) native_query = TRUE
+      if (native_value %in% c("0", "false")) native_query = FALSE
+    }
+  }
+
+  name = if ("duckdb_connection" %in% connection_class || grepl("duckdb", dbms)) {
+    "duckdb"
+  } else if (grepl("sql server|azure sql|microsoft sql server", dbms)) {
+    "sqlserver"
+  } else if (grepl("postgres", dbms)) {
+    "postgres"
+  } else if (grepl("sqlite", dbms)) {
+    "sqlite"
+  } else if (grepl("mysql|mariadb", dbms)) {
+    "mysql"
+  } else if (is_databricks || grepl("spark", dbms)) {
+    "spark"
+  } else if (grepl("athena|presto|trino", dbms)) {
+    "athena"
+  } else {
+    "other"
+  }
+
+  list(
+    name = name,
+    supports_count_big = name == "sqlserver",
+    is_databricks = is_databricks,
+    supports_physical_temp_tables = is_databricks,
+    native_query = native_query
+  )
+}
+
 #' Detect SQL backend from connection
 #' 
 #' Returns backend name and capabilities for SQL dialect handling.
 #' 
 #' @param conn A DBI database connection object.
-#' @return List with `name` (character) and `supports_count_big` (logical).
+#' @return List with backend name and capabilities.
 #' @keywords internal
 detect_backend = function(conn) {
-  # First check connection class for DuckDB (dbms.name may be empty)
-  if (inherits(conn, "duckdb_connection")) {
-    return(list(name = "duckdb", supports_count_big = FALSE))
-  }
-
-  
   info = try(dbGetInfo(conn), silent = TRUE)
   if (inherits(info, "try-error")) {
-    return(list(name = "unknown", supports_count_big = FALSE))
+    info = list()
   }
-  dbms = tolower(paste(info[["dbms.name"]], collapse = " "))
-  list(
-    name = if (grepl("duckdb", dbms)) {
-      "duckdb"
-    } else if (grepl("sql server|azure sql|microsoft sql server", dbms)) {
-      "sqlserver"
-    } else if (grepl("postgres", dbms)) {
-      "postgres"
-    } else if (grepl("sqlite", dbms)) {
-      "sqlite"
-    } else if (grepl("mysql|mariadb", dbms)) {
-      "mysql"
-    } else if (grepl("spark", dbms)) {
-      "spark"
-    } else if (grepl("athena|presto|trino", dbms)) {
-      "athena"
-    } else {
-      "other"
-    },
-    supports_count_big = grepl(
-      "sql server|azure sql|microsoft sql server",
-      dbms
-    )
+  backend_info_from_metadata(
+    info = info,
+    connection_string = attr(conn, "connectionString"),
+    connection_class = class(conn)
   )
 }
 
@@ -572,6 +632,75 @@ drop_table_if_exists = function(conn, table_name, backend) {
     sql = glue("DROP TABLE IF EXISTS {table_name}")
   }
   tryCatch(dbExecute(conn, sql), error = function(e) NULL)
+}
+
+#' Validate a backend for Databricks AP
+#' @keywords internal
+validate_databricks_ap_backend = function(backend_info) {
+  if (!isTRUE(backend_info[["is_databricks"]]) ||
+      !isTRUE(backend_info[["supports_physical_temp_tables"]])) {
+    stop(
+      "[dbreg] Alternating-projection demeaning on Spark requires Databricks ",
+      "session-scoped temporary tables (Databricks SQL or Runtime 18.1+).",
+      call. = FALSE
+    )
+  }
+  if (identical(backend_info[["native_query"]], FALSE)) {
+    stop(
+      "[dbreg] Databricks temporary tables require native query mode. ",
+      "Reconnect with `useNativeQuery = TRUE`.",
+      call. = FALSE
+    )
+  }
+  invisible(backend_info)
+}
+
+#' Materialize an AP state table
+#'
+#' DuckDB support is intentional: it executes the production window AP path in
+#' local tests while normal DuckDB regressions retain the generic AP algorithm.
+#'
+#' @keywords internal
+create_ap_table_as = function(conn, table_name, select_sql, backend_info) {
+  backend = backend_info[["name"]]
+  if (isTRUE(backend_info[["is_databricks"]])) {
+    sql = glue("CREATE OR REPLACE TEMP TABLE {table_name} AS {select_sql}")
+  } else if (backend == "duckdb") {
+    sql = glue("CREATE OR REPLACE TEMP TABLE {table_name} AS {select_sql}")
+  } else {
+    validate_databricks_ap_backend(backend_info)
+  }
+  tryCatch(
+    dbExecute(conn, sql),
+    error = function(e) {
+      stop(
+        "[dbreg] Failed to materialize a session-scoped AP table. ",
+        "Databricks SQL or Runtime 18.1+ is required. Database error: ",
+        conditionMessage(e),
+        call. = FALSE
+      )
+    }
+  )
+}
+
+#' Drop a materialized AP state table
+#' @keywords internal
+drop_ap_table_if_exists = function(conn, table_name, backend_info) {
+  backend = backend_info[["name"]]
+  sql = if (isTRUE(backend_info[["is_databricks"]])) {
+    glue("DROP TEMP TABLE IF EXISTS {table_name}")
+  } else if (backend == "duckdb") {
+    glue("DROP TABLE IF EXISTS {table_name}")
+  } else {
+    return(invisible(FALSE))
+  }
+  tryCatch(
+    {
+      dbExecute(conn, sql)
+      invisible(TRUE)
+    },
+    error = function(e) invisible(FALSE)
+  )
 }
 
 #' Generate unique pairs of variables (preserves original nested loop order)

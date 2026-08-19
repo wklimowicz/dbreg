@@ -679,9 +679,15 @@ create_ap_table_as = function(conn, table_name, select_sql, backend_info) {
   tryCatch(
     dbExecute(conn, sql),
     error = function(e) {
+      requirement = if (isTRUE(backend_info[["is_databricks"]])) {
+        " Databricks SQL or Runtime 18.1+ is required."
+      } else {
+        ""
+      }
       stop(
-        "[dbreg] Failed to materialize a session-scoped AP table. ",
-        "Databricks SQL or Runtime 18.1+ is required. Database error: ",
+        "[dbreg] Failed to materialize a session-scoped AP table.",
+        requirement,
+        " Database error: ",
         conditionMessage(e),
         call. = FALSE
       )

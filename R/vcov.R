@@ -60,7 +60,8 @@ compute_meat_sql = function(conn, cte_sql, vars, yvar, betahat,
                             cte_name = "demeaned",
                             has_intercept = FALSE,
                             vars_sql = NULL,
-                            weights_expr = NULL) {
+                            weights_expr = NULL,
+                            numeric_type = "FLOAT") {
   # Build variable SQL expressions (use provided or construct from suffix)
   if (is.null(vars_sql)) {
     vars_sql = paste0(vars, var_suffix)
@@ -72,7 +73,7 @@ compute_meat_sql = function(conn, cte_sql, vars, yvar, betahat,
   weight_sql = if (is.null(weights_expr)) {
     NULL
   } else {
-    sprintf("CAST((%s) * (%s) AS FLOAT)", weights_expr, weights_expr)
+    sprintf("CAST((%s) * (%s) AS %s)", weights_expr, weights_expr, numeric_type)
   }
   build_sum = function(parts, alias) {
     parts = parts[!vapply(parts, is.null, logical(1))]
@@ -101,15 +102,15 @@ compute_meat_sql = function(conn, cte_sql, vars, yvar, betahat,
 
   if (has_intercept) {
     meat_terms = c(meat_terms, build_sum(c(
-      sprintf("CAST(%s AS FLOAT)", resid_expr),
-      sprintf("CAST(%s AS FLOAT)", resid_expr),
+      sprintf("CAST(%s AS %s)", resid_expr, numeric_type),
+      sprintf("CAST(%s AS %s)", resid_expr, numeric_type),
       weight_sql
     ), "meat_0_0"))
     for (j in seq_along(vars)) {
       meat_terms = c(meat_terms, build_sum(c(
-        sprintf("CAST(%s AS FLOAT)", resid_expr),
-        sprintf("CAST(%s AS FLOAT)", resid_expr),
-        sprintf("CAST(%s AS FLOAT)", vars_sql[j]),
+        sprintf("CAST(%s AS %s)", resid_expr, numeric_type),
+        sprintf("CAST(%s AS %s)", resid_expr, numeric_type),
+        sprintf("CAST(%s AS %s)", vars_sql[j], numeric_type),
         weight_sql
       ), sprintf("meat_0_%d", j)))
     }
@@ -118,10 +119,10 @@ compute_meat_sql = function(conn, cte_sql, vars, yvar, betahat,
   for (i in seq_along(vars)) {
     for (j in i:length(vars)) {
       meat_terms = c(meat_terms, build_sum(c(
-        sprintf("CAST(%s AS FLOAT)", resid_expr),
-        sprintf("CAST(%s AS FLOAT)", resid_expr),
-        sprintf("CAST(%s AS FLOAT)", vars_sql[i]),
-        sprintf("CAST(%s AS FLOAT)", vars_sql[j]),
+        sprintf("CAST(%s AS %s)", resid_expr, numeric_type),
+        sprintf("CAST(%s AS %s)", resid_expr, numeric_type),
+        sprintf("CAST(%s AS %s)", vars_sql[i], numeric_type),
+        sprintf("CAST(%s AS %s)", vars_sql[j], numeric_type),
         weight_sql
       ), sprintf("meat_%d_%d", i, j)))
     }
@@ -180,7 +181,8 @@ compute_meat_cluster_sql = function(conn, cte_sql, vars, yvar, betahat,
                                     cte_name = "demeaned",
                                     has_intercept = FALSE,
                                     vars_sql = NULL,
-                                    weights_expr = NULL) {
+                                    weights_expr = NULL,
+                                    numeric_type = "FLOAT") {
   # Build variable SQL expressions (use provided or construct from suffix)
   if (is.null(vars_sql)) {
     vars_sql = paste0(vars, var_suffix)
@@ -189,7 +191,11 @@ compute_meat_cluster_sql = function(conn, cte_sql, vars, yvar, betahat,
 
   # Extract beta values
   beta_vals = as.numeric(betahat[vars, 1])
-  weight_sql = if (is.null(weights_expr)) NULL else sprintf("CAST(%s AS FLOAT)", weights_expr)
+  weight_sql = if (is.null(weights_expr)) {
+    NULL
+  } else {
+    sprintf("CAST(%s AS %s)", weights_expr, numeric_type)
+  }
   build_sum = function(parts, alias) {
     parts = parts[!vapply(parts, is.null, logical(1))]
     sprintf("SUM(%s) AS %s", paste(parts, collapse = " * "), alias)
@@ -216,15 +222,15 @@ compute_meat_cluster_sql = function(conn, cte_sql, vars, yvar, betahat,
 
   if (has_intercept) {
     score_terms = c(score_terms, build_sum(c(
-      sprintf("CAST(%s AS FLOAT)", resid_expr),
+      sprintf("CAST(%s AS %s)", resid_expr, numeric_type),
       weight_sql
     ), "score_0"))
   }
 
   for (j in seq_along(vars)) {
     score_terms = c(score_terms, build_sum(c(
-      sprintf("CAST(%s AS FLOAT)", resid_expr),
-      sprintf("CAST(%s AS FLOAT)", vars_sql[j]),
+      sprintf("CAST(%s AS %s)", resid_expr, numeric_type),
+      sprintf("CAST(%s AS %s)", vars_sql[j], numeric_type),
       weight_sql
     ), sprintf("score_%d", j)))
   }

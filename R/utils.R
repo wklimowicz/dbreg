@@ -279,13 +279,39 @@ parse_regression_formula = function(fml) {
     stop("No regressors on RHS.")
   }
   
-  # Extract fixed effects (RHS part 2, after |)
-  fe = if (length(fml)[2] > 1) {
+  # Extract fixed effects (RHS part 2, after |). Composite FE dimensions keep
+  # their source columns so they can be materialized without concatenation.
+  fe_components = if (length(fml)[2] > 1) {
     rhs2 = formula(fml, lhs = 0, rhs = 2)
-    validate_expression(rhs2[[2]], c("+", "("), "fixed-effect")
-    all.vars(rhs2)
+    validate_expression(rhs2[[2]], c("+", "^", "("), "fixed-effect")
+    flatten_call = function(expr, operator) {
+      if (is.call(expr) && identical(as.character(expr[[1]]), "(")) {
+        return(flatten_call(expr[[2]], operator))
+      }
+      if (is.call(expr) && identical(as.character(expr[[1]]), operator)) {
+        return(c(flatten_call(expr[[2]], operator), flatten_call(expr[[3]], operator)))
+      }
+      list(expr)
+    }
+    fe_terms = flatten_call(rhs2[[2]], "+")
+    lapply(fe_terms, function(term) {
+      components = flatten_call(term, "^")
+      if (!all(vapply(components, is.symbol, logical(1)))) {
+        stop("Fixed-effect interactions must contain column names only.", call. = FALSE)
+      }
+      vapply(components, as.character, character(1))
+    })
   } else {
     NULL
+  }
+  if (is.null(fe_components)) {
+    fe_labels = NULL
+    fe = NULL
+  } else {
+    fe_labels = vapply(fe_components, paste, collapse = "^", character(1))
+    fe = vapply(seq_along(fe_components), function(i) {
+      if (length(fe_components[[i]]) == 1) fe_components[[i]] else paste0("dbreg_fe_", i, "__")
+    }, character(1))
   }
   
   list(
@@ -294,7 +320,29 @@ parse_regression_formula = function(fml) {
     xvars = xvars,
     term_labels = term_labels,
     has_interactions = has_interactions,
-    fe = fe
+    fe = fe,
+    fe_labels = fe_labels,
+    fe_components = fe_components
+  )
+}
+
+#' Add collision-safe composite fixed-effect columns to a model frame
+#' @keywords internal
+add_composite_fe_columns = function(from_statement, fe, fe_components) {
+  composite = which(lengths(fe_components) > 1)
+  if (!length(composite)) {
+    return(from_statement)
+  }
+  expressions = vapply(composite, function(i) {
+    paste0(
+      "DENSE_RANK() OVER (ORDER BY ",
+      paste(fe_components[[i]], collapse = ", "),
+      ") AS ", fe[[i]]
+    )
+  }, character(1))
+  paste0(
+    "FROM (SELECT dbreg_source.*, ", paste(expressions, collapse = ", "),
+    " FROM (SELECT * ", from_statement, ") AS dbreg_source) AS dbreg_model_frame"
   )
 }
 

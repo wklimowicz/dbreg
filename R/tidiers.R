@@ -87,7 +87,8 @@ glance.dbreg = function(x, ...) {
   if (is.null(fe_levels)) {
     fe_levels_text = NA_character_
   } else {
-    fe_names = x[["fe"]]
+    fe_names = x[["fe_labels"]]
+    if (is.null(fe_names)) fe_names = x[["fe"]]
     if (is.null(names(fe_levels)) && length(fe_names) == length(fe_levels)) {
       names(fe_levels) = fe_names
     }

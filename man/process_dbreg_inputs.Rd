@@ -11,6 +11,7 @@ process_dbreg_inputs(
   data,
   path,
   weights,
+  factor_refs,
   vcov,
   cluster,
   ssc,

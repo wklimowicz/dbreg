@@ -11,6 +11,7 @@ dbreg(
   data = NULL,
   path = NULL,
   weights = NULL,
+  factor_refs = NULL,
   vcov = c("iid", "hc1"),
   strategy = c("auto", "compress", "moments", "demean", "within", "mundlak"),
   compress_ratio = NULL,
@@ -32,8 +33,8 @@ estimated. Fixed effects should be included after a pipe, e.g
 \code{fml = y ~ x1 + x2 | fe1 + f2}. Interaction terms are supported using
 standard R syntax (\code{:} for interactions, \code{*} for main effects plus
 interaction). Composite fixed effects use \code{^}, for example
-\code{y ~ x | school + subject ^ cohort}. Transformations and literals are not
-yet supported.}
+\code{y ~ x | school + subject ^ cohort}. The transformations \code{I(x^2)} and
+\code{I(x^3)} are supported; other transformations and literals are rejected.}
 
 \item{conn}{Database connection, e.g. created with
 \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
@@ -65,6 +66,10 @@ Ignored if either \code{table} or \code{data} is provided.
 or NULL (default) for unweighted regression. Weights must be non-negative;
 rows with zero weight are dropped. Weighted regressions support \code{"iid"},
 \code{"hc1"}, and clustered SEs, and are compatible with all strategies.}
+
+\item{factor_refs}{Optional named list or vector selecting reference levels
+for categorical regressors, for example \code{factor_refs = c(group = "control")}.
+Supplying a reference also treats a numeric column as categorical.}
 
 \item{vcov}{Character string or formula denoting the desired type of variance-
 covariance correction / standard errors. Options are \code{"iid"} (default),
@@ -304,6 +309,10 @@ dbreg(weight ~ Time, data = ChickWeight, strategy = "moments") # no FEs
 # Interactions: does the effect of Time vary by Diet?
 # (Diet main effects are collinear with Chick FE, so these drop out)
 dbreg(weight ~ Time * Diet | Chick, data = ChickWeight)
+
+# Restricted polynomial transformations and explicit factor references
+dbreg(weight ~ Time + I(Time^2), data = ChickWeight)
+dbreg(weight ~ Diet + Time, data = ChickWeight, factor_refs = c(Diet = "2"))
 
 #
 ## DBI connection ----

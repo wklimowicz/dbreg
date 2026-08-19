@@ -130,6 +130,16 @@ predict.dbreg = function(
   xvars = object[["xvars"]]
   yvar = object[["yvar"]]
 
+  factor_refs = object[["factor_refs"]]
+  if (length(factor_refs)) {
+    for (variable in names(factor_refs)) {
+      newdata[[variable]] = stats::relevel(
+        factor(newdata[[variable]]),
+        ref = as.character(factor_refs[[variable]])
+      )
+    }
+  }
+
   fe_components = object[["fe_components"]]
   if (!is.null(fe_components)) {
     for (i in seq_along(fe_components)) {

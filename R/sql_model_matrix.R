@@ -16,6 +16,7 @@
 #' @param fe_vars Character vector of fixed effect variable names. These are
 #'   treated as "in the model" for determining whether to drop reference levels
 #'   in interactions.
+#' @param factor_refs Optional named list of categorical reference levels.
 #' @return List with:
 #'   - `select_exprs`: character vector of SQL expressions
 #'   - `col_names`: corresponding column names
@@ -37,7 +38,8 @@ sql_model_matrix = function(
   table,
   expand = c("all", "interactions"),
   sep = "_x_",
-  fe_vars = character()
+  fe_vars = character(),
+  factor_refs = NULL
 ) {
   expand = match.arg(expand)
   
@@ -53,7 +55,7 @@ sql_model_matrix = function(
   }
   
   # Get column types and factor levels from database
-  col_info = get_column_info(conn, table, term_labels)
+  col_info = get_column_info(conn, table, term_labels, factor_refs)
   
   result = list(select_exprs = character(), col_names = character())
   
@@ -69,9 +71,11 @@ sql_model_matrix = function(
 
 #' Get column types and factor levels from database
 #' @keywords internal
-get_column_info = function(conn, table, term_labels) {
+get_column_info = function(conn, table, term_labels, factor_refs = NULL) {
   # Extract unique variable names from all terms
-  vars = unique(unlist(lapply(term_labels, function(t) strsplit(t, ":")[[1]])))
+  vars = unique(unlist(lapply(term_labels, function(term) {
+    all.vars(parse(text = term, keep.source = FALSE)[[1]])
+  })))
   
   # Build FROM clause
   from_sql = if (grepl("^FROM", table, ignore.case = TRUE)) table else paste("FROM", table)
@@ -87,26 +91,74 @@ get_column_info = function(conn, table, term_labels) {
   for (v in vars) {
     col_class = class(schema[[v]])[1]
     # Treat character, factor, logical as categorical
-    if (col_class %in% c("character", "factor", "logical")) {
+    if (col_class %in% c("character", "factor", "logical") || v %in% names(factor_refs)) {
       types[[v]] = "factor"
       # Get distinct levels
-      lvl_query = glue("SELECT DISTINCT {v} FROM ({from_sql} LIMIT 100000) WHERE {v} IS NOT NULL ORDER BY {v}")
+      lvl_query = glue(
+        "SELECT DISTINCT {v} FROM (SELECT * {from_sql}) AS dbreg_levels ",
+        "WHERE {v} IS NOT NULL ORDER BY {v}"
+      )
       levels[[v]] = dbGetQuery(conn, lvl_query)[[1]]
+      if (v %in% names(factor_refs)) {
+        ref_idx = match(as.character(factor_refs[[v]]), as.character(levels[[v]]))
+        if (is.na(ref_idx)) {
+          stop(
+            "Reference level `", factor_refs[[v]], "` was not found in regressor `", v, "`.",
+            call. = FALSE
+          )
+        }
+        levels[[v]] = levels[[v]][c(ref_idx, setdiff(seq_along(levels[[v]]), ref_idx))]
+      }
     } else {
       types[[v]] = "numeric"
     }
   }
   
-  list(types = types, levels = levels)
+  level_sql = lapply(levels, function(x) {
+    vapply(x, function(value) as.character(DBI::dbQuoteLiteral(conn, value)), character(1))
+  })
+  list(types = types, levels = levels, level_sql = level_sql)
+}
+
+parse_power_term = function(term) {
+  expr = tryCatch(parse(text = term, keep.source = FALSE)[[1]], error = function(e) NULL)
+  if (is.null(expr) || !is.call(expr) || !identical(as.character(expr[[1]]), "I")) {
+    return(NULL)
+  }
+  power = expr[[2]]
+  if (!is.call(power) || !identical(as.character(power[[1]]), "^") ||
+      !is.symbol(power[[2]]) || !is.numeric(power[[3]]) ||
+      !as.numeric(power[[3]]) %in% c(2, 3)) {
+    return(NULL)
+  }
+  variable = as.character(power[[2]])
+  exponent = as.integer(power[[3]])
+  list(
+    variable = variable,
+    exponent = exponent,
+    sql = sprintf("POWER(%s, %d)", variable, exponent),
+    name = sprintf("%s__pow%d", variable, exponent)
+  )
+}
+
+split_interaction_term = function(term) {
+  expr = parse(text = term, keep.source = FALSE)[[1]]
+  flatten = function(x) {
+    if (is.call(x) && identical(as.character(x[[1]]), ":")) {
+      return(c(flatten(x[[2]]), flatten(x[[3]])))
+    }
+    paste(deparse(x, width.cutoff = 500L), collapse = "")
+  }
+  flatten(expr)
 }
 
 #' Expand a single term into SQL expressions
 #' @keywords internal
 expand_term = function(term, col_info, expand, sep = "_x_", all_terms = character(), fe_vars = character()) {
-  vars = strsplit(term, ":")[[1]]
+  vars = split_interaction_term(term)
   is_interaction = length(vars) > 1
   
-  if (!is_interaction && expand == "interactions") {
+  if (!is_interaction && expand == "interactions" && is.null(parse_power_term(term))) {
     # Main effect, only expanding interactions: return as-is
     return(list(list(sql = term, name = term)))
   }
@@ -128,26 +180,31 @@ expand_term = function(term, col_info, expand, sep = "_x_", all_terms = characte
 #' Expand a single variable into SQL expression(s)
 #' @keywords internal
 expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRUE) {
-  is_factor = identical(col_info[["types"]][[var]], "factor")
+  power = parse_power_term(var)
+  source_var = if (is.null(power)) var else power[["variable"]]
+  is_factor = is.null(power) && identical(col_info[["types"]][[source_var]], "factor")
   
   # Only expand factors if: expand="all", OR variable is part of interaction
   if (is_factor && (expand == "all" || in_interaction)) {
-    lvls = col_info[["levels"]][[var]]
+    lvls = col_info[["levels"]][[source_var]]
+    lvl_sql = col_info[["level_sql"]][[source_var]]
     if (length(lvls) < 2) {
       return(list(list(sql = "1", name = paste0(var, "_constant"))))
     }
     # Drop first level (reference) only if appropriate
     if (drop_ref) {
       lvls = lvls[-1]
+      lvl_sql = lvl_sql[-1]
     }
-    lapply(lvls, function(lvl) {
-      # Escape single quotes in level names
-      lvl_escaped = gsub("'", "''", lvl)
+    lapply(seq_along(lvls), function(i) {
+      lvl = lvls[[i]]
       list(
-        sql = glue("CASE WHEN {var} = '{lvl_escaped}' THEN 1.0 ELSE 0.0 END"),
-        name = paste0(var, lvl)
+        sql = glue("CASE WHEN {source_var} = {lvl_sql[[i]]} THEN 1.0 ELSE 0.0 END"),
+        name = paste0(source_var, lvl)
       )
     })
+  } else if (!is.null(power)) {
+    list(list(sql = power[["sql"]], name = power[["name"]]))
   } else {
     # Numeric or unexpanded factor: pass through
     list(list(sql = var, name = var))
@@ -175,4 +232,3 @@ cross_product = function(expansions, sep = "_x_") {
   }
   result
 }
-

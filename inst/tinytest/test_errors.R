@@ -27,7 +27,7 @@ expect_error(
 
 # Unsupported expressions must not be silently simplified by all.vars().
 expect_error(
-  dbreg(Temp ~ I(Wind^2) | Month, data = airquality),
+  dbreg(Temp ~ log(Wind) | Month, data = airquality),
   "Unsupported regressor expression"
 )
 expect_error(

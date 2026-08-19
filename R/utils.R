@@ -18,7 +18,14 @@ env2env = function(source, target, keys = NULL) {
 
 #' Convert internal interaction notation to standard R notation
 #' @keywords internal
-standardize_coef_names = function(x) gsub("_x_", ":", x, fixed = TRUE)
+standardize_coef_names = function(x) {
+  if (is.null(x)) return(x)
+  x = as.character(x)
+  vapply(strsplit(x, "_x_", fixed = TRUE), function(parts) {
+    parts = sub("^(.+)__pow([23])$", "I(\\1^\\2)", parts, perl = TRUE)
+    paste(parts, collapse = ":")
+  }, character(1), USE.NAMES = FALSE)
+}
 
 #' Generate coefficient table from estimates and vcov matrix
 #' @keywords internal
@@ -269,11 +276,42 @@ parse_regression_formula = function(fml) {
   
   # Extract RHS part 1: variables and term structure
   rhs1 = formula(fml, lhs = 0, rhs = 1)
-  validate_expression(rhs1[[2]], c("+", ":", "*", "("), "regressor")
+  validate_regressor_expression = function(expr) {
+    if (is.symbol(expr) || is.numeric(expr)) return(invisible(NULL))
+    if (!is.call(expr)) {
+      stop("Unsupported regressor expression: ", deparse(expr), call. = FALSE)
+    }
+    call_name = as.character(expr[[1]])
+    if (call_name == "I") {
+      if (length(expr) != 2 || !is.call(expr[[2]]) ||
+          !identical(as.character(expr[[2]][[1]]), "^") ||
+          !is.symbol(expr[[2]][[2]]) || !is.numeric(expr[[2]][[3]]) ||
+          !as.numeric(expr[[2]][[3]]) %in% c(2, 3)) {
+        stop(
+          "Unsupported regressor expression `", deparse(expr),
+          "`. Only `I(column^2)` and `I(column^3)` are supported.",
+          call. = FALSE
+        )
+      }
+      return(invisible(NULL))
+    }
+    if (call_name == "^" || !call_name %in% c("+", ":", "*", "(")) {
+      stop(
+        "Unsupported regressor expression `", deparse(expr),
+        "`. Supported terms are column names, `I(column^2)`, `I(column^3)`, ",
+        "and the operators `+`, `:`, and `*`.",
+        call. = FALSE
+      )
+    }
+    for (arg in as.list(expr)[-1]) validate_regressor_expression(arg)
+    invisible(NULL)
+  }
+  validate_regressor_expression(rhs1[[2]])
   tt = terms(rhs1)
   term_labels = attr(tt, "term.labels")
   xvars = all.vars(rhs1)  # unique variable names
   has_interactions = any(grepl(":", term_labels))
+  has_transformations = any(grepl("^I\\(", term_labels))
   
   if (!length(xvars)) {
     stop("No regressors on RHS.")
@@ -320,6 +358,7 @@ parse_regression_formula = function(fml) {
     xvars = xvars,
     term_labels = term_labels,
     has_interactions = has_interactions,
+    has_transformations = has_transformations,
     fe = fe,
     fe_labels = fe_labels,
     fe_components = fe_components

@@ -6,14 +6,15 @@
 execute_moments_strategy = function(inputs) {
   # Get SQL expressions for design matrix terms
   # For interactions/factors, this expands to CASE WHEN expressions
-  if (isTRUE(inputs[["has_interactions"]])) {
+  if (isTRUE(inputs[["has_sql_expressions"]])) {
     table_ref = sub("^FROM\\s+", "", inputs[["from_statement"]], ignore.case = TRUE)
     sql_design = sql_model_matrix(
       inputs[["fml"]],
       inputs[["conn"]],
       table_ref,
       expand = "all",
-      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]]))
+      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]])),
+      factor_refs = inputs[["factor_refs"]]
     )
     xvars_sql = sql_design[["select_exprs"]]
     xvar_names = sql_design[["col_names"]]
@@ -169,14 +170,15 @@ execute_moments_strategy = function(inputs) {
 execute_demean_strategy = function(inputs) {
   # Handle interactions: expand to SQL expressions
 
-  if (isTRUE(inputs[["has_interactions"]])) {
+  if (isTRUE(inputs[["has_sql_expressions"]])) {
     table_ref = sub("^FROM\\s+", "", inputs[["from_statement"]], ignore.case = TRUE)
     sql_design = sql_model_matrix(
       inputs[["fml"]],
       inputs[["conn"]],
       table_ref,
       expand = "all",
-      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]]))
+      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]])),
+      factor_refs = inputs[["factor_refs"]]
     )
     xvars_sql = sql_design[["select_exprs"]]
     xvar_names = sql_design[["col_names"]]
@@ -704,14 +706,15 @@ execute_mundlak_strategy = function(inputs) {
   }
 
   # Handle interactions: expand to SQL expressions
-  if (isTRUE(inputs[["has_interactions"]])) {
+  if (isTRUE(inputs[["has_sql_expressions"]])) {
     table_ref = sub("^FROM\\s+", "", inputs[["from_statement"]], ignore.case = TRUE)
     sql_design = sql_model_matrix(
       inputs[["fml"]],
       inputs[["conn"]],
       table_ref,
       expand = "all",
-      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]]))
+      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]])),
+      factor_refs = inputs[["factor_refs"]]
     )
     xvars_sql = sql_design[["select_exprs"]]
     xvar_names = sql_design[["col_names"]]
@@ -749,10 +752,13 @@ execute_mundlak_strategy = function(inputs) {
   # (can't compute AVG on factors; their means are handled via expanded dummies)
   # This follows the Mundlak/CRE approach of controlling for correlation
   # between original covariates and the FE
-  if (isTRUE(inputs[["has_interactions"]])) {
+  if (isTRUE(inputs[["has_sql_expressions"]])) {
     # Filter to numeric vars only (factors are in sql_design$factor_levels)
     factor_vars = names(sql_design[["factor_levels"]])
-    numeric_xvars = setdiff(inputs[["xvars"]], factor_vars)
+    numeric_xvars = c(
+      setdiff(inputs[["xvars"]], factor_vars),
+      grep("__pow[23]$", xvar_names, value = TRUE)
+    )
   } else {
     numeric_xvars = inputs[["xvars"]]
   }
@@ -976,7 +982,7 @@ execute_compress_strategy = function(inputs) {
   }
 
   # Handle interactions: expand to SQL expressions
-  if (isTRUE(inputs[["has_interactions"]])) {
+  if (isTRUE(inputs[["has_sql_expressions"]])) {
     # Extract table name from FROM statement for sql_model_matrix
     table_ref = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
     
@@ -985,8 +991,9 @@ execute_compress_strategy = function(inputs) {
       inputs[["fml"]],
       inputs[["conn"]],
       table_ref,
-      expand = "interactions",
-      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]]))
+      expand = if (length(inputs[["factor_refs"]])) "all" else "interactions",
+      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]])),
+      factor_refs = inputs[["factor_refs"]]
     )
     
     # Build SELECT expressions with aliases
@@ -1057,7 +1064,7 @@ execute_compress_strategy = function(inputs) {
 
   # Build design matrix
   # Use expanded column names if interactions were present
-  design_vars = if (isTRUE(inputs[["has_interactions"]])) xvar_names else inputs[["xvars"]]
+  design_vars = if (isTRUE(inputs[["has_sql_expressions"]])) xvar_names else inputs[["xvars"]]
   X = sparse.model.matrix(
     reformulate(c(design_vars, inputs[["fe"]])),
     compressed_dat
@@ -1072,11 +1079,14 @@ execute_compress_strategy = function(inputs) {
   XtX = crossprod(Xw)
   XtY = crossprod(Xw, Yw)
 
-  design_pattern_all = paste0("^(", paste(standardize_coef_names(design_vars), collapse = "|"), ")")
   coef_names_all = standardize_coef_names(colnames(X))
-  coef_names_all = coef_names_all[
-    coef_names_all != "(Intercept)" & grepl(design_pattern_all, coef_names_all)
-  ]
+  coef_names_all = coef_names_all[coef_names_all != "(Intercept)"]
+  if (isTRUE(inputs[["has_sql_expressions"]])) {
+    coef_names_all = intersect(coef_names_all, standardize_coef_names(design_vars))
+  } else {
+    design_pattern_all = paste0("^(", paste(standardize_coef_names(design_vars), collapse = "|"), ")")
+    coef_names_all = coef_names_all[grepl(design_pattern_all, coef_names_all)]
+  }
 
   # Detect and handle collinearity
   collin = detect_collinearity(XtX, XtY, verbose = inputs[["verbose"]])
@@ -1162,8 +1172,12 @@ execute_compress_strategy = function(inputs) {
   # Match coefficients that start with any design_var name
   all_coef_names = rownames(coeftable)
   all_coef_names = all_coef_names[all_coef_names != "(Intercept)"]
-  design_pattern = paste0("^(", paste(standardize_coef_names(design_vars), collapse = "|"), ")")
-  coef_names = all_coef_names[grepl(design_pattern, all_coef_names)]
+  if (isTRUE(inputs[["has_sql_expressions"]])) {
+    coef_names = intersect(all_coef_names, standardize_coef_names(design_vars))
+  } else {
+    design_pattern = paste0("^(", paste(standardize_coef_names(design_vars), collapse = "|"), ")")
+    coef_names = all_coef_names[grepl(design_pattern, all_coef_names)]
+  }
 
   return(
     list(

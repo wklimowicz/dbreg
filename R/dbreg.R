@@ -98,7 +98,9 @@
 #'   superseded arguments for backwards compatibility.
 #'
 #' @return A list of class "dbreg" containing various slots, including a table
-#' of coefficients (which the associated `print` method will display).
+#' of coefficients (which the associated `print` method will display). Fits that
+#' use alternating projections also contain `ap_iterations`, the number of
+#' completed projection cycles, and `ap_max_abs`, the final convergence metric.
 #'
 #' @section Acceleration Strategies:
 #'
@@ -197,6 +199,20 @@
 #' 
 #' _Tip: set `dbreg(..., verbose = TRUE)` to print information about the auto
 #' strategy decision criteria._
+#'
+#' @section Databricks alternating projections:
+#'
+#' On Databricks, weighted, unbalanced, or multi-way fixed-effect demeaning uses
+#' bounded window-function AP chunks materialized in session-scoped temporary
+#' tables. This requires Databricks SQL or Databricks Runtime 18.1 or later and
+#' a connector that preserves one session across statements. Connectors that
+#' rewrite SQL must use native-query mode; for the Databricks ODBC driver,
+#' configure `useNativeQuery = TRUE`.
+#'
+#' The number of complete AP cycles per materialized chunk is controlled by
+#' `options(dbreg.spark_ap_chunk_cycles = 3L)`. This bounds query-plan depth but
+#' does not cap convergence. Total cycles and convergence remain controlled by
+#' `dbreg.ap_max_iter` (default 100) and `dbreg.ap_tol` (default `1e-10`).
 #'
 #' @references
 #' Arkhangelsky, D. & Imbens, G. (2024)

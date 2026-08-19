@@ -99,9 +99,10 @@ Both `dbreg()` and `dbbinsreg()` follow this pattern.
 - `compute_meat_cluster_compress()` — special cluster meat for compress strategy
 
 ### Alternating Projections (AP)
-Iterative demeaning for exact FE when analytic demeaning isn't available. Uses temp tables with a join-based approach (GROUP BY to compute means, then JOIN to subtract). Controlled by:
+Iterative demeaning for exact FE when analytic demeaning isn't available. DuckDB and other existing backends use a join-based temp-table approach (GROUP BY to compute means, then JOIN to subtract). Databricks SQL and Runtime 18.1+ use bounded window-function chunks materialized into two session-scoped temporary tables. Controlled by:
 - `options(dbreg.ap_max_iter = 100)` — max iterations
 - `options(dbreg.ap_tol = 1e-10)` — convergence tolerance
+- `options(dbreg.spark_ap_chunk_cycles = 3L)` — complete AP cycles per Databricks chunk
 
 Note: AP has a convergence floor around ~1e-8 on larger datasets due to floating-point noise from repeated temp-table serialization. Use `tol = 1e-7` for large data, or consider `strategy = "mundlak"` as a single-pass alternative.
 
@@ -110,7 +111,7 @@ Backend detection via `detect_backend()` in `R/utils.R`. Supported dialects:
 - DuckDB (default, with reservoir sampling)
 - SQL Server (COUNT_BIG, TOP N, #temp tables, NEWID)
 - PostgreSQL, SQLite, MySQL/MariaDB
-- Spark, Athena/Presto/Trino (REAL instead of FLOAT for Athena)
+- Databricks/Spark, Athena/Presto/Trino (DOUBLE for Databricks demeaning; REAL instead of FLOAT for Athena)
 
 ## Testing
 

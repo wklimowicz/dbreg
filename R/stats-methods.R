@@ -130,6 +130,30 @@ predict.dbreg = function(
   xvars = object[["xvars"]]
   yvar = object[["yvar"]]
 
+  fe_components = object[["fe_components"]]
+  if (!is.null(fe_components)) {
+    for (i in seq_along(fe_components)) {
+      if (length(fe_components[[i]]) > 1) {
+        fe_name = fe[[i]]
+        missing_components = setdiff(fe_components[[i]], names(newdata))
+        if (length(missing_components)) {
+          stop(
+            "Composite fixed effect `", object[["fe_labels"]][[i]],
+            "` requires columns: ", paste(missing_components, collapse = ", "),
+            call. = FALSE
+          )
+        }
+        newdata[[fe_name]] = do.call(
+          interaction,
+          c(
+            as.list(newdata[, fe_components[[i]], drop = FALSE]),
+            list(drop = TRUE, lex.order = TRUE)
+          )
+        )
+      }
+    }
+  }
+
   # Ensure FE columns are factors
   for (f in fe) {
     newdata[[f]] = factor(newdata[[f]])

@@ -12,6 +12,10 @@ New features
 - `coef()` and `tidy()` gain a `collin = TRUE` option that restores regressors
   removed for collinearity as `NA`; fitted objects retain the corresponding
   full named `collin.coef` vector.
+- Fixed-effect formulas now support collision-safe composite dimensions with
+  `^`, such as `y ~ x | school + subject ^ cohort`. Composite identifiers are
+  generated from the component tuple and work with compression and demeaning/AP
+  strategies.
 - Fitted objects now retain sample, covariance, clustering, small-sample
   correction, and alternating-projection diagnostics. `glance()` reports these
   fields, and `fe_tol` and `fe_max_iter` provide per-fit AP controls.

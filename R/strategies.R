@@ -13,7 +13,7 @@ execute_moments_strategy = function(inputs) {
       inputs[["conn"]],
       table_ref,
       expand = "all",
-      fe_vars = inputs[["fe"]]
+      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]]))
     )
     xvars_sql = sql_design[["select_exprs"]]
     xvar_names = sql_design[["col_names"]]
@@ -176,7 +176,7 @@ execute_demean_strategy = function(inputs) {
       inputs[["conn"]],
       table_ref,
       expand = "all",
-      fe_vars = inputs[["fe"]]
+      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]]))
     )
     xvars_sql = sql_design[["select_exprs"]]
     xvar_names = sql_design[["col_names"]]
@@ -711,7 +711,7 @@ execute_mundlak_strategy = function(inputs) {
       inputs[["conn"]],
       table_ref,
       expand = "all",
-      fe_vars = inputs[["fe"]]
+      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]]))
     )
     xvars_sql = sql_design[["select_exprs"]]
     xvar_names = sql_design[["col_names"]]
@@ -986,7 +986,7 @@ execute_compress_strategy = function(inputs) {
       inputs[["conn"]],
       table_ref,
       expand = "interactions",
-      fe_vars = inputs[["fe"]]
+      fe_vars = unique(c(inputs[["fe"]], inputs[["fe_source_vars"]]))
     )
     
     # Build SELECT expressions with aliases

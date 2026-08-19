@@ -31,6 +31,6 @@ expect_error(
   "Unsupported regressor expression"
 )
 expect_error(
-  dbreg(Temp ~ Wind | Month ^ Day, data = airquality),
+  dbreg(Temp ~ Wind | interaction(Month, Day), data = airquality),
   "Unsupported fixed-effect expression"
 )

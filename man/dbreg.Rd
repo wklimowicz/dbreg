@@ -31,7 +31,9 @@ dbreg(
 estimated. Fixed effects should be included after a pipe, e.g
 \code{fml = y ~ x1 + x2 | fe1 + f2}. Interaction terms are supported using
 standard R syntax (\code{:} for interactions, \code{*} for main effects plus
-interaction). Transformations and literals are not yet supported.}
+interaction). Composite fixed effects use \code{^}, for example
+\code{y ~ x | school + subject ^ cohort}. Transformations and literals are not
+yet supported.}
 
 \item{conn}{Database connection, e.g. created with
 \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or

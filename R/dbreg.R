@@ -11,7 +11,9 @@
 #' estimated. Fixed effects should be included after a pipe, e.g
 #' `fml = y ~ x1 + x2 | fe1 + f2`. Interaction terms are supported using
 #' standard R syntax (`:` for interactions, `*` for main effects plus
-#' interaction). Transformations and literals are not yet supported.
+#' interaction). Composite fixed effects use `^`, for example
+#' `y ~ x | school + subject ^ cohort`. Transformations and literals are not
+#' yet supported.
 #' @param conn Database connection, e.g. created with
 #' \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
 #' ephemeral (in-memory). If no connection is provided, then an ephemeral
@@ -455,6 +457,9 @@ process_dbreg_inputs = function(
   term_labels = fml_parsed[["term_labels"]]
   has_interactions = fml_parsed[["has_interactions"]]
   fe = fml_parsed[["fe"]]
+  fe_labels = fml_parsed[["fe_labels"]]
+  fe_components = fml_parsed[["fe_components"]]
+  fe_source_vars = unique(unlist(fe_components, use.names = FALSE))
 
   if (length(fe_tol) != 1 || !is.numeric(fe_tol) || !is.finite(fe_tol) || fe_tol < 0) {
     stop("`fe_tol` must be one finite, non-negative number.", call. = FALSE)
@@ -494,7 +499,7 @@ process_dbreg_inputs = function(
   }
 
   sample_diagnostics = compute_sample_diagnostics(
-    conn, input_from_statement, yvar, xvars, fe, weights, cluster_var
+    conn, input_from_statement, yvar, xvars, fe_source_vars, weights, cluster_var
   )
 
   # Heuristic for continuous regressors (only if data passed)
@@ -542,7 +547,7 @@ process_dbreg_inputs = function(
         paste0(xvars, " IS NOT NULL")
       )
       if (!is.null(fe)) {
-        where_clauses = c(where_clauses, paste0(fe, " IS NOT NULL"))
+        where_clauses = c(where_clauses, paste0(fe_source_vars, " IS NOT NULL"))
       }
       if (!is.null(cluster_var)) {
         where_clauses = c(where_clauses, paste0(cluster_var, " IS NOT NULL"))
@@ -556,6 +561,7 @@ process_dbreg_inputs = function(
     WHERE {paste(where_clauses, collapse = ' AND ')}
     ")
   }
+  from_statement = add_composite_fe_columns(from_statement, fe, fe_components)
 
   list2env(list(
     fml = fml,
@@ -564,6 +570,9 @@ process_dbreg_inputs = function(
     term_labels = term_labels,
     has_interactions = has_interactions,
     fe = fe,
+    fe_labels = fe_labels,
+    fe_components = fe_components,
+    fe_source_vars = fe_source_vars,
     weights = weights,
     conn = conn,
     from_statement = from_statement,
@@ -1430,6 +1439,8 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy) {
   estimates = setNames(result[["coeftable"]][, "estimate"], rownames(result[["coeftable"]]))
   dropped = setdiff(result[["collin.var"]], names(estimates))
   result[["collin.coef"]] = c(estimates, setNames(rep(NA_real_, length(dropped)), dropped))
+  result[["fe_labels"]] = inputs[["fe_labels"]]
+  result[["fe_components"]] = inputs[["fe_components"]]
   result[["vcov_type"]] = inputs[["vcov_type_req"]]
   result[["cluster_var"]] = inputs[["cluster_var"]]
   result[["ssc"]] = if (inputs[["vcov_type_req"]] == "cluster") inputs[["ssc"]] else NULL

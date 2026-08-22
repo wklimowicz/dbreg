@@ -53,7 +53,7 @@ execute_moments_strategy = function(inputs) {
     return(moments_df)
   }
   n_total = moments_df[["n_total"]]
-  sum_w = moments_df[["sum_w"]]
+  sum_w = as.numeric(moments_df[["sum_w"]])
 
   vars_all = c("(Intercept)", xvar_names)
   p = length(vars_all)

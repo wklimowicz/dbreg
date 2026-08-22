@@ -1006,16 +1006,18 @@ dbreg_window_alternating_projections = function(
   }
 
   convergence_sql = function(table_name) {
-    diagnostics = unlist(lapply(fe, function(fe_k) {
-      vapply(tilde_names, function(v) {
-        sprintf(
-          "SELECT ABS(SUM(__w * %s) / SUM(__w)) AS max_abs FROM %s GROUP BY %s",
-          v,
-          table_name,
-          fe_k
-        )
-      }, character(1))
-    }), use.names = FALSE)
+    diagnostics = vapply(fe, function(fe_k) {
+      aliases = sprintf("dbreg_mean_%04d", seq_along(tilde_names))
+      means = sprintf(
+        "ABS(SUM(__w * %s) / SUM(__w)) AS %s", tilde_names, aliases
+      )
+      paste0(
+        "SELECT MAX(GREATEST(", paste(aliases, collapse = ", "),
+        ")) AS max_abs FROM (SELECT ", fe_k, ", ",
+        paste(means, collapse = ", "), " FROM ", table_name,
+        " GROUP BY ", fe_k, ") dbreg_group_means"
+      )
+    }, character(1))
     paste0(
       "SELECT MAX(max_abs) AS max_abs FROM (",
       paste(diagnostics, collapse = " UNION ALL "),

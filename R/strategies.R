@@ -53,7 +53,7 @@ execute_moments_strategy = function(inputs) {
     return(moments_df)
   }
   n_total = moments_df[["n_total"]]
-  sum_w = moments_df[["sum_w"]]
+  sum_w = as.numeric(moments_df[["sum_w"]])
 
   vars_all = c("(Intercept)", xvar_names)
   p = length(vars_all)
@@ -186,6 +186,11 @@ execute_demean_strategy = function(inputs) {
   }
   
   yvar = inputs[["yvar"]]
+  numeric_type = if (detect_backend(inputs[["conn"]])[["name"]] == "spark") {
+    "DOUBLE"
+  } else {
+    "FLOAT"
+  }
   weights_expr_base = sql_weight_expr(inputs[["weights"]])
   weights_expr_demeaned = if (is.null(inputs[["weights"]])) NULL else sql_weight_expr("weights")
 
@@ -195,6 +200,24 @@ execute_demean_strategy = function(inputs) {
   cluster_var = inputs[["cluster_var"]]
   use_ap = FALSE
   ap_tables = NULL
+  ap_backend_info = NULL
+  ap_iterations = NULL
+  ap_max_abs = NULL
+  on.exit({
+    if (!is.null(ap_tables)) {
+      for (tbl in ap_tables) {
+        if (isTRUE(ap_backend_info[["is_databricks"]])) {
+          drop_ap_table_if_exists(inputs[["conn"]], tbl, ap_backend_info)
+        } else {
+          drop_table_if_exists(
+            inputs[["conn"]],
+            tbl,
+            ap_backend_info[["name"]]
+          )
+        }
+      }
+    }
+  }, add = TRUE)
   if (length(inputs[["fe"]]) >= 2) {
     if (length(inputs[["fe"]]) > 2) {
       use_ap = TRUE
@@ -293,7 +316,7 @@ execute_demean_strategy = function(inputs) {
       sql_count(inputs[["conn"]], "n_fe1", fe1, distinct = TRUE),
       "1 AS n_fe2",
       sql_weighted_sum(
-        glue("CAST({yvar}_tilde AS FLOAT) * CAST({yvar}_tilde AS FLOAT)"),
+        glue("CAST({yvar}_tilde AS {numeric_type}) * CAST({yvar}_tilde AS {numeric_type})"),
         weights_expr_demeaned,
         "sum_y_sq"
       )
@@ -315,7 +338,14 @@ execute_demean_strategy = function(inputs) {
         cluster_var = cluster_var,
         verbose = inputs[["verbose"]]
       )
-      ap_tables = c(ap_res[["table"]], ap_res[["base_table"]])
+      ap_backend_info = ap_res[["backend_info"]]
+      ap_tables = if (!is.null(ap_res[["all_tables"]])) {
+        unique(c(ap_res[["all_tables"]], ap_res[["table"]], ap_res[["base_table"]]))
+      } else {
+        c(ap_res[["table"]], ap_res[["base_table"]])
+      }
+      ap_iterations = ap_res[["iterations"]]
+      ap_max_abs = ap_res[["max_abs"]]
       weights_expr_demeaned = "__w"
       cte_sql = paste0("WITH demeaned AS (SELECT * FROM ", ap_res[["table"]], ")")
 
@@ -326,7 +356,7 @@ execute_demean_strategy = function(inputs) {
         sql_count(inputs[["conn"]], "n_total"),
         fe_count_terms,
         sql_weighted_sum(
-          glue("CAST({yvar}_tilde AS FLOAT) * CAST({yvar}_tilde AS FLOAT)"),
+          glue("CAST({yvar}_tilde AS {numeric_type}) * CAST({yvar}_tilde AS {numeric_type})"),
           weights_expr_demeaned,
           "sum_y_sq"
         )
@@ -455,7 +485,7 @@ execute_demean_strategy = function(inputs) {
         sql_count(inputs[["conn"]], "n_fe1", fe1, distinct = TRUE),
         sql_count(inputs[["conn"]], "n_fe2", fe2, distinct = TRUE),
         sql_weighted_sum(
-          glue("CAST({yvar}_tilde AS FLOAT) * CAST({yvar}_tilde AS FLOAT)"),
+          glue("CAST({yvar}_tilde AS {numeric_type}) * CAST({yvar}_tilde AS {numeric_type})"),
           weights_expr_demeaned,
           "sum_y_sq"
         )
@@ -470,12 +500,12 @@ execute_demean_strategy = function(inputs) {
     moment_terms = c(
       moment_terms,
       sql_weighted_sum(
-        glue("CAST({x}_tilde AS FLOAT) * CAST({yvar}_tilde AS FLOAT)"),
+        glue("CAST({x}_tilde AS {numeric_type}) * CAST({yvar}_tilde AS {numeric_type})"),
         weights_expr_demeaned,
         sprintf("sum_%d_y", i)
       ),
       sql_weighted_sum(
-        glue("CAST({x}_tilde AS FLOAT) * CAST({x}_tilde AS FLOAT)"),
+        glue("CAST({x}_tilde AS {numeric_type}) * CAST({x}_tilde AS {numeric_type})"),
         weights_expr_demeaned,
         sprintf("sum_%d_%d", i, i)
       )
@@ -488,7 +518,7 @@ execute_demean_strategy = function(inputs) {
     moment_terms = c(
       moment_terms,
       sql_weighted_sum(
-        glue("CAST({pair[2]}_tilde AS FLOAT) * CAST({pair[1]}_tilde AS FLOAT)"),
+        glue("CAST({pair[2]}_tilde AS {numeric_type}) * CAST({pair[1]}_tilde AS {numeric_type})"),
         weights_expr_demeaned,
         sprintf("sum_%d_%d", j, i)  # store as sum_smaller_larger
       )
@@ -524,16 +554,7 @@ execute_demean_strategy = function(inputs) {
     message(if (!is.null(inputs[["weights"]])) "[dbreg] Executing weighted demean SQL\n" else "[dbreg] Executing demean SQL\n")
   }
   demean_df = dbGetQuery(inputs[["conn"]], demean_sql)
-  ap_cleanup = function() {
-    if (!is.null(ap_tables)) {
-      backend = detect_backend(inputs[["conn"]])[["name"]]
-      for (tbl in ap_tables) {
-        drop_table_if_exists(inputs[["conn"]], tbl, backend)
-      }
-    }
-  }
   if (inputs[["data_only"]]) {
-    ap_cleanup()
     return(demean_df)
   }
   n_total = demean_df[["n_total"]]
@@ -594,7 +615,8 @@ execute_demean_strategy = function(inputs) {
       yvar = yvar,
       betahat = betahat,
       is_athena = is_athena,
-      weights_expr = weights_expr_demeaned
+      weights_expr = weights_expr_demeaned,
+      numeric_type = numeric_type
     )
   } else if (inputs[["vcov_type_req"]] == "cluster") {
     meat = compute_meat_cluster_sql(
@@ -605,7 +627,8 @@ execute_demean_strategy = function(inputs) {
       betahat = betahat,
       cluster_var = inputs[["cluster_var"]],
       is_athena = is_athena,
-      weights_expr = weights_expr_demeaned
+      weights_expr = weights_expr_demeaned,
+      numeric_type = numeric_type
     )
     # For ssc = "nested", exclude nested FE levels from K
     if (inputs[["ssc"]] == "nested") {
@@ -630,8 +653,6 @@ execute_demean_strategy = function(inputs) {
   attr(vcov_mat, "tss") = demean_df[["sum_y_sq"]]
 
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
-  ap_cleanup()
-
   list(
     coeftable = coeftable,
     vcov = vcov_mat,
@@ -647,7 +668,9 @@ execute_demean_strategy = function(inputs) {
     strategy = "demean",
     compression_ratio_est = inputs[["compression_ratio_est"]],
     df_residual = df_res,
-    n_fe_levels = n_fe_levels
+    n_fe_levels = n_fe_levels,
+    ap_iterations = ap_iterations,
+    ap_max_abs = ap_max_abs
   )
 }
 

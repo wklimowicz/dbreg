@@ -8,6 +8,10 @@
 #' gof(mod)
 #' @export
 gof = function(object, ...) {
+  if (inherits(object, "dbglm")) {
+    return(c(logLik = object[["loglik"]], deviance = object[["deviance"]],
+             AIC = stats::AIC(object), BIC = stats::BIC(object)))
+  }
   nobs = object[["nobs_orig"]]
   df_res = object[["df_residual"]]
   

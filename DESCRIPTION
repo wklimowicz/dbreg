@@ -51,6 +51,7 @@ Imports:
   Formula,
   generics,
   glue,
+  jsonlite,
   MASS,
   Matrix,
   stats,

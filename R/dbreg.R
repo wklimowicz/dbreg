@@ -343,6 +343,9 @@ dbreg = function(
   # superseded args handled through ...
   dots = list(...)
   if (length(dots)) {
+    if ("family" %in% names(dots)) {
+      stop("Use `dbglm()` for a GLM family; `dbreg()` fits OLS.", call. = FALSE)
+    }
     if (!is.null(dots[["query_only"]]) && !identical(sql_only, dots[["query_only"]])) {
       sql_only = dots[["query_only"]]
       warning("The `query_only` argument has been superseded by `sql_only` and will be deprecated in a future `dbreg` release.\n")

@@ -1,0 +1,113 @@
+---
+title: "Database-backed binomial and Poisson models"
+format: html
+execute:
+  eval: false
+---
+
+`dbglm()` fits ordinary binomial complementary-log-log, logit and probit models,
+and log-link Poisson count models, on a
+native DuckDB or Databricks relation. Observations, working predictors, and projections stay
+in the database; R solves the retained-slope system and, when within configured
+limits, sparse two-way FE systems from bounded sufficient statistics. The
+weighted statistics are rebuilt at each IRLS iteration.
+
+```r
+library(dbreg)
+m <- dbglm(
+  exit ~ outside_wage + career_value |
+    schedule_cell + district + Experience + AGE + SEX + FTPTWK,
+  conn = con, table = "risk_set",
+  family = binomial("cloglog"), vcov = ~district,
+  row_id = c("teacher", "year"), sample_table = "retained_keys"
+)
+coef(m)
+sqrt(diag(vcov(m)))
+logLik(m)
+glance(m)
+```
+
+The caller supplies the intended risk set. `dbglm()` filters missing/nonfinite
+model inputs and nonpositive weights, then recursively removes fixed-effect
+singletons and all-zero/all-one binomial outcome groups (all-zero groups for
+Poisson) before discovering categorical
+levels. `fixef_rm` selects `"perfect_fit"` (default), `"singletons"`,
+`"infinite_coef"`, or `"none"`. If the selected policy leaves a known infinite
+fixed-effect coefficient, fitting errors. These checks do not certify absence
+of general regressor-induced separation.
+
+A supplied `row_id` must be unique and nonmissing in the input snapshot.
+`sample_table` creates a new temporary relation containing retained source keys
+on a caller-owned connection. It never overwrites an existing table. With no
+supplied key, a snapshot-local opaque key is assigned once. Models retain counts
+and provenance rather than individual rows or database handles. The caller owns
+an explicitly exported key relation.
+
+Column names after `|` denote categorical fixed effects even when stored as
+numbers. `district^year` denotes one joint effect. District intercepts plus
+continuous slopes use `district[yr]` or `district[yr, yr2]`; the trend columns
+must already exist in the source. `x:factor(Experience)` without an `x` main
+effect estimates direct slopes for every identified experience level. The same
+source column can be continuous elsewhere in the formula.
+
+```r
+heterogeneous <- dbglm(
+  exit ~ outside_wage:factor(Experience) + career_value:factor(Experience) |
+    schedule_cell + district + Experience + AGE + SEX + FTPTWK,
+  conn = con, table = "risk_set", vcov = ~district
+)
+trends <- dbglm(
+  exit ~ outside_wage |
+    schedule_cell + district[yr, yr2] + Experience + AGE + SEX + FTPTWK,
+  conn = con, table = "risk_set", vcov = ~district
+)
+```
+
+Offsets and original weights name source columns. Original weights currently
+must be nonnegative integer frequencies; iteration-specific working weights are
+fractional. `vcov` accepts `"iid"`, `"hc1"`, or one cluster formula. Inference
+uses the normal distribution and explicit fixest-style small-sample corrections.
+`n_params_model` and `n_params_vcov` distinguish likelihood and covariance
+parameter counts. Defaults follow the tested fixest convention, including its
+approximate FE parameter count; `K.exact=TRUE` is unsupported. For base `glm`
+covariance comparisons, use `ssc = list(K.adj = FALSE)`.
+
+The inner solver verifies the original weighted group equations. With at most
+4,096 FE basis columns it transfers bounded FE cross-products to R and solves
+on a structural basis fixed under original weights. Larger systems use
+preconditioned conjugate gradients on FE-level coefficients. Corrections are
+reconstructed from group lookups, preserving the additive FE span.
+The outer solver dampens the full model predictor, requires deviance and score
+convergence, and recomputes final projected information and scores. Controls
+separate outer, projection, rank and step-halving tolerances. Loss of information
+or failed convergence produces an error rather than successful inference.
+
+No-FE models support outcome-free link and response prediction, with saved
+categorical levels and fitted offsets. Absorbed new-row prediction is deferred.
+
+```r
+promotion <- dbglm(promoted ~ Experience + I(Experience^2) + spine + sex,
+                   conn = con, table = "transitions", family = binomial("logit"),
+                   ssc = list(K.adj = FALSE))
+predict(promotion, newdata = profiles, type = "response")
+```
+
+Some promotion designs have a top category that cannot advance. That category
+has zero events, so its ordinary logit coefficient has no finite MLE. Different
+solvers can report different finite stopping points while returning nearly
+identical probabilities. The default errors at numerical probability boundaries.
+Explicit `separation = "prediction"` allows a warned no-FE boundary approximation;
+`finite_mle` and `converged` are false, and SEs, tests and AIC/BIC are unavailable.
+This mode supplies probabilities, not ordinary coefficient inference.
+
+DuckDB and Databricks are supported. Databricks requires a native-query DBI
+connection preserving a single session with physical temporary-table support.
+Its SQL fallback uses `dbreg.spark_ap_chunk_cycles` window batches; the default
+sparse path transfers only bounded FE summaries and checks the same normalized
+equations. Short expressions use temporary views while working row state stays
+materialized. The Poisson likelihood constant transfers a count histogram capped
+at one million distinct counts. Default DuckDB connections are
+in memory with spilling disabled. Caller connections retain their configuration
+and remain open. Grouped binomial responses, fractional original weights,
+categorical no-intercept designs, other families and multi-way clustering are
+not implemented. No frailty or EM estimator is included.

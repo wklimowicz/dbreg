@@ -129,7 +129,8 @@ solve_with_fallback = function(XtX, Xty) {
 #'   \item{is_duckdb}{Logical, TRUE if the connection is DuckDB}
 #'
 #' @keywords internal
-setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
+setup_db_connection = function(conn, table, data, path, caller = "dbreg",
+                               resources = NULL, duckdb_config = list()) {
   own_conn = FALSE
   registered_table = NULL
   is_duckdb = FALSE
@@ -153,13 +154,18 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
 
   # Create default connection if still NULL (for data.frame or path inputs)
   if (is.null(conn)) {
-    conn = dbConnect(duckdb(), shutdown = TRUE)
+    conn = dbConnect(duckdb(config = duckdb_config), shutdown = TRUE)
     own_conn = TRUE
     is_duckdb = TRUE
   } else {
     # Check if user-provided connection is DuckDB
     backend_info = detect_backend(conn)
     is_duckdb = (backend_info[["name"]] == "duckdb")
+  }
+
+  if (!is.null(resources)) {
+    resources$conn = conn
+    resources$own_conn = own_conn
   }
 
   # Process data source with precedence: table > data > path
@@ -200,6 +206,10 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
     temp_name = sprintf("__%s_%s",
                         caller,
                         gsub("[^0-9]", "", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3")))
+    if (!is.null(resources)) {
+      temp_name = basename(tempfile(paste0("__", caller, "_")))
+      resources$registered_table = temp_name
+    }
     duckdb_register(conn, temp_name, data)
     registered_table = temp_name
     table_name = temp_name
@@ -248,7 +258,7 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
 #'   \item{fe}{Character vector of fixed effect variable names, or NULL if none}
 #'
 #' @keywords internal
-parse_regression_formula = function(fml) {
+parse_regression_formula = function(fml, allow_empty = FALSE) {
   fml = Formula(fml)
   # Extract outcome variable (LHS)
   lhs = formula(fml, lhs = 1, rhs = 0)
@@ -262,22 +272,93 @@ parse_regression_formula = function(fml) {
   rhs1 = formula(fml, lhs = 0, rhs = 1)
   tt = terms(rhs1)
   term_labels = attr(tt, "term.labels")
-  check_simple_terms(term_labels, "regressors")
   has_intercept = attr(tt, "intercept") == 1L
   xvars = all.vars(rhs1)  # unique variable names
   has_interactions = any(grepl(":", term_labels))
+  has_transformations = any(grepl("^I\\(", term_labels))
   
-  if (!length(xvars)) {
+  if (isTRUE(allow_empty)) {
+    validate_regressor_expression = function(expr) {
+      if (is.symbol(expr) || is.numeric(expr)) return(invisible(NULL))
+      if (!is.call(expr)) {
+        stop("Unsupported regressor expression: ", deparse(expr), call. = FALSE)
+      }
+      call_name = as.character(expr[[1]])
+      if (call_name == "-") {
+        args = as.list(expr)[-1]
+        last = args[[length(args)]]
+        if (is.numeric(last) && length(last) == 1 && identical(as.numeric(last), 1)) {
+          if (length(args) == 2) validate_regressor_expression(args[[1]])
+          return(invisible(NULL))
+        }
+      }
+      if (call_name == "I") {
+        if (length(expr) != 2 || !is.call(expr[[2]]) ||
+            !identical(as.character(expr[[2]][[1]]), "^") ||
+            !is.symbol(expr[[2]][[2]]) || !is.numeric(expr[[2]][[3]]) ||
+            !as.numeric(expr[[2]][[3]]) %in% c(2, 3)) {
+          stop(
+            "Unsupported regressor expression `", deparse(expr),
+            "`. Only `I(column^2)` and `I(column^3)` are supported.",
+            call. = FALSE
+          )
+        }
+        return(invisible(NULL))
+      }
+      if (call_name == "^" || !call_name %in% c("+", ":", "*", "(")) {
+        stop(
+          "Unsupported regressor expression `", deparse(expr),
+          "`. Supported terms are column names, `I(column^2)`, `I(column^3)`, ",
+          "and the operators `+`, `:`, and `*`.",
+          call. = FALSE
+        )
+      }
+      for (arg in as.list(expr)[-1]) validate_regressor_expression(arg)
+      invisible(NULL)
+    }
+    if (length(rhs1) > 1) validate_regressor_expression(rhs1[[2]])
+  } else {
+    check_simple_terms(term_labels, "regressors")
+  }
+  
+  if (!length(xvars) && !isTRUE(allow_empty)) {
     stop("No regressors on RHS.")
   }
   
   # Extract fixed effects (RHS part 2, after |)
-  fe = if (length(fml)[2] > 1) {
+  fe_components = NULL
+  fe_labels = NULL
+  fe = NULL
+  if (length(fml)[2] > 1) {
     fe_rhs = formula(fml, lhs = 0, rhs = 2)
-    check_simple_terms(attr(terms(fe_rhs), "term.labels"), "fixed effects", allow_interactions = FALSE)
-    all.vars(fe_rhs)
-  } else {
-    NULL
+    if (isTRUE(allow_empty)) {
+      flatten_call = function(expr, operator) {
+        if (is.call(expr) && identical(as.character(expr[[1]]), "(")) {
+          return(flatten_call(expr[[2]], operator))
+        }
+        if (is.call(expr) && identical(as.character(expr[[1]]), operator)) {
+          return(c(flatten_call(expr[[2]], operator), flatten_call(expr[[3]], operator)))
+        }
+        list(expr)
+      }
+      fe_terms = flatten_call(fe_rhs[[2]], "+")
+      fe_components = lapply(fe_terms, function(term) {
+        components = flatten_call(term, "^")
+        if (!all(vapply(components, is.symbol, logical(1)))) {
+          stop("Fixed-effect interactions must contain column names only.", call. = FALSE)
+        }
+        vapply(components, as.character, character(1))
+      })
+      fe_labels = vapply(fe_components, paste, collapse = "^", character(1))
+      fe = vapply(seq_along(fe_components), function(i) {
+        if (length(fe_components[[i]]) == 1) fe_components[[i]] else paste0("dbreg_fe_", i, "__")
+      }, character(1))
+    } else {
+      check_simple_terms(attr(terms(fe_rhs), "term.labels"), "fixed effects", allow_interactions = FALSE)
+      fe = all.vars(fe_rhs)
+      fe_labels = fe
+      fe_components = as.list(fe)
+    }
   }
   
   list(
@@ -287,7 +368,10 @@ parse_regression_formula = function(fml) {
     term_labels = term_labels,
     has_interactions = has_interactions,
     has_intercept = has_intercept,
-    fe = fe
+    has_transformations = has_transformations,
+    fe = fe,
+    fe_labels = fe_labels,
+    fe_components = fe_components
   )
 }
 
@@ -454,14 +538,14 @@ safe_source = function(conn, from_statement, vars) {
 #' @param level_aliases Optional data frame of SQL aliases with their `var`
 #'   and `level` (the `level_aliases` element of [sql_model_matrix()]).
 #' @keywords internal
-register_factor_display = function(inputs, factor_levels = list(), level_aliases = NULL) {
+register_factor_display = function(inputs, factor_levels = list(), level_aliases = NULL, col_names = NULL, aliases = NULL) {
   map = inputs[["name_map"]]
   if (is.null(map)) map = setNames(character(), character())
   disp = function(v) coef_var_name(ifelse(v %in% names(map), map[v], v))
   vars = rep(names(factor_levels), lengths(factor_levels))
   lvls = unlist(lapply(factor_levels, as.character), use.names = FALSE)
-  internal = c(paste0(vars, lvls), level_aliases[["alias"]])
-  display = c(paste0(disp(vars), lvls), paste0(disp(level_aliases[["var"]]), level_aliases[["level"]]))
+  internal = c(paste0(vars, lvls), level_aliases[["alias"]], aliases)
+  display = c(paste0(disp(vars), lvls), paste0(disp(level_aliases[["var"]]), level_aliases[["level"]]), col_names)
   new = setNames(display, internal)[internal != display]
   new = new[!duplicated(names(new)) & !names(new) %in% names(map)]
   inputs[["name_map"]] = c(map, new)
@@ -654,44 +738,156 @@ backend_supports_count_big = function(conn) {
 #' @param conn A DBI database connection object.
 #' @return List with `name` (character) and `supports_count_big` (logical).
 #' @keywords internal
-detect_backend = function(conn) {
-  # First check connection class for DuckDB (dbms.name may be empty)
-  if (inherits(conn, "duckdb_connection")) {
-    return(list(name = "duckdb", supports_count_big = FALSE))
+#' Backend metadata parser
+#'
+#' @param info A list returned by `DBI::dbGetInfo()`.
+#' @param connection_string Optional connector connection-string metadata.
+#' @param connection_class Character vector of connection classes.
+#' @return List of backend name and capabilities.
+#' @keywords internal
+backend_info_from_metadata = function(
+  info = list(),
+  connection_string = NULL,
+  connection_class = character()
+) {
+  if ("BigQueryConnection" %in% connection_class) {
+    return(list(name = "bigquery", supports_count_big = FALSE, is_databricks = FALSE,
+                supports_physical_temp_tables = FALSE, supports_persistent_ap_tables = FALSE, native_query = NA))
   }
-  if (inherits(conn, "BigQueryConnection")) {
-    return(list(name = "bigquery", supports_count_big = FALSE))
+  flatten_metadata = function(x) {
+    if (is.null(x)) {
+      return(character())
+    }
+    if (is.list(x)) {
+      return(unlist(x, recursive = TRUE, use.names = TRUE))
+    }
+    as.character(x)
   }
 
-  
+  info_flat = flatten_metadata(info)
+  connection_flat = flatten_metadata(connection_string)
+  metadata = tolower(paste(c(info_flat, connection_flat, connection_class), collapse = " "))
+  dbms = tolower(paste(info[["dbms.name"]], collapse = " "))
+  is_databricks = grepl("databricks", metadata)
+
+  native_query = NA
+  named_connection = connection_flat[!is.na(names(connection_flat))]
+  if (length(named_connection)) {
+    key_names = tolower(sub("^.*\\.", "", names(named_connection)))
+    native_value = named_connection[key_names == "usenativequery"]
+    if (length(native_value)) {
+      native_value = tolower(as.character(native_value[[1]]))
+      if (native_value %in% c("1", "true", "yes")) {
+        native_query = TRUE
+      } else if (native_value %in% c("0", "false", "no")) {
+        native_query = FALSE
+      }
+    }
+  }
+  if (is.na(native_query) && length(connection_flat)) {
+    connection_text = paste(connection_flat, collapse = ";")
+    native_match = regmatches(
+      connection_text,
+      regexpr("(?i)useNativeQuery\\s*=\\s*([012]|true|false)", connection_text, perl = TRUE)
+    )
+    if (length(native_match) && nzchar(native_match)) {
+      native_value = tolower(sub("^.*=\\s*", "", native_match))
+      if (native_value %in% c("1", "true")) native_query = TRUE
+      if (native_value %in% c("0", "false")) native_query = FALSE
+    }
+  }
+
+  name = if ("duckdb_connection" %in% connection_class || grepl("duckdb", dbms)) {
+    "duckdb"
+  } else if (grepl("sql server|azure sql|microsoft sql server", dbms)) {
+    "sqlserver"
+  } else if (grepl("postgres", dbms)) {
+    "postgres"
+  } else if (grepl("sqlite", dbms)) {
+    "sqlite"
+  } else if (grepl("mysql|mariadb", dbms)) {
+    "mysql"
+  } else if (is_databricks || grepl("spark", dbms) || grepl("spark", metadata)) {
+    "spark"
+  } else if (grepl("athena|presto|trino", dbms)) {
+    "athena"
+  } else {
+    "other"
+  }
+
+  list(
+    name = name,
+    supports_count_big = name == "sqlserver",
+    is_databricks = is_databricks,
+    supports_physical_temp_tables = is_databricks,
+    # OSS Spark uses managed Parquet tables to bound iterative AP plan depth.
+    supports_persistent_ap_tables = name == "spark" && !is_databricks,
+    native_query = native_query
+  )
+}
+
+#' Detect SQL backend from connection
+#' 
+#' Returns backend name and capabilities for SQL dialect handling.
+#' 
+#' @param conn A DBI database connection object.
+#' @return List with backend name and capabilities.
+#' @keywords internal
+detect_backend = function(conn) {
+  if (inherits(conn, "duckdb_connection")) {
+    return(list(
+      name = "duckdb",
+      supports_count_big = FALSE,
+      is_databricks = FALSE,
+      supports_physical_temp_tables = FALSE,
+      supports_persistent_ap_tables = FALSE,
+      native_query = NA
+    ))
+  }
+  if (inherits(conn, "BigQueryConnection")) {
+    return(list(
+      name = "bigquery",
+      supports_count_big = FALSE,
+      is_databricks = FALSE,
+      supports_physical_temp_tables = FALSE,
+      supports_persistent_ap_tables = FALSE,
+      native_query = NA
+    ))
+  }
+
   info = try(dbGetInfo(conn), silent = TRUE)
   if (inherits(info, "try-error")) {
-    return(list(name = "unknown", supports_count_big = FALSE))
+    info = list()
   }
-  dbms = tolower(paste(info[["dbms.name"]], collapse = " "))
-  list(
-    name = if (grepl("duckdb", dbms)) {
-      "duckdb"
-    } else if (grepl("sql server|azure sql|microsoft sql server", dbms)) {
-      "sqlserver"
-    } else if (grepl("postgres", dbms)) {
-      "postgres"
-    } else if (grepl("sqlite", dbms)) {
-      "sqlite"
-    } else if (grepl("mysql|mariadb", dbms)) {
-      "mysql"
-    } else if (grepl("spark", dbms)) {
-      "spark"
-    } else if (grepl("athena|presto|trino", dbms)) {
-      "athena"
-    } else {
-      "other"
-    },
-    supports_count_big = grepl(
-      "sql server|azure sql|microsoft sql server",
-      dbms
-    )
+  backend_info_from_metadata(
+    info = info,
+    connection_string = attr(conn, "connectionString"),
+    connection_class = class(conn)
   )
+}
+
+#' Validate a backend for Spark AP
+#' @keywords internal
+validate_databricks_ap_backend = function(backend_info) {
+  is_databricks = isTRUE(backend_info[["is_databricks"]]) &&
+    isTRUE(backend_info[["supports_physical_temp_tables"]])
+  is_oss_spark = identical(backend_info[["name"]], "spark") &&
+    isTRUE(backend_info[["supports_persistent_ap_tables"]])
+  if (!is_databricks && !is_oss_spark) {
+    stop(
+      "[dbreg] Alternating-projection demeaning on Spark requires either ",
+      "Databricks session-scoped temporary tables or OSS Spark managed tables.",
+      call. = FALSE
+    )
+  }
+  if (is_databricks && identical(backend_info[["native_query"]], FALSE)) {
+    stop(
+      "[dbreg] Databricks temporary tables require native query mode. ",
+      "Reconnect with `useNativeQuery = TRUE`.",
+      call. = FALSE
+    )
+  }
+  invisible(backend_info)
 }
 
 #' Cast to double precision
@@ -897,4 +1093,20 @@ drop_table_if_exists = function(conn, table_name, backend) {
     sql = glue("DROP TABLE IF EXISTS {table_name}")
   }
   tryCatch(dbExecute(conn, sql), error = function(e) NULL)
+}
+
+#' Drop a materialized AP state table
+#' @keywords internal
+drop_ap_table_if_exists = function(conn, table_name, backend_info) {
+  backend = if (is.character(backend_info)) backend_info else backend_info[["name"]]
+  if (is.list(backend_info) && isTRUE(backend_info[["is_databricks"]])) {
+    sql = glue("DROP TEMP TABLE IF EXISTS {table_name}")
+    tryCatch({
+      dbExecute(conn, sql)
+      invisible(TRUE)
+    }, error = function(e) invisible(FALSE))
+  } else {
+    drop_table_if_exists(conn, table_name, backend)
+    invisible(TRUE)
+  }
 }

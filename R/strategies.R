@@ -27,7 +27,7 @@ execute_moments_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]])
   
   frame = build_base_frame(inputs, xvars_sql, xvar_names)
   moments_sql = frame_moments_sql(frame, yvar, xvar_names, conn)
@@ -117,7 +117,7 @@ execute_demean_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]])
   
   frame = build_demean_frame(inputs, xvars_sql, xvar_names)
   on.exit(frame[["cleanup"]](), add = TRUE)
@@ -191,7 +191,10 @@ execute_demean_strategy = function(inputs) {
     strategy = "demean",
     compression_ratio_est = compression_ratio_est,
     df_residual = df_res,
-    n_fe_levels = n_fe_levels
+    n_fe_levels = n_fe_levels,
+    ap_iterations = frame$ap_res$iterations,
+    ap_max_abs = frame$ap_res$max_abs,
+    ap_method = frame$ap_res$method
   )
 }
 
@@ -228,7 +231,7 @@ execute_mundlak_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]])
   
   weights_expr_base = sql_weight_expr(weights)
   weights_expr_aug = if (is.null(weights)) NULL else sql_weight_expr("weights")
@@ -422,7 +425,7 @@ execute_compress_strategy = function(inputs) {
     select_exprs = paste0(sql_design[["select_exprs"]], " AS ", sql_design[["aliases"]])
     xvars_sql = paste(select_exprs, collapse = ", ")
     xvar_names = sql_design[["aliases"]]
-    register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]])
+    register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]])
   } else {
     xvars_sql = paste(xvars, collapse = ", ")
     xvar_names = xvars

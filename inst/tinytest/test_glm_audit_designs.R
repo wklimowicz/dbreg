@@ -1,0 +1,25 @@
+library(dbreg)
+library(fixest)
+library(DBI)
+ca <- dbConnect(duckdb::duckdb(config=list(temp_directory="")))
+set.seed(2118)
+na <- 1760L
+da <- data.frame(Experience=rep(0:43,each=40),outside=rnorm(na),teacher=rnorm(na),
+ spine=sample(1:12,na,TRUE),district=sample(1:8,na,TRUE),AGE=sample(21:36,na,TRUE),
+ SEX=sample(c('F','M'),na,TRUE),FTPTWK=sample(c('F','P'),na,TRUE))
+da$y <- rbinom(na,1,plogis(-.4+.15*da$outside-.1*da$teacher))
+fa <- y~outside:factor(Experience)+teacher:factor(Experience)|spine+district+Experience+AGE+SEX+FTPTWK
+ma <- dbglm(fa,conn=ca,data=da,vcov=~district)
+source(system.file('tinytest/helper_glm_reference.R',package='dbreg'),local=TRUE)
+ra <- dbglm_reference_feglm(fa,da,family=binomial('cloglog'),vcov=~district)
+expect_equal(length(coef(ma)),88L)
+expect_identical(names(coef(ma)),names(coef(ra)))
+expect_true(all(abs(coef(ma)-coef(ra))<=1e-7+1e-6*abs(coef(ra))))
+expect_true(all(abs(sqrt(diag(vcov(ma)))-sqrt(diag(vcov(ra))))<=1e-8+1e-6*sqrt(diag(vcov(ra)))))
+V <- vcov(ma); Vr <- vcov(ra)
+expect_true(all(abs(V-Vr)<=1e-8+1e-5*abs(Vr)))
+expect_equal(as.numeric(logLik(ma)),as.numeric(logLik(ra)),tolerance=1e-8)
+expect_equal(ma$n_params_model,ra$nparams)
+expect_equal(ma$n_params_vcov,attr(vcov(ra,attr=TRUE),'df.K'))
+expect_equal(length(dbListTables(ca)),0L)
+dbDisconnect(ca,shutdown=TRUE)

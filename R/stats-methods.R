@@ -6,6 +6,8 @@
 #'
 #' @param object A `dbreg` object.
 #' @param fe Should the fixed effects be included? Default is `FALSE`.
+#' @param collin Should regressors removed for collinearity be returned as `NA`?
+#'   Default is `FALSE`.
 #' @param ... Additional arguments. Currently unused, except to capture
 #' superseded arguments.
 #' @examples
@@ -25,7 +27,7 @@
 #' head(predict(mod, newdata = airquality))
 #' head(predict(mod, newdata = airquality, interval = "confidence"))
 #' @export
-coef.dbreg = function(object, fe = FALSE, ...) {
+coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
   
   # superseded args handled through ...
   dots = list(...)
@@ -38,19 +40,22 @@ coef.dbreg = function(object, fe = FALSE, ...) {
   }
   
   ct = object[["coeftable"]]
-  
-  if (!isTRUE(fe) && !is.null(object[["fe"]])) {
-    coef_names = object[["coef_names"]]
-    if (!is.null(coef_names)) {
-      ct = ct[coef_names, , drop = FALSE]
-    } else {
-      xvars = object[["xvars"]]
-      ct = ct[xvars, , drop = FALSE]
-    }
+  out = if (isTRUE(collin) && !is.null(object[["collin.coef"]])) {
+    object[["collin.coef"]]
+  } else {
+    setNames(ct[, "estimate"], rownames(ct))
   }
   
-  out = ct[, "estimate"]
-  names(out) = rownames(ct)
+  if (!isTRUE(fe) && !is.null(object[["fe"]])) {
+    coef_names = if (isTRUE(collin)) object[["coef_names_all"]] else object[["coef_names"]]
+    if (!is.null(coef_names)) {
+      out = out[intersect(coef_names, names(out))]
+    } else {
+      xvars = object[["xvars"]]
+      if (isTRUE(collin)) xvars = unique(c(xvars, object[["collin.var"]]))
+      out = out[intersect(xvars, names(out))]
+    }
+  }
   out
 }
 

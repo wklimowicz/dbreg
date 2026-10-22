@@ -711,6 +711,21 @@ dbreg_alternating_projections = function(
     stop("[dbreg] dbreg.ap_tol must be a positive number.", call. = FALSE)
   }
   backend = detect_backend(conn)[["name"]]
+  if (backend == "duckdb") {
+    method = getOption("dbreg.duckdb_ap_method", "join")
+    if (!is.character(method) || length(method) != 1L || is.na(method) ||
+        !method %in% c("join", "cg")) {
+      stop('`dbreg.duckdb_ap_method` must be "join" or "cg".', call. = FALSE)
+    }
+    if (method == "cg" && length(fe) == 2L) {
+      projected = dbreg_duckdb_cg_projections(
+        conn, from_statement, fe, yvar, xvars_sql, xvar_names, weights,
+        cluster_var, verbose, max_iter, tol
+      )
+      if (!is.null(projected)) return(projected)
+      if (verbose) message("[dbreg] Bounded DuckDB projection unavailable; using join AP")
+    }
+  }
   use_windows = ap_method(backend) == "window"
   batch_size = 1L
   if (use_windows) {
@@ -850,7 +865,14 @@ dbreg_alternating_projections = function(
 
     if (is.finite(max_abs) && max_abs < tol) {
       success = TRUE
-      return(list(table = cur_table, base_table = base_table))
+      return(list(
+        table = cur_table,
+        base_table = base_table,
+        all_tables = c(cur_table, base_table),
+        iterations = iter,
+        max_abs = max_abs,
+        method = if (use_windows) "window" else "row_tables"
+      ))
     }
   }
 

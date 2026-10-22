@@ -94,7 +94,7 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
   cleanup = function() invisible(NULL)
   if (use_ap) {
     ap_res = dbreg_alternating_projections(inputs, x_sql, x_names)
-    ap_tables = c(ap_res[["table"]], ap_res[["base_table"]])
+    ap_tables = unique(c(ap_res[["table"]], ap_res[["base_table"]], ap_res[["all_tables"]]))
     cleanup = function() {
       backend = detect_backend(conn)[["name"]]
       for (tbl in ap_tables) {
@@ -157,7 +157,8 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
       sql_count(conn, "n_total"),
       vapply(seq_along(fe), function(k) sql_count(conn, sprintf("n_fe%d", k), fe[k], distinct = TRUE), character(1))
     ),
-    cleanup = cleanup
+    cleanup = cleanup,
+    ap_res = if (use_ap) ap_res else NULL
   )
 }
 

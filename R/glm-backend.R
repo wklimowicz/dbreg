@@ -26,6 +26,19 @@ dbglm_sql = function(conn, sql) {
   paste0(tokens,collapse="")
 }
 
+# Spark sums doubles in a nondeterministic order; at millions of rows that
+# noise exceeds the line-search deviance tolerance and the score tolerance
+# (sum(x*score) cancels heavily). Fixed-point DECIMAL addition is exact, so
+# these sums no longer depend on summation order.
+dbglm_exact_sum = function(conn, expr) {
+  if (!isTRUE(detect_backend(conn)$is_databricks)) return(sprintf("FSUM(%s)", expr))
+  ok = sprintf("isfinite(%1$s) AND ABS(%1$s) < 1e10", paste0("(", expr, ")"))
+  sprintf(paste0("(CASE WHEN SUM(CASE WHEN %1$s THEN 0 ELSE 1 END) = 0 THEN ",
+    "CAST(SUM(CAST(CASE WHEN %1$s THEN (%2$s) END AS DECIMAL(38,18))) AS DOUBLE) ELSE SUM(%2$s) END)"), ok, expr)
+}
+
+dbglm_deviance_term = function(conn) paste(dbglm_exact_sum(conn, "dev"), "AS deviance")
+
 dbglm_get_query = function(conn, sql) DBI::dbGetQuery(conn, dbglm_sql(conn, sql))
 
 # Bounded lookup literals are FE-level coefficients, never observation data.

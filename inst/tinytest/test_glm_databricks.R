@@ -68,6 +68,14 @@ for(family in list(binomial('logit'),binomial('probit'),binomial('cloglog'),pois
   expect_true(max(abs(coef(m)-coef(ref)))<1e-6)
   expect_true(max(abs(vcov(m)-vcov(ref)))<1e-6)
   expect_true(abs(as.numeric(logLik(m)-logLik(ref)))/nrow(d)<1e-9)
+  expect_identical(m$projection_method,'moments')
+  expect_identical(dbListTables(native),'input')
+  # FE-level PCG remains the two-way path when the dense solve is capped.
+  saved=options(dbreg.glm_fe_dense_max=0)
+  m=dbglm(y~x+z|g+h,conn=remote,table='input',family=family,weights='a',offset='o',vcov=vc,row_id='id')
+  options(saved)
+  expect_true(max(abs(coef(m)-coef(ref)))<1e-6)
+  expect_true(max(abs(vcov(m)-vcov(ref)))<1e-6)
   expect_identical(m$projection_method,'bounded_pcg')
   expect_identical(dbListTables(native),'input')
  }
@@ -91,6 +99,24 @@ options(saved)
 ref=dbglm_reference_feglm(y~x+z|g+h,data=d,family=poisson())
 expect_identical(fallback$projection_method,'window')
 expect_true(max(abs(coef(fallback)-coef(ref)))<1e-6)
+expect_identical(dbListTables(native),'input')
+# Multi-way (>2 FE) models on Databricks use the single-pass moments projector.
+d$k1=sample(1:6,1200,TRUE);d$k2=sample(1:4,1200,TRUE)
+d$y=as.integer(d$y>0);d$y[first]=0;d$y[last]=1
+dbWriteTable(native,'input',d,overwrite=TRUE)
+for(kind in c('iid','hc1','cluster')) {
+ vc=if(kind=='cluster')~h else kind
+ ref_m=dbglm_reference_feglm(y~x+z|g+h+k1+k2,data=d,family=binomial('cloglog'),weights=~a,offset=~o,vcov=vc)
+ m_m=dbglm(y~x+z|g+h+k1+k2,conn=remote,table='input',family=binomial('cloglog'),weights='a',offset='o',vcov=vc,row_id='id')
+ expect_identical(m_m$projection_method,'moments')
+ expect_true(max(abs(coef(m_m)-coef(ref_m)))<1e-6)
+ expect_true(max(abs(vcov(m_m)-vcov(ref_m)))<1e-6)
+ expect_identical(dbListTables(native),'input')
+}
+saved=options(dbreg.duckdb_ap_max_edges=1)
+fallback_m=dbglm(y~x+z|g+h+k1+k2,conn=remote,table='input',family=binomial('cloglog'))
+options(saved)
+expect_identical(fallback_m$projection_method,'window')
 expect_identical(dbListTables(native),'input')
 # A failed fit removes its own state and preserves the source.
 expect_error(dbglm(y~x+z|g+h,conn=remote,table='input',family=poisson(),control=dbglm_control(glm_max_iter=1)),'converge')

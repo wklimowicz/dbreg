@@ -282,12 +282,20 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   drop(snapshot)
   # Rank small category dictionaries, not the full N-row relation once per FE.
   if (length(fe)) {
-    fe_exprs = vapply(seq_along(fe), function(i) {
+    # Rank each distinct FE key once, then join the small dictionaries back.
+    dictionaries = character(); conditions = character()
+    for (i in seq_along(fe)) {
       components = quote_id(unique(parsed$fe_components[[i]]))
       key_columns = paste(components, collapse = ",")
-      paste0("DENSE_RANK() OVER (ORDER BY ", key_columns, ") AS ", fe[i])
-    }, character(1))
-    retained = create(paste0("SELECT *, ", paste(fe_exprs, collapse = ", "), " FROM ", retained), materialize = FALSE)
+      alias = paste0("__dbglm_d", i)
+      dictionaries = c(dictionaries, paste0(" JOIN (SELECT ", key_columns, ", DENSE_RANK() OVER (ORDER BY ", key_columns,
+        ") AS ", fe[i], " FROM (SELECT DISTINCT ", key_columns, " FROM ", retained, ") __dbglm_k) ", alias, " ON ",
+        paste(sprintf("__dbglm_r.%s = %s.%s", components, alias, components), collapse = " AND ")))
+    }
+    next_retained = create(paste0("SELECT __dbglm_r.*, ", paste(sprintf("__dbglm_d%d.%s", seq_along(fe), fe), collapse = ", "),
+      " FROM ", retained, " __dbglm_r", paste(dictionaries, collapse = "")), materialize = FALSE)
+    drop(retained)
+    retained = next_retained
   }
   pruning = dbglm_prune(conn,retained,fe,quote_id(parsed$yvar),fixef_rm,create,drop,family$family)
   retained = pruning$table
@@ -337,6 +345,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     sprintf("CAST((%s) AS DOUBLE) AS %s", spec$columns$sql, spec$columns$alias),
     if (!is.null(covariance$cluster_var)) paste(quote_id(covariance$cluster_var), "AS __dbglm_cluster"))
   base = create(paste("SELECT", paste(fields, collapse = ", "), from))
+  if (is.null(sample_table)) drop(retained)
   base_terms = c(
     if (length(x)) paste0("SUM(CASE WHEN ", paste(paste0("NOT isfinite(", x, ")"), collapse = " OR "), " THEN 1 ELSE 0 END) AS nonfinite"),
     if (length(fe)) sprintf("COUNT(DISTINCT %s) AS fe_size_%d", fe, seq_along(fe)),
@@ -348,11 +357,13 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     stop("GLM design contains nonfinite transformed values.", call. = FALSE)
   }
   precomputed_fe_sizes = if (length(fe)) vapply(paste0("fe_size_", seq_along(fe)), function(nm) as.numeric(row[[nm]]), numeric(1)) else integer()
+  resources$fe_sizes = precomputed_fe_sizes
   if (length(fe)) {
-    original = create(paste("SELECT *, __dbglm_a AS w FROM",base), materialize=FALSE)
+    original = if (!isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) paste0("(SELECT *, __dbglm_a AS w FROM ", base, ")") else
+      create(paste("SELECT *, __dbglm_a AS w FROM",base), materialize=FALSE)
     raw_H = if (length(x)) dbglm_read_information(row, length(x)) else matrix(0, 0, 0)
     raw_scales = if (length(x)) sqrt(pmax(diag(raw_H), .Machine$double.xmin)) else numeric()
-    projection = solve_partial_wls(conn,original,x,fe,control,create,drop,response=FALSE,cache=resources,materialize=FALSE,scales=raw_scales)
+    projection = solve_partial_wls(conn,original,x,fe,control,create,drop,response=FALSE,cache=resources,materialize=FALSE,scales=raw_scales,need_table=FALSE)
     if(length(x)) {
     H = if (!is.null(projection$cross_reduction)) raw_H - projection$cross_reduction else
       dbglm_read_information(dbglm_get_query(conn,paste("SELECT",paste(dbglm_moment_terms(x,"w"),collapse=","),"FROM",projection$table)),length(x))
@@ -383,7 +394,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   }
   counts = dbglm_fe_counts(conn,base,fe,length(x),covariance$vcov_type,ssc,parsed$fe_labels,covariance$cluster_var,sizes=precomputed_fe_sizes)
   if (length(fe)) {
-    fit = dbglm_fe_fit(conn,base,x,fe,beta,family,control,create,drop,verbose,cache=resources,ybar=row$ybar)
+    fit = dbglm_fe_fit(conn,base,x,fe,beta,family,control,create,drop,verbose,cache=resources,ybar=row$ybar,vcov_type=covariance$vcov_type)
     covariance_result = dbglm_fe_covariance(conn,x,fit,covariance$vcov_type,ssc,n,counts)
   } else {
     fit = dbglm_irls(conn, base, x, beta, family, control, verbose, separation)

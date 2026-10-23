@@ -18,7 +18,10 @@ expect_identical(mm$projection_method,"cg")
 for(family in list(binomial("logit"),binomial("probit"),binomial("cloglog"),poisson())) {
  dd <- dm
  if(family$family=="poisson")dd$y <- rep(1:2,4096)
+ # A tiny dense cap forces the FE-level PCG path that moments would pre-empt.
+ saved <- options(dbreg.glm_fe_dense_max=0)
  fast <- dbglm(y~x|f+g,conn=cm,data=dd,family=family)
+ options(saved)
  ref <- dbglm_reference_feglm(y~x|f+g,dd,family=family)
  expect_identical(fast$projection_method,"bounded_pcg")
  expect_true(max(abs(coef(fast)-coef(ref)))<1e-6)

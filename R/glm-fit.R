@@ -45,8 +45,8 @@ dbglm_evaluate = function(conn, table, x, beta, link) {
   cte = dbglm_working_sql(table, x, beta, link)
   terms = dbglm_moment_terms(x, "w")
   terms = c(terms, sprintf("SUM(w*(%s)*z) AS b_%d", x, seq_along(x)),
-            sprintf("SUM((%s)*score) AS s_%d", x, seq_along(x)),
-            "FSUM(dev) AS deviance", "MIN(mu) AS mu_min", "MAX(mu) AS mu_max",
+            sprintf("%s AS s_%d", vapply(sprintf("(%s)*score", x), function(e) dbglm_exact_sum(conn, e), character(1)), seq_along(x)),
+            dbglm_deviance_term(conn), "MIN(mu) AS mu_min", "MAX(mu) AS mu_max",
             "SUM(CASE WHEN NOT isfinite(w) OR w <= 0 OR NOT isfinite(eta) THEN 1 ELSE 0 END) AS bad")
   row = dbglm_get_query(conn, paste0(cte, "SELECT ", paste(terms, collapse = ", "), " FROM working"))
   H = dbglm_read_information(row, length(x))

@@ -41,23 +41,25 @@ dbglm_prune = function(conn, table, fe, y, mode, create, drop, family = "binomia
   counts = c(singleton = 0, infinite_coef = 0)
   if (!length(fe) || mode == "none") return(list(table = table, rounds = rounds, counts = counts))
   repeat {
-    singleton = infinite = character()
-    for (f in fe) {
-      partition = paste("OVER (PARTITION BY", f, ")")
-      singleton = c(singleton, paste("COUNT(*)", partition, "= 1"))
-      infinite = c(infinite, if (family == "poisson") paste0("MAX(", y, ") ", partition, " = 0") else
-        paste0("MIN(", y, ") ", partition, " = MAX(", y, ") ", partition))
+    # Per-FE group summaries are tiny; joining them avoids N-row window sorts.
+    singleton = infinite = joins = character()
+    for (k in seq_along(fe)) {
+      f = fe[k]; s = paste0("__dbglm_p", k)
+      joins = c(joins, paste0(" JOIN (SELECT ", f, " AS __dbglm_g, COUNT(*) AS n, MIN(", y, ") AS lo, MAX(", y,
+        ") AS hi FROM ", table, " GROUP BY ", f, ") ", s, " ON __dbglm_t.", f, " = ", s, ".__dbglm_g"))
+      singleton = c(singleton, paste0(s, ".n = 1"))
+      infinite = c(infinite, if (family == "poisson") paste0(s, ".hi = 0") else paste0(s, ".lo = ", s, ".hi"))
     }
-    flags = create(paste0("SELECT *, (", paste(singleton, collapse = " OR "), ") AS __dbglm_single, (",
-                         paste(infinite, collapse = " OR "), ") AS __dbglm_infinite FROM ", table), materialize = FALSE)
+    flags = paste0("(SELECT __dbglm_t.*, (", paste(singleton, collapse = " OR "), ") AS __dbglm_single, (",
+                   paste(infinite, collapse = " OR "), ") AS __dbglm_infinite FROM ", table, " __dbglm_t",
+                   paste(joins, collapse = ""), ")")
     condition = switch(mode, perfect_fit = "(__dbglm_single OR __dbglm_infinite)",
                         singletons = "__dbglm_single", infinite_coef = "__dbglm_infinite")
     info = dbglm_get_query(conn, paste0("SELECT COUNT(*) FILTER (WHERE ", condition, ") AS removed, ",
-      "COUNT(*) FILTER (WHERE ", condition, " AND __dbglm_single) AS single FROM ", flags))
-    if (info$removed == 0) { drop(flags); break }
+      "COUNT(*) FILTER (WHERE ", condition, " AND __dbglm_single) AS single FROM ", flags, " __dbglm_f"))
+    if (info$removed == 0) break
     counts = counts + c(singleton = as.numeric(info$single), infinite_coef = as.numeric(info$removed - info$single))
-    next_table = create(paste0("SELECT * EXCLUDE (__dbglm_single,__dbglm_infinite) FROM ", flags, " WHERE NOT ", condition), materialize = FALSE)
-    drop(flags)
+    next_table = create(paste0("SELECT * EXCLUDE (__dbglm_single,__dbglm_infinite) FROM ", flags, " __dbglm_f WHERE NOT ", condition), materialize = FALSE)
     drop(table)
     table = next_table
     rounds = rounds + 1L

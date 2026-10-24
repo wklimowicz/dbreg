@@ -34,13 +34,13 @@ expect_equal(vcov(fit)["x1", "x1"], vcov(ref)["x1", "x1"], tolerance = 1e-7, inf
 for (bad in list(0L, -1L, 2.5, NA_integer_, "10", c(5L, 6L))) {
   options(dbreg.ap_max_iter = bad)
   expect_error(dbreg(y ~ x1 | fe1 + fe2, data = dat, strategy = "demean"),
-               "dbreg.ap_max_iter must be a positive integer", info = paste("max_iter", format(bad)))
+               "fe_max_iter.*positive integer", info = paste("max_iter", format(bad)))
 }
 options(dbreg.ap_max_iter = 500L)
 for (bad in list(0, -1e-8, NA_real_, Inf)) {
   options(dbreg.ap_tol = bad)
   expect_error(dbreg(y ~ x1 | fe1 + fe2, data = dat, strategy = "demean"),
-               "dbreg.ap_tol must be a positive number", info = paste("tol", format(bad)))
+               "fe_tol.*positive number", info = paste("tol", format(bad)))
 }
 
 # Non-convergence reports the limit and leaves no AP tables behind.

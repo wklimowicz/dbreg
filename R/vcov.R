@@ -48,6 +48,7 @@ compute_vcov = function(
     vcov_mat = sigma2 * XtX_inv
     attr(vcov_mat, "type") = "iid"
   }
+  attr(vcov_mat, "n_params") = if (is.null(n_params)) ncol(XtX_inv) else n_params
   dimnames(vcov_mat) = dimnames(XtX_inv)
   vcov_mat
 }

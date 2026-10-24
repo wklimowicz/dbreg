@@ -94,6 +94,10 @@
 #'   console? Defaults to `FALSE`. This can be overridden for a single call
 #'   by supplying `verbose = TRUE`, or set globally via
 #'   `options(dbreg.verbose = TRUE)`.
+#' @param fe_tol Positive per-fit tolerance for the fixed-effect projection.
+#' @param fe_max_iter Positive maximum number of fixed-effect projection iterations.
+#' @param diagnostics Run an additional input scan for per-variable missingness
+#'   and dropped-row counts? Default is `FALSE`. Counts may overlap across roles.
 #' @param ... Additional arguments. Currently ignored, except to handle
 #'   superseded arguments for backwards compatibility.
 #'
@@ -349,6 +353,9 @@ dbreg = function(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
+  diagnostics = FALSE,
   ...
 ) {
 
@@ -381,7 +388,7 @@ dbreg = function(
     c(
       "fml", "conn", "table", "data", "path", "weights", "vcov_type_req",
       "cluster_var", "ssc", "strategy", "sql_only", "data_only", "compress_ratio",
-      "compress_nmax", "drop_missings", "verbose"
+      "compress_nmax", "drop_missings", "verbose", "fe_tol", "fe_max_iter", "diagnostics"
     )
   )
   # Release any connection/registration we create, including on errors during
@@ -389,6 +396,7 @@ dbreg = function(
   on.exit(release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]]), add = TRUE)
 
   # Process and validate inputs (writes parsed/derived fields into `inputs`)
+  validate_fit_diagnostics(inputs)
   process_dbreg_inputs(inputs)
 
   # Choose strategy (mutates inputs[["is_balanced"]], inputs[["compression_ratio_est"]])
@@ -466,6 +474,11 @@ process_dbreg_inputs = function(inputs) {
   validate_weights(if (is.null(data)) weights else weights_display, data, conn, from_statement)
 
   compress_ratio = resolve_compress_ratio(compress_ratio, fe)
+
+  inputs[["weights"]] = weights
+  inputs[["source_map"]] = source_map
+  inputs[["sample_diagnostics"]] = sample_diagnostics(inputs, from_statement,
+    list(outcome = yvar, regressor = xvars, fixed_effect = fe, weight = weights, cluster = cluster_var))
 
   from_statement = filter_estimation_sample(
     from_statement,
@@ -712,8 +725,8 @@ dbreg_alternating_projections = function(
   inputs,
   xvars_sql,
   xvar_names,
-  max_iter = getOption("dbreg.ap_max_iter", 100L),
-  tol = getOption("dbreg.ap_tol", 1e-10)
+  max_iter = if (is.null(inputs[["fe_max_iter"]])) getOption("dbreg.ap_max_iter", 100L) else inputs[["fe_max_iter"]],
+  tol = if (is.null(inputs[["fe_tol"]])) getOption("dbreg.ap_tol", 1e-10) else inputs[["fe_tol"]]
 ) {
   env2env(inputs, environment(), c(
     "conn", "from_statement", "fe", "yvar", "weights", "cluster_var",
@@ -1099,6 +1112,7 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   if (inputs[["data_only"]]) {
     return(result)
   }
+  result = finalize_fit_diagnostics(result, inputs)
   result[["strategy"]] = chosen_strategy
   class(result) = c(class, class(result))
   result

@@ -20,3 +20,11 @@ expect_equal(
 interaction_fit = dbreg(y ~ x * f, data = dat, strategy = "compress")
 expect_equal(rownames(vcov(interaction_fit)), names(coef(interaction_fit)))
 expect_equal(colnames(vcov(interaction_fit)), names(coef(interaction_fit)))
+
+# R permits a dummy label to coincide with a different raw regressor name.
+# With no FE to hide, covariance extraction must preserve parameter positions.
+dat[["grpb"]] = rnorm(nrow(dat))
+dat[["grp"]] = rep(c("a", "b"), length.out = nrow(dat))
+fit = dbreg(y ~ grp + grpb, data = dat, strategy = "moments")
+ref = lm(y ~ grp + grpb, dat)
+expect_equal(as.numeric(vcov(fit)), as.numeric(vcov(ref)), tolerance = 1e-8)

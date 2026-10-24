@@ -299,8 +299,10 @@ vcov.dbreg = function(object, fe = FALSE, ...) {
   # The table already has public names (including interaction separators).
   # Its rows and the stored covariance share the fitted parameter order.
   dimnames(out) = rep(list(rownames(object[["coeftable"]])), 2L)
-  visible = names(coef(object, fe = fe))
-  out = out[visible, visible, drop = FALSE]
+  if (!isTRUE(fe) && length(object[["fe"]])) {
+    visible = names(coef(object, fe = fe))
+    out = out[visible, visible, drop = FALSE]
+  }
   for (nm in names(metadata)) if (!is.null(metadata[[nm]])) attr(out, nm) = metadata[[nm]]
   out
 }

@@ -19,6 +19,10 @@
 #' @param intercept Logical. Include the constant (requires the linear sums).
 #' @keywords internal
 cross_moments = function(moment_df, vars, y, intercept = TRUE) {
+  # DBI drivers may return BIGINT aggregates as bit64::integer64. Assignment
+  # into a double matrix strips that class without converting its bit pattern.
+  # Convert each aggregate before it crosses the SQL-to-linear-algebra boundary.
+  moment_df = lapply(moment_df, as.numeric)
   nms = c(if (intercept) "(Intercept)", vars, y)
   S = matrix(0, length(nms), length(nms), dimnames = list(nms, nms))
   S[y, y] = moment_df[["sum_wy_sq"]]

@@ -13,7 +13,7 @@ dbglm_fe_dense_feasible = function(op_sizes) {
 # info: per-op list(id, h); pairs: list of list(i, j, ir, jr, h) with local
 # level indices into info[[i]]$id and info[[j]]$id.
 dbglm_fe_system = function(info, pairs) {
-  sizes = vapply(info, function(x) length(x$id), integer(1))
+  sizes = vapply(info, function(x) length(x[["id"]]), integer(1))
   if (!dbglm_fe_dense_feasible(sizes)) return(NULL)
   starts = cumsum(c(0L, sizes))
   n = starts[length(info) + 1L]
@@ -27,37 +27,37 @@ dbglm_fe_system = function(info, pairs) {
   E = matrix(0, length(rest), length(rest))
   E[cbind(seq_along(rest), seq_along(rest))] = diagonal[rest]
   for (p in pairs) {
-    gi = starts[p$i] + p$ir
-    gj = starts[p$j] + p$jr
-    if (p$i == a) {
-      Cm[cbind(gi - starts[a], pos[gj])] = p$h
-    } else if (p$j == a) {
-      Cm[cbind(gj - starts[a], pos[gi])] = p$h
+    gi = starts[p[["i"]]] + p[["ir"]]
+    gj = starts[p[["j"]]] + p[["jr"]]
+    if (p[["i"]] == a) {
+      Cm[cbind(gi - starts[a], pos[gj])] = p[["h"]]
+    } else if (p[["j"]] == a) {
+      Cm[cbind(gj - starts[a], pos[gi])] = p[["h"]]
     } else {
-      E[cbind(pos[gi], pos[gj])] = p$h
-      E[cbind(pos[gj], pos[gi])] = p$h
+      E[cbind(pos[gi], pos[gj])] = p[["h"]]
+      E[cbind(pos[gj], pos[gi])] = p[["h"]]
     }
   }
   list(n = n, starts = starts, big = big, rest = rest, Dg = diagonal[big], Cm = Cm, E = E, diag = diagonal)
 }
 
 dbglm_fe_multiply = function(sys, X) {
-  x1 = X[sys$big, , drop = FALSE]
-  x2 = X[sys$rest, , drop = FALSE]
-  out = matrix(0, sys$n, ncol(X))
-  out[sys$big, ] = sys$Dg * x1 + sys$Cm %*% x2
-  out[sys$rest, ] = crossprod(sys$Cm, x1) + sys$E %*% x2
+  x1 = X[sys[["big"]], , drop = FALSE]
+  x2 = X[sys[["rest"]], , drop = FALSE]
+  out = matrix(0, sys[["n"]], ncol(X))
+  out[sys[["big"]], ] = sys[["Dg"]] * x1 + sys[["Cm"]] %*% x2
+  out[sys[["rest"]], ] = crossprod(sys[["Cm"]], x1) + sys[["E"]] %*% x2
   out
 }
 
 # Factor the Schur complement on the non-absorbed levels; the identified basis
 # is chosen once per fit so FE normalisations stay fixed across iterations.
 dbglm_fe_solver = function(sys, cache) {
-  if (any(!is.finite(sys$Dg)) || any(sys$Dg <= 0)) stop("GLM fixed-effect information is singular.", call. = FALSE)
-  scaled = sys$Cm / sys$Dg
-  S = sys$E - crossprod(sys$Cm, scaled)
+  if (any(!is.finite(sys[["Dg"]])) || any(sys[["Dg"]] <= 0)) stop("GLM fixed-effect information is singular.", call. = FALSE)
+  scaled = sys[["Cm"]] / sys[["Dg"]]
+  S = sys[["E"]] - crossprod(sys[["Cm"]], scaled)
   sdiag = sqrt(pmax(diag(S), 0))
-  if (is.null(cache$moment_basis)) {
+  if (is.null(cache[["moment_basis"]])) {
     positive = which(sdiag > 0 & is.finite(sdiag))
     keep = integer()
     if (length(positive)) {
@@ -65,39 +65,39 @@ dbglm_fe_solver = function(sys, cache) {
       pivoted = suppressWarnings(chol(C, pivot = TRUE, tol = 1e-11))
       keep = positive[attr(pivoted, "pivot")[seq_len(attr(pivoted, "rank"))]]
     }
-    if (!length(keep) && !length(sys$big)) stop("No identified fixed-effect span remains.", call. = FALSE)
-    cache$moment_basis = keep
+    if (!length(keep) && !length(sys[["big"]])) stop("No identified fixed-effect span remains.", call. = FALSE)
+    cache[["moment_basis"]] = keep
   }
-  keep = cache$moment_basis
+  keep = cache[["moment_basis"]]
   scale = sdiag[keep]
   factor = if (length(keep)) tryCatch(chol(S[keep, keep, drop = FALSE] / outer(scale, scale)), error = function(e) NULL) else matrix(0, 0, 0)
   if (is.null(factor)) stop("GLM fixed-effect information is singular.", call. = FALSE)
   # B lies in range(H) exactly, but plain SQL sums (e.g. Spark) leave roundoff
   # in the redundant FE directions that no solve can remove. Null vectors of
   # H follow from the dropped Schur pivots: v2[keep] = -S_kk^{-1} S_kd.
-  dropped = setdiff(seq_along(sys$rest), keep)
+  dropped = setdiff(seq_along(sys[["rest"]]), keep)
   null_q = NULL
   if (length(dropped)) {
-    v2 = matrix(0, length(sys$rest), length(dropped))
+    v2 = matrix(0, length(sys[["rest"]]), length(dropped))
     v2[cbind(dropped, seq_along(dropped))] = 1
     if (length(keep)) {
       v2[keep, ] = -backsolve(factor, backsolve(factor, S[keep, dropped, drop = FALSE] / scale, transpose = TRUE)) / scale
     }
-    V = matrix(0, sys$n, length(dropped))
-    V[sys$rest, ] = v2
-    V[sys$big, ] = -scaled %*% v2
+    V = matrix(0, sys[["n"]], length(dropped))
+    V[sys[["rest"]], ] = v2
+    V[sys[["big"]], ] = -scaled %*% v2
     null_q = qr.Q(qr(V))
   }
   solve = function(rhs) {
-    r1 = rhs[sys$big, , drop = FALSE]
-    r2 = rhs[sys$rest, , drop = FALSE] - crossprod(scaled, r1)
-    x2 = matrix(0, length(sys$rest), ncol(rhs))
+    r1 = rhs[sys[["big"]], , drop = FALSE]
+    r2 = rhs[sys[["rest"]], , drop = FALSE] - crossprod(scaled, r1)
+    x2 = matrix(0, length(sys[["rest"]]), ncol(rhs))
     if (length(keep)) {
       x2[keep, ] = backsolve(factor, backsolve(factor, r2[keep, , drop = FALSE] / scale, transpose = TRUE)) / scale
     }
-    out = matrix(0, sys$n, ncol(rhs))
-    out[sys$rest, ] = x2
-    out[sys$big, ] = r1 / sys$Dg - scaled %*% x2
+    out = matrix(0, sys[["n"]], ncol(rhs))
+    out[sys[["rest"]], ] = x2
+    out[sys[["big"]], ] = r1 / sys[["Dg"]] - scaled %*% x2
     out
   }
   project = function(rhs) if (is.null(null_q)) rhs else rhs - null_q %*% crossprod(null_q, rhs)
@@ -109,6 +109,10 @@ dbglm_fe_solver = function(sys, cache) {
 # only the weight sum, so each is a narrow GROUP BY over one shared source;
 # GROUPING SETS would evaluate every aggregate for every set.
 dbglm_fe_moments_sql = function(conn, source, fe, value_terms, global_terms = character(), limit = NULL) {
+  if (isTRUE(detect_backend(conn)[["is_databricks"]])) {
+    sql = dbglm_databricks_moments_sql(source, fe, value_terms, global_terms, limit)
+    if (!is.null(sql)) return(sql)
+  }
   K = length(fe)
   pairs = utils::combn(K, 2L, simplify = FALSE)
   alias = function(terms) sub(".* AS ([A-Za-z_0-9]+)$", "\\1", terms)
@@ -123,10 +127,27 @@ dbglm_fe_moments_sql = function(conn, source, fe, value_terms, global_terms = ch
       p = pairs[[k]]
       branch(K + k, fe[p[1]], fe[p[2]], c(null(global_terms), value_terms[1L], null(value_terms[-1L])), fe[p])
     }, character(1)))
-  materialized = if (isTRUE(detect_backend(conn)$is_databricks)) "" else "MATERIALIZED "
+  materialized = if (isTRUE(detect_backend(conn)[["is_databricks"]])) "" else "MATERIALIZED "
   sql = paste0("WITH __dbglm_src AS ", materialized, "(SELECT * FROM ", source, ") ", paste(branches, collapse = " UNION ALL "))
   if (!is.null(limit)) sql = paste0("SELECT * FROM (", sql, ") __dbglm_m ORDER BY __set LIMIT ", sprintf("%.0f", limit))
   sql
+}
+
+dbglm_read_fe_moments = function(conn, sql, max_rows = Inf) {
+  result = dbglm_get_query(conn, sql)
+  if (nrow(result) > max_rows) return(NULL)
+  if (!"__globals" %in% names(result)) return(result)
+  global = which(as.integer(result[["__set"]]) == 0L)
+  if (length(global) != 1L || is.na(result[["__globals"]][global])) {
+    stop("GLM moment query did not return its global summary.", call. = FALSE)
+  }
+  values = jsonlite::fromJSON(result[["__globals"]][global])
+  # Do not recreate mostly-NULL global columns in R: their number grows as
+  # p^2, and padding them across every FE-pair row can exhaust client memory.
+  globals = as.data.frame(lapply(values, as.numeric), check.names = FALSE)
+  result[["__globals"]] = NULL
+  attr(result, "dbglm_globals") = globals
+  result
 }
 
 # Value columns are __h, __b1.., __ex1..; see dbglm_fe_moments_sql().
@@ -152,8 +173,8 @@ dbglm_unpack_fe_moments = function(res, K, n_cols, n_extra) {
     rows = which(sets == K + k)
     if (!length(rows)) return(NULL)
     h = as.numeric(res[["__h"]][rows])
-    ir = match(res[["__j"]][rows], info[[p[2]]]$id)
-    jr = match(res[["__i"]][rows], info[[p[1]]]$id)
+    ir = match(res[["__j"]][rows], info[[p[2]]][["id"]])
+    jr = match(res[["__i"]][rows], info[[p[1]]][["id"]])
     if (any(!is.finite(h)) || anyNA(ir) || anyNA(jr)) return(NULL)
     pairs[[k]] = list(i = p[2], j = p[1], ir = ir, jr = jr, h = h)
   }
@@ -161,8 +182,9 @@ dbglm_unpack_fe_moments = function(res, K, n_cols, n_extra) {
   if (is.null(sys)) return(NULL)
   B = do.call(rbind, lapply(info, `[[`, "b"))
   B_extra = do.call(rbind, lapply(info, `[[`, "ex"))
-  fe_score_max = if (n_extra >= 1L) max(abs(B_extra[, 1L]) / sqrt(pmax(sys$diag, .Machine$double.xmin))) else 0
-  list(info = info, sys = sys, B = B, B_extra = B_extra, starts = sys$starts, n = sys$n, fe_score_max = fe_score_max)
+  fe_score_max = if (n_extra >= 1L) max(abs(B_extra[, 1L]) / sqrt(pmax(sys[["diag"]], .Machine[["double.xmin"]]))) else 0
+  list(info = info, sys = sys, B = B, B_extra = B_extra, starts = sys[["starts"]], n = sys[["n"]],
+    rows = sum(sets != 0L), fe_score_max = fe_score_max)
 }
 
 dbglm_fe_value_terms = function(conn, columns, extra_sums = character()) {
@@ -172,79 +194,94 @@ dbglm_fe_value_terms = function(conn, columns, extra_sums = character()) {
 }
 
 dbglm_query_fe_moments = function(conn, table, fe, columns, extra_sums = character(),
-                                  max_edges = getOption("dbreg.duckdb_ap_max_edges", 1e6),
-                                  max_entries = getOption("dbreg.duckdb_ap_max_entries", 2e6)) {
-  valid_cap = function(x) {
-    is.numeric(x) && length(x) == 1L && is.finite(x) && x >= 1 && x == floor(x)
-  }
-  if (!valid_cap(max_edges) || !valid_cap(max_entries)) {
-    stop("DuckDB AP transfer limits must be positive whole numbers.", call. = FALSE)
-  }
+                                   max_edges = getOption("dbreg.duckdb_ap_max_edges", 1e6),
+                                   max_entries = getOption("dbreg.duckdb_ap_max_entries", 2e6)) {
+  dbglm_validate_moment_limits(max_edges, max_entries)
   sql = dbglm_fe_moments_sql(conn, table, fe, dbglm_fe_value_terms(conn, columns, extra_sums), limit = max_edges + 1)
-  res = dbglm_get_query(conn, sql)
-  if (!nrow(res) || nrow(res) > max_edges) return(NULL)
+  res = dbglm_read_fe_moments(conn, sql, max_rows = max_edges)
+  if (is.null(res) || !nrow(res)) return(NULL)
   unpacked = dbglm_unpack_fe_moments(res, length(fe), length(columns), length(extra_sums))
   if (is.null(unpacked)) return(NULL)
-  if (unpacked$n * max(1L, length(columns)) > max_entries) return(NULL)
+  if (unpacked[["n"]] * max(1L, length(columns)) > max_entries) return(NULL)
   unpacked
 }
 
+dbglm_validate_moment_limits = function(max_edges, max_entries) {
+  valid = function(x) is.numeric(x) && length(x) == 1L && is.finite(x) &&
+    x >= 1 && x <= 2^53 - 2 && x == floor(x)
+  if (!valid(max_edges) || !valid(max_entries)) {
+    stop("GLM moment transfer limits must be positive whole numbers below 2^53-1.", call. = FALSE)
+  }
+  invisible(NULL)
+}
+
 dbglm_project_moments = function(conn, table, columns, identifiers, ops, scales, target, control, create, drop, cache,
-                                 materialize = TRUE, extra_sums = character(), need_table = TRUE,
-                                 precomputed = NULL) {
-  all_intercepts = all(vapply(ops, function(op) identical(op$v, "1.0"), logical(1)))
+                                  materialize = TRUE, extra_sums = character(), need_table = TRUE,
+                                  precomputed = NULL, key = "__dbglm_key") {
+  all_intercepts = all(vapply(ops, function(op) identical(op[["v"]], "1.0"), logical(1)))
   n_cols = length(columns)
   n_extra = length(extra_sums)
   if (!is.null(precomputed)) {
-    info = lapply(precomputed$info, function(x) list(id = x$id, h = x$h))
-    sys = precomputed$sys
-    B = if (n_cols) precomputed$B[, seq_len(n_cols), drop = FALSE] else matrix(0, precomputed$n, 0L)
-    B_extra = if (n_extra) precomputed$B_extra[, seq_len(n_extra), drop = FALSE] else matrix(0, precomputed$n, 0L)
-    n = precomputed$n
+    info = lapply(precomputed[["info"]], function(x) list(id = x[["id"]], h = x[["h"]]))
+    sys = precomputed[["sys"]]
+    B = if (n_cols) precomputed[["B"]][, seq_len(n_cols), drop = FALSE] else matrix(0, precomputed[["n"]], 0L)
+    B_extra = if (n_extra) precomputed[["B_extra"]][, seq_len(n_extra), drop = FALSE] else matrix(0, precomputed[["n"]], 0L)
+    n = precomputed[["n"]]
+    moment_rows = precomputed[["rows"]]
   } else if (all_intercepts && length(ops) >= 2L) {
     fe = vapply(ops, `[[`, character(1), "f")
     unpacked = dbglm_query_fe_moments(conn, table, fe, columns, extra_sums)
     if (is.null(unpacked)) return(NULL)
-    info = lapply(unpacked$info, function(x) list(id = x$id, h = x$h))
-    sys = unpacked$sys
-    B = unpacked$B
-    B_extra = unpacked$B_extra
-    n = unpacked$n
+    info = lapply(unpacked[["info"]], function(x) list(id = x[["id"]], h = x[["h"]]))
+    sys = unpacked[["sys"]]
+    B = unpacked[["B"]]
+    B_extra = unpacked[["B_extra"]]
+    n = unpacked[["n"]]
+    moment_rows = unpacked[["rows"]]
   } else {
-    info = lapply(ops, function(op) dbglm_get_query(conn, paste0("SELECT ", op$f, " AS id,FSUM(w*(", op$v, ")*(", op$v, ")) AS h",
-      if (n_cols) paste0(",", paste(sprintf("FSUM(w*(%s)*%s) AS b%d", op$v, columns, seq_len(n_cols)), collapse = ",")),
-      if (n_extra) paste0(",", paste(sprintf("FSUM((%s)*%s) AS ex%d", op$v, extra_sums, seq_len(n_extra)), collapse = ",")),
-      " FROM ", table, " GROUP BY ", op$f, " ORDER BY ", op$f)))
+    info = lapply(ops, function(op) dbglm_get_query(conn, paste0("SELECT ", op[["f"]], " AS id,FSUM(w*(", op[["v"]], ")*(", op[["v"]], ")) AS h",
+      if (n_cols) paste0(",", paste(sprintf("FSUM(w*(%s)*%s) AS b%d", op[["v"]], columns, seq_len(n_cols)), collapse = ",")),
+      if (n_extra) paste0(",", paste(sprintf("FSUM((%s)*%s) AS ex%d", op[["v"]], extra_sums, seq_len(n_extra)), collapse = ",")),
+      " FROM ", table, " GROUP BY ", op[["f"]], " ORDER BY ", op[["f"]])))
     pairs = list()
     for (i in seq_along(ops)) if (i > 1) for (j in seq_len(i - 1L)) {
-      oi = ops[[i]]; oj = ops[[j]]
-      edge = dbglm_get_query(conn, paste0("SELECT ", oi$f, " AS i,", oj$f, " AS j,FSUM(w*(", oi$v, ")*(", oj$v, ")) AS h FROM ",
-        table, " GROUP BY ", oi$f, ",", oj$f))
-      pairs[[length(pairs) + 1L]] = list(i = i, j = j, h = as.numeric(edge$h),
-        ir = match(edge$i, info[[i]]$id), jr = match(edge$j, info[[j]]$id))
+      oi = ops[[i]]
+      oj = ops[[j]]
+      edge = dbglm_get_query(conn, paste0("SELECT ", oi[["f"]], " AS i,", oj[["f"]], " AS j,FSUM(w*(", oi[["v"]], ")*(", oj[["v"]], ")) AS h FROM ",
+        table, " GROUP BY ", oi[["f"]], ",", oj[["f"]]))
+      pairs[[length(pairs) + 1L]] = list(i = i, j = j, h = as.numeric(edge[["h"]]),
+        ir = match(edge[["i"]], info[[i]][["id"]]), jr = match(edge[["j"]], info[[j]][["id"]]))
     }
-    sys = dbglm_fe_system(lapply(info, function(x) list(id = x$id, h = as.numeric(x$h))), pairs)
+    sys = dbglm_fe_system(lapply(info, function(x) list(id = x[["id"]], h = as.numeric(x[["h"]]))), pairs)
     if (is.null(sys)) return(NULL)
-    n = sys$n
+    n = sys[["n"]]
+    moment_rows = NULL
     B = if (n_cols) do.call(rbind, lapply(info, function(x) as.matrix(x[, paste0("b", seq_len(n_cols)), drop = FALSE]))) else matrix(0, n, 0L)
     B_extra = if (n_extra) do.call(rbind, lapply(info, function(x) as.matrix(x[, paste0("ex", seq_len(n_extra)), drop = FALSE]))) else matrix(0, n, 0L)
   }
-  ids = unlist(lapply(seq_along(ops), function(i) paste(i, info[[i]]$id, sep = "/")), use.names = FALSE)
-  if (!is.null(cache$moment_keys) && !identical(ids, cache$moment_keys)) stop("The fixed-effect sample changed within fitting.", call. = FALSE)
-  cache$moment_keys = ids
-  diagonal = sqrt(pmax(sys$diag, 0))
+  ids = unlist(lapply(seq_along(ops), function(i) paste(i, info[[i]][["id"]], sep = "/")), use.names = FALSE)
+  if (!is.null(cache[["moment_keys"]]) && !identical(ids, cache[["moment_keys"]])) stop("The fixed-effect sample changed within fitting.", call. = FALSE)
+  cache[["moment_keys"]] = ids
+  if (all_intercepts && length(ops) >= 2L && !is.null(moment_rows)) {
+    # The owned base snapshot is fixed before IRLS; working expressions only
+    # change values, never FE keys or row membership. Thus group/pair support
+    # has a fixed, already bounded cardinality for subsequent evaluations.
+    cache[["moment_rows"]] = moment_rows
+    cache[["moment_fe"]] = vapply(ops, `[[`, character(1), "f")
+  }
+  diagonal = sqrt(pmax(sys[["diag"]], 0))
   solver = dbglm_fe_solver(sys, cache)
-  solve_rhs = solver$solve
-  if (n_cols) B = solver$project(B)
+  solve_rhs = solver[["solve"]]
+  if (n_cols) B = solver[["project"]](B)
   coefficients = matrix(0, n, n_cols)
   if (n_cols) coefficients = solve_rhs(B)
   residual = 0
   residual_rhs = matrix(0, n, n_cols)
   if (n_cols) {
-    max_cycles = min(control$fe_max_iter, 8L)
+    max_cycles = min(control[["fe_max_iter"]], 8L)
     for (cycle in seq_len(max_cycles)) {
       residual_rhs = B - dbglm_fe_multiply(sys, coefficients)
-      normalized = residual_rhs / pmax(diagonal, .Machine$double.xmin)
+      normalized = residual_rhs / pmax(diagonal, .Machine[["double.xmin"]])
       residual = max(abs(sweep(normalized, 2, scales, "/")))
       if (is.finite(residual) && residual <= target) break
       if (cycle == max_cycles) {
@@ -266,42 +303,24 @@ dbglm_project_moments = function(conn, table, columns, identifiers, ops, scales,
       coefficients = coefficients, info = info, ops = ops, sub_tables = character()))
   }
   if (!n_cols) {
-    projected = create(paste("SELECT __dbglm_key,", paste(c(identifiers, "w"), collapse = ","), "FROM", table), materialize = materialize)
+    projected = create(paste("SELECT", paste(c(key, identifiers, "w"), collapse = ","), "FROM", table), materialize = materialize)
     return(list(table = projected, raw_projected = NULL, cycles = cycle, residual = 0, method = "moments",
       cross_reduction = cross_reduction, extra_reduction = extra_reduction,
       coefficients = coefficients, info = info, ops = ops, sub_tables = character()))
   }
-  frame = data.frame(op = rep(seq_along(ops), vapply(info, function(x) length(x$id), integer(1))), check.names = FALSE)
-  names(frame) = "__glm_op"
-  frame[["__glm_group"]] = as.numeric(unlist(lapply(info, `[[`, "id"), use.names = FALSE))
-  frame[paste0("c", seq_len(n_cols))] = as.data.frame(coefficients)
-  is_dbx = isTRUE(detect_backend(conn)$is_databricks)
+  frame = dbglm_coefficient_frame(info, coefficients)
+  is_dbx = isTRUE(detect_backend(conn)[["is_databricks"]])
   inline_intermediate = !materialize && !isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))
-  lookup_sub = character()
-  if (is_dbx) {
-    lookup_sql = dbglm_values_sql(conn, frame)
-    if (is.null(lookup_sql)) stop("FE coefficient lookup exceeds the SQL transfer limit.", call. = FALSE)
-    if (inline_intermediate) {
-      lookup = paste0("(", lookup_sql, ")")
-    } else {
-      lookup = create(lookup_sql, materialize = TRUE)
-      lookup_sub = lookup
-    }
-  } else {
-    registered = basename(tempfile("dbglm_coef_"))
-    tryCatch({
-      duckdb::duckdb_register(conn, registered, frame)
-      lookup = create(paste("SELECT * FROM", DBI::dbQuoteIdentifier(conn, registered)), materialize = TRUE)
-    }, finally = try(duckdb::duckdb_unregister(conn, registered), silent = TRUE))
-    lookup_sub = lookup
-  }
-  ctes = vapply(seq_along(ops), function(i) paste0("proj_g", i, " AS (SELECT * FROM ", lookup, " WHERE __glm_op=", i, ")"), character(1))
-  joins = vapply(seq_along(ops), function(i) paste0(" LEFT JOIN proj_g", i, " ON s.", ops[[i]]$f, "=proj_g", i, ".__glm_group"), character(1))
+  dictionary = dbglm_coefficient_lookup(conn, frame, create, inline = inline_intermediate)
+  lookup = dictionary[["source"]]
+  lookup_sub = dictionary[["tables"]]
+  ctes = dbglm_coefficient_ctes(lookup, length(ops), "proj")
+  joins = vapply(seq_along(ops), function(i) paste0(" LEFT JOIN proj_g", i, " ON s.", ops[[i]][["f"]], "=proj_g", i, ".__glm_group"), character(1))
   broadcast = if (is_dbx) paste0("/*+ BROADCAST(", paste0("proj_g", seq_along(ops), collapse = ","), ") */ ") else ""
   if (inline_intermediate) {
     tilde_exprs = vapply(seq_len(n_cols), function(j) {
       terms = vapply(seq_along(ops), function(i) {
-        v = if (ops[[i]]$v == "1.0") "1.0" else paste0("s.", ops[[i]]$v)
+        v = if (ops[[i]][["v"]] == "1.0") "1.0" else paste0("s.", ops[[i]][["v"]])
         sprintf("(%s)*COALESCE(proj_g%d.c%d,0)", v, i, j)
       }, character(1))
       paste0("CAST((s.", columns[j], "-(", paste(terms, collapse = " + "), ")) AS DOUBLE) AS ", columns[j], "_tilde")
@@ -315,13 +334,13 @@ dbglm_project_moments = function(conn, table, columns, identifiers, ops, scales,
   }
   expressions = vapply(seq_len(n_cols), function(j) {
     terms = vapply(seq_along(ops), function(i) {
-      v = if (ops[[i]]$v == "1.0") "1.0" else paste0("s.", ops[[i]]$v)
+      v = if (ops[[i]][["v"]] == "1.0") "1.0" else paste0("s.", ops[[i]][["v"]])
       sprintf("(%s)*COALESCE(proj_g%d.c%d,0)", v, i, j)
     }, character(1))
     paste0("CAST((s.", columns[j], "-(", paste(terms, collapse = " + "), ")) AS DOUBLE) AS ", columns[j])
   }, character(1))
   projected = create(paste0("WITH ", paste(ctes, collapse = ","), " SELECT ", broadcast,
-    paste(paste0("s.", c("__dbglm_key", identifiers, "w")), collapse = ","), ",",
+    paste(paste0("s.", c(key, identifiers, "w")), collapse = ","), ",",
     paste(expressions, collapse = ","), " FROM ", table, " s", paste(joins, collapse = "")), materialize = TRUE)
   for (st in lookup_sub) drop(st)
   list(table = projected, raw_projected = NULL, cycles = cycle, residual = residual, method = "moments",

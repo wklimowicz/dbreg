@@ -90,7 +90,8 @@ backend. The current implementation supports three exact strategies:
 \item \code{strategy = "demean"} for one or more absorbed fixed effects.
 }
 
-Multi-way fixed effects use exact alternating projections when there are
+Multi-way fixed effects use an exact joint projection when there are
 more than two fixed effects, or when two-way fixed effects are unbalanced or
-weights are supplied.
+weights are supplied. The bounded FE solver and alternating-projection
+fallback share the controls documented in \code{\link[=dbreg]{dbreg()}}.
 }

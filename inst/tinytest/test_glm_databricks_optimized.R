@@ -1,0 +1,11 @@
+library(DBI)
+source(system.file("tinytest/helper_glm_reference.R", package = "dbreg"), local = TRUE)
+source(system.file("tinytest/helper_glm_databricks.R", package = "dbreg"), local = TRUE)
+source(system.file("tinytest/helper_glm_databricks_cases.R", package = "dbreg"), local = TRUE)
+local({
+  native = dbConnect(duckdb::duckdb(config = list(temp_directory = "", threads = "2")))
+  on.exit(dbDisconnect(native, shutdown = TRUE))
+  conn = dbglm_test_databricks_connection(native)
+  dbglm_test_databricks_cases(conn)
+  expect_equal(length(dbListTables(native)), 0L)
+})

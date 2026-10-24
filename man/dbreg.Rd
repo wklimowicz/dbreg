@@ -175,10 +175,16 @@ the presence of a single FE. It is also identical for the two-way FE
 however, the double demeaning strategy is not algebraically equivalent to
 the fixed effects projection and therefore does not recover the exact TWFE
 coefficients. In such cases, and also for weighted two-way FE, \code{dbreg}
-uses alternating projections (AP) to recover the exact FE coefficients,
-at the cost of extra passes over the data. AP also generalizes the
-\code{"demean"} strategy to three or more FE. See \link{dbreg-options} for AP
-tuning options.
+uses an exact joint FE projection, also supporting three or more FE.
+DuckDB and native Databricks first try a bounded solve from FE sufficient
+statistics; observation rows stay in SQL. The transformed rows must pass
+the requested group-mean tolerance before the result is accepted.
+Unsupported or oversized systems, or failed numerical certification,
+fall back to alternating projections (AP). On Spark/Databricks, AP uses
+SQL window functions and writes one table per three cycles
+(\code{options(dbreg.ap_method = "window", dbreg.ap_batch_size = 3L)}).
+Use \code{options(dbreg.ap_method = "join")} to select the join implementation.
+See \link{dbreg-options} for AP tuning options.
 \item \code{"mundlak"}: a generalized Mundlak (1978), or correlated random effects
 (CRE) estimator that regresses Y on X plus group means of X:
 \deqn{Y_{it} = \alpha + \beta X_{it} + \gamma \bar{X}_i + \varepsilon_{it} \quad \text{(one-way)}}
@@ -206,13 +212,30 @@ Arkhangelsky & Imbens (2024).
 However, the demeaning approaches invite tradeoffs of their own. For example,
 the single-pass double demeaning transformation only obtains exact TWFE
 results for balanced panels with two FE. For unbalanced panels, weighted
-regressions, or three or more FE, \code{dbreg} uses alternating projections
-(iterative demeaning) which is exact but requires multiple passes and may be
-slower to converge on very large datasets. In such cases, \code{"mundlak"} (CRE)
+regressions, or three or more FE, \code{dbreg} uses a bounded FE solve where
+feasible, otherwise alternating projections (iterative demeaning). AP may
+be slower to converge on very large datasets. In such cases, \code{"mundlak"} (CRE)
 may be preferable as it is a single-pass estimator that obtains consistent
 coefficients regardless of panel structure and FE count, but at the "cost" of
 recovering a different estimand. (It is a different model to TWFE, after
 all.) See Wooldridge (2025) for an extended discussion of these issues.
+
+\code{options(dbreg.ap_solver = "auto")} is the default for joint FE projection.
+Use \code{"iterative"} to bypass the bounded solver, or \code{"moments"} to try it even
+when an explicit \code{dbreg.ap_method} or \code{dbreg.duckdb_ap_method} is set. Under
+\code{"auto"}, those explicit method choices retain their existing behavior.
+All modes retain the existing fallback and convergence checks.
+\code{dbreg.ap_tol} (default \code{1e-10}) bounds the absolute weighted group means;
+\code{dbreg.ap_max_iter} (default \code{100}) limits projection iterations.
+The bounded solver uses \code{dbreg.duckdb_ap_max_edges} (default \code{1e6} summary
+rows), \code{dbreg.duckdb_ap_max_entries} (default \code{2e6} FE-by-design entries),
+and \code{dbreg.ap_moment_max_cells} (default \code{8e6} rectangular transfer cells)
+on both backends. Its dense system also shares the GLM limits
+\code{dbreg.glm_fe_dense_max} (default \code{4096} remaining FE levels after absorbing
+the largest block) and \code{dbreg.glm_fe_cross_max} (default \code{5e7} cross entries).
+Exceeding a limit selects iterative AP. Successful bounded projections
+report \code{ap_method = "bounded_moments"}; \code{ap_iterations} counts solve and
+refinement steps and \code{ap_max_abs} reports the certified group-mean residual.
 
 Users should weigh these tradeoffs when choosing their acceleration strategy.
 Summarising, we can provide a few guiding principles. \code{"compress"} is a good
@@ -238,10 +261,10 @@ compressed data) THEN \code{"moments"}.
 \item ELSE IF 2 FE AND (poor compression ratio OR too big compressed data):
 \itemize{
 \item IF balanced panel THEN \code{"demean"}.
-\item ELSE \code{"demean"} via alternating projections.
+\item ELSE \code{"demean"} via joint FE projection.
 }
 \item ELSE IF 3+ FE AND (poor compression ratio OR too big compressed data)
-THEN \code{"demean"} via alternating projections.
+THEN \code{"demean"} via joint FE projection.
 \item ELSE THEN \code{"compress"}.
 }
 

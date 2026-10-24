@@ -9,9 +9,10 @@
 #' - `strategy = "compress"` for repeated no-FE design rows.
 #' - `strategy = "demean"` for one or more absorbed fixed effects.
 #'
-#' Multi-way fixed effects use exact alternating projections when there are
+#' Multi-way fixed effects use an exact joint projection when there are
 #' more than two fixed effects, or when two-way fixed effects are unbalanced or
-#' weights are supplied.
+#' weights are supplied. The bounded FE solver and alternating-projection
+#' fallback share the controls documented in [dbreg()].
 #'
 #' @param fml A fixest-style IV formula. Use `y ~ x1 + x2 | d ~ z` for models
 #'   without absorbed fixed effects, and `y ~ x1 + x2 | fe1 + fe2 + fe3 | d ~ z`
@@ -389,7 +390,7 @@ dbivreg_run_frame = function(inputs, frame, label) {
   dbivreg_finalize_fit(
     inputs = inputs,
     S = cross_moments(moments_df, union_names, yvar, intercept = frame[["intercept"]]),
-    n_total = moments_df[["n_total"]],
+    n_total = as.numeric(moments_df[["n_total"]]),
     n_fe_levels = setNames(
       vapply(seq_along(fe), function(k) as.numeric(moments_df[[sprintf("n_fe%d", k)]]), numeric(1)),
       fe

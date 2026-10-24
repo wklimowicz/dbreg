@@ -4,12 +4,15 @@
 \alias{coef.dbreg}
 \title{Extract coefficients from dbreg objects}
 \usage{
-\method{coef}{dbreg}(object, fe = FALSE, ...)
+\method{coef}{dbreg}(object, fe = FALSE, collin = FALSE, ...)
 }
 \arguments{
 \item{object}{A `dbreg` object.}
 
 \item{fe}{Should the fixed effects be included? Default is `FALSE`.}
+
+\item{collin}{Should regressors removed for collinearity be returned as `NA`?
+Default is `FALSE`.}
 
 \item{...}{Additional arguments. Currently unused, except to capture
 superseded arguments.}

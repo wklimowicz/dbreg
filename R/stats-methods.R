@@ -2,6 +2,16 @@
 ## Stats methods for dbreg objects
 ##
 
+#' Number of observations used in a database regression
+#'
+#' @param object A \code{dbreg} object.
+#' @param ... Additional arguments (currently unused).
+#' @return The number of original observations in the estimation sample,
+#'   before aggregation or compression by the selected strategy.
+#' @importFrom stats nobs
+#' @export
+nobs.dbreg = function(object, ...) object[["nobs_orig"]]
+
 #' Extract coefficients from dbreg objects
 #'
 #' @param object A `dbreg` object.
@@ -167,10 +177,11 @@ predict.dbreg = function(
     terms_rhs = "1"
   }
   fml_mm = reformulate(terms_rhs, intercept = intercept)
+  design_data = model_matrix_data(fml_mm, newdata)
   # (sparse.model.matrix() can't handle backticked, non-syntactic names)
   mm = tryCatch(
-    sparse.model.matrix(fml_mm, data = newdata),
-    error = function(e) model.matrix(fml_mm, data = newdata)
+    sparse.model.matrix(fml_mm, data = design_data),
+    error = function(e) model.matrix(fml_mm, data = design_data)
   )
   if (NROW(i_cols)) {
     is_i = colnames(mm) %in% paste0("`", i_cols[["name"]], "`")
@@ -213,7 +224,8 @@ predict.dbreg = function(
       mm = matrix(mm, nrow = 1)
     }
     if (has_y) {
-      y_group_mean = newdata[[yvar]] - sweep_fe(newdata[[yvar]])
+      y = as.numeric(newdata[[yvar]])
+      y_group_mean = y - sweep_fe(y)
     } else {
       y_group_mean = 0
       message(sprintf(

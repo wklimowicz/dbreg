@@ -57,7 +57,7 @@ build_base_frame = function(inputs, x_sql, x_names) {
 #' Sweeps out the fixed effects from the outcome and regressors, producing
 #' `<var>_tilde` columns in a `demeaned` CTE. One FE and balanced, unweighted
 #' two-way panels are demeaned analytically in SQL. Otherwise (3+ FE, or two
-#' FE that are weighted or unbalanced) alternating projections are run into a
+#' FE that are weighted or unbalanced) fixed effects are projected into a
 #' temp table, which `cleanup()` drops.
 #'
 #' @inheritParams build_base_frame
@@ -85,7 +85,7 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     use_ap = !is.null(weights) || !isTRUE(is_balanced)
   }
   if (use_ap && verbose) {
-    message(sprintf("[%s] Using alternating projections for FE demeaning", tag))
+    message(sprintf("[%s] Using fixed-effect projection for FE demeaning", tag))
   }
   if (use_ap && sql_only) {
     stop(sprintf("[%s] sql_only is not supported for alternating projections.", tag), call. = FALSE)

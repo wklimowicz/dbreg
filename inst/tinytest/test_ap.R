@@ -9,11 +9,11 @@ dat = data.frame(
   fe3 = sample.int(8, n, TRUE), x1 = rnorm(n)
 )
 dat$y = 0.5 * dat$x1 + sin(dat$fe1) + cos(dat$fe2) + dat$fe3 / 10 + rnorm(n)
-old = options(dbreg.ap_tol = 1e-10, dbreg.ap_max_iter = 500L)
+old = options(dbreg.ap_tol = 1e-10, dbreg.ap_max_iter = 500L, dbreg.ap_solver = "iterative")
 ssc_full = fixest::ssc(K.fixef = "full")
 expect_message(
   dbreg(y ~ x1 | fe1 + fe2, data = dat, strategy = "demean", verbose = TRUE),
-  "alternating projections", info = "Fixture exercises AP"
+  "fixed-effect projection", info = "Fixture exercises AP"
 )
 
 # Cluster identifier that is also a regressor (previously an SQL binder error).

@@ -4,7 +4,7 @@ library(fixest)
 source(system.file("tinytest/helper_glm_reference.R",package="dbreg"),local=TRUE)
 
 (function() {
-  con = dbConnect(duckdb::duckdb(shared_home=FALSE),
+  con = dbConnect(duckdb::duckdb(),
     config=list(temp_directory="",memory_limit="2GiB",threads="2"))
   on.exit(dbDisconnect(con,shutdown=TRUE))
   eta = sort(unique(c(seq(-12,12,length.out=2401),-1000,1000,

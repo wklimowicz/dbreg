@@ -8,6 +8,8 @@ register_factor_display(
   inputs,
   factor_levels = list(),
   level_aliases = NULL,
+  col_names = NULL,
+  aliases = NULL,
   i_columns = NULL
 )
 }

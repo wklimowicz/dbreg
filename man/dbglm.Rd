@@ -96,6 +96,9 @@ Missing/nonfinite model values and zero weights are omitted. Model
   support coefficients and inference; new-row prediction with absorbed effects
   is not yet implemented. Grouped binomial responses, fractional original
   weights and categorical no-intercept models remain unsupported.
+  With absorbed effects, expanded regressor columns are centered internally
+  before forming projection moments. Their slopes, units and covariance are
+  unchanged; the retained column centers are recorded in `design_center`.
   Large two-way categorical FE problems use the shared bounded sparse
   projector when possible. It rebuilds weighted sufficient statistics at each
   IRLS step and certifies normalized group equations on the transformed rows.
@@ -104,9 +107,12 @@ Missing/nonfinite model values and zero weights are omitted. Model
   falls back to the existing SQL projection. Use
   `dbglm_control(projection_method = "sql")` to select that path directly.
   Databricks requires a session-preserving native-query DBI connection and
-  physical temporary-table support. Short-lived expressions and FE lookup
-  dictionaries use views; each accepted IRLS working state is materialized.
-  Two-way categorical effects can use the shared bounded sparse solver;
+  physical temporary-table support. Bounded categorical FE problems use
+  parameter-space IRLS, grouped moment queries and compact global summaries.
+  Small dense FE dictionaries use coefficient arrays; large or sparse
+  dictionaries retain coefficient joins. Working states are inline SQL
+  expressions on the moments path, avoiding row-sized writes during IRLS.
+  Two-way categorical effects can also use the shared bounded sparse solver;
   the SQL fallback reuses batched window AP with the same normalized tolerance.
   `dbreg.spark_ap_chunk_cycles` controls its batch size (default three).
   Databricks uses double-precision SUM and a bounded count histogram (at most

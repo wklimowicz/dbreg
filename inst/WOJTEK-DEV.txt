@@ -9,6 +9,12 @@ based on the exact head of upstream PR80, then carries GLM, the tested database
 performance work, and selected improvements from the older fork branches.
 It is not intended to be proposed upstream as one large pull request.
 
+Fork cleanup completed on 2026-10-24: fork PRs #1, #2, #3, #4, #5, #6 and #8
+were closed without merging, and their eight stack/minimal branches were
+removed after a complete recovery bundle was verified. The fork now has exactly
+four branches: main, perf/spark-window-ap, wojtek-dev, and
+benchmark-assets/spark-window-ap. There are no open PRs targeting the fork.
+
 PR80: https://github.com/grantmcdermott/dbreg/pull/80
 Base commit: 8a21a9dab083423f7578a56dc6855fa49360e5ab
 PR80 remains open and its branch has not been changed by this integration.
@@ -43,13 +49,12 @@ DuckDB PCG, joint FE moments, Databricks paths, tests, benchmark evidence and
 maintainer guides have been preserved. The local branch was renamed, and the fork branch is replaced by wojtek-dev.
 
 stack/01-compress-sql-fix (1849f8d): already covered upstream by PR69. No
-additional estimator work to import. Retained because it heads fork PR1 and
-is the base of fork PR3.
+additional estimator work to import. Branch retired after closing fork PR1
+and its dependent fork PR3.
 
 stack/02-databricks-window-ap (301b49f): obsolete AP/backend prototype.
 Its useful temp-table and bounded-window ideas are covered by upstream and
-PR80/GLM. Retained as fork PR3's head and fork PR4's base, not as a competing
-implementation to maintain.
+PR80/GLM. Branch retired after closing fork PR3 and its dependent fork PR4.
 
 stack/03-diagnostics-query-plans (2ded191): integrated optional sample audits,
 per-fit FE controls, collinearity-aware tidying, covariance visibility and SQL
@@ -89,15 +94,15 @@ Two performance switches from stack/06 were deliberately not copied:
   benefit on the current implementation.
 
 minimal/01-temp-table-scope (b9ab947): already covered upstream by PR71.
-Retained only as the base of fork PR8.
+Branch retired after closing its dependent fork PR8.
 
 minimal/02-databricks-bounded-ap (b5412bb): superseded by PR80 and the current
 backend/resource managers, all-column convergence and numeric-moment handling.
 The older sum_w BIGINT patch is covered by current moment conversion. Native
 review also identified integer64 compressed observation counts; these are now
 normalized to numeric. The old benchmark used a persistent table and weaker
-parity checks; current synthetic benchmark scripts replace it. Retained as
-fork PR8's head pending retirement of that PR.
+parity checks; current synthetic benchmark scripts replace it. Branch and
+fork PR8 are now retired.
 
 benchmark-assets/spark-window-ap (551b421): chart assets linked from PR80.
 Retain; these are documentation assets, not missing estimator code.
@@ -109,9 +114,9 @@ feature was found to import.
 Branches removed in the earlier fork cleanup were upstream copies, already
 merged fixes, duplicate aliases or unused generated website output. Their
 classification and recovery bundles remain in the local cleanup archive.
-The seven open fork PRs have not been closed or retargeted. Once retired, their
-old stack/minimal branches can be removed without losing reviewed functionality;
-wojtek-dev is the sole integration target for new work.
+All seven fork PRs are now closed, and all eight stack/minimal branches have
+been deleted. Their exact tips and complete history remain in the verified
+recovery bundle. wojtek-dev is the sole integration target for new work.
 
 Small upstream candidates
 -------------------------
@@ -239,3 +244,5 @@ SCRATCH/wojtek-dev-2026-10-24/ : original working tree, verified pre-rebase bund
 SCRATCH/extra-branch-review-2026-10-24/ : source archives, incremental diffs,
 reproduction probes, per-test results and native logs.
 SCRATCH/fork-cleanup-2026-10-24/ : earlier inventory and deleted-branch bundles.
+SCRATCH/fork-retirement-2026-10-24/ : verified retired-branches.bundle, branch
+SHAs, PR closure/deletion logs, and final verification of the four retained refs.

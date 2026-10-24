@@ -84,11 +84,12 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   bounded portable FE dictionaries and learned coefficients for new-row
 #'   prediction. It adds SQL aggregation and dictionary transfer, without keeping
 #'   input rows. `options(dbreg.prediction_max_entries = 2e6)` bounds matrix and
-#'   transfer entries alongside the existing FE moment limits. A single FE
-#'   without varying slopes can keep an oversized dictionary in SQL instead.
+#'   transfer entries alongside the existing FE moment limits. One or two FEs
+#'   without varying slopes can keep oversized dictionaries in SQL instead.
 #'   That state needs its live owning session, cannot be restored with
 #'   `saveRDS()`, and can be released with [close()]. Other oversized designs
-#'   error instead of collecting the panel.
+#'   error instead of collecting the panel. Two-FE recovery uses the fitted
+#'   projection iteration limit and a tolerance at least as strict as `1e-10`.
 #' @return A compact object of class `c("dbglm", "dbreg")`, containing slopes,
 #'   covariance, log likelihood, sample counts and convergence diagnostics. Input
 #'   rows are not retained. Database-backed prediction retention keeps its owned
@@ -484,7 +485,8 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     result[["fitted_state"]] = dbglm_prediction_state(conn, fit[["working"]], base,
       fe, parsed[["fe_components"]], all_x, spec[["columns"]][["name"]],
       design_center, trend_aliases, counts[["sizes"]], create, drop, n,
-      dictionary_components = prediction_keys[["columns"]], fitted_beta = prediction_beta)
+      dictionary_components = prediction_keys[["columns"]], fitted_beta = prediction_beta,
+      recovery_control = list(tol = control[["fe_tol"]], max_iter = control[["fe_max_iter"]]))
   }
   if (!is.null(sample_table)) {
     keys = if (length(row_id)) row_id else "__dbglm_key"

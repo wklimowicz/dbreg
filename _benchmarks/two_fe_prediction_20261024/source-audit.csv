@@ -1,0 +1,6 @@
+"manifest","files","differences"
+"local/full-source-md5.csv",140,0
+"native-two-fe/source-md5.csv",139,0
+"native-single-fe/source-md5.csv",139,0
+"performance/none-source-md5.csv",44,0
+"performance/prediction-source-md5.csv",44,0

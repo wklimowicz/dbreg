@@ -1,0 +1,11 @@
+ℹ Loading dbreg
+Starting native suite: test_database_two_fe_live.R
+[Two-FE SQL prediction] demean
+[Two-FE SQL prediction] compress
+[Two-FE SQL prediction] binomial
+[Two-FE SQL prediction] poisson
+
+test_database_two_fe_live.R...   77 tests OK 28.6s
+All ok, 77 results (28.6s)
+                        suite assertions failures error elapsed_seconds
+1 test_database_two_fe_live.R         77        0              1717.929

@@ -182,3 +182,13 @@ Database-backed prediction needs its live owning session. Requested typed keys
 use bounded literal batches (JSON on native Databricks); do not use DBI's quoted
 text literals for native keys containing quotes/backslashes. Multi-FE SQL state,
 keyed output relations and retained post-fit score state remain separate work.
+
+Two-FE retained SQL prediction now uses bounded within-X rank certification and
+SQL graph component labels, with pointer compression. Recovery projects the
+fixed-slope target and expanded regressors, retaining only typed dictionaries
+with learned effects/projections and labels. It respects the fitted iteration
+limit and a tolerance at least as strict as 1e-10. Each fit must certify eta/RSS
+before ownership transfer. The new 77-check shared fixture and 60-check native
+single-FE regression pass; the full local suite has 4,258 assertions. FE-only
+zero-column GLMs are covered, as are unit changes and nonconvergence cleanup.
+See GLM-VALIDATION.txt and _benchmarks/two_fe_prediction_20261024 for exact scope.

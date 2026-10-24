@@ -330,3 +330,28 @@ state is 5,792 bytes; recovery queries return at most one row during fitting.
 Retention adds about 0.91s and 29% whole-process RSS in this local fixture.
 These focused native/resource gates do not establish full native package or
 large multi-FE/keyed-output/inference support, which remain unfinished.
+
+Database-backed two-FE prediction checkpoint, 2026-10-24
+-------------------------------------------------------
+Full local suite: 4,258 assertions, zero failures, 211.52 seconds. New shared
+fixture: 77 assertions; seven local graph-component checks. Native two-FE:
+77 assertions, zero failures, 1,717.93 seconds (28.6 minutes). Native single-FE
+regression: 60 assertions, zero failures, 529.97 seconds. Those native jobs ran
+concurrently on separate synthetic sessions. All five final source manifests
+match the implementation. Package check: zero errors/warnings, existing optional
+binsreg NOTE, with the complete local source suite run separately.
+Evidence: _benchmarks/two_fe_prediction_20261024, including audit-source.R.
+
+Coverage includes OLS demean/compress, binomial/Poisson GLMs and offsets,
+zero-column FE-only GLMs, composite text keys, disconnected components, unseen
+estimable tuples, absorbed regressor relations, a million-fold unit change,
+source removal, serialization, release and failure cleanup. The component tests
+include non-contiguous IDs, a disconnected graph and a 1,000-link chain.
+
+The SQL-only million-row fixture has 50,000/49,997 FE levels and paired opposite
+noise, yielding a known analytical predictor without collecting training rows.
+Six fits match named beta/full covariance/N; predictions match the target.
+Mathematical state is 8,120 bytes, with at most one row returned per recovery
+query during fitting. Retention adds about 5.1s and 18% whole-process peak RSS
+locally. These are scoped tests, not a full native package or native large-state
+performance/storage gate. Database outputs, inference and adapters remain pending.

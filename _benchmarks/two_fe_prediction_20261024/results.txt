@@ -1,0 +1,105 @@
+Database-backed two-FE prediction checkpoint, 2026-10-24
+======================================================
+
+Implementation is the commit containing this file, based on 4fa691b.
+Recorded HEAD identifies the preceding commit; source manifests identify the
+working-tree implementation. This is a focused compatibility increment, not
+full fixest replacement or a complete native package/resource acceptance gate.
+
+Completed gates
+----------------
+Full local: 4,258 assertions, zero failures, 211.5167 seconds.
+Native two-FE fixture: 77 assertions, zero failures, 1,717.929 seconds.
+Native single-FE regression: 60 assertions, zero failures, 529.9678 seconds.
+Both native jobs ran concurrently on separate synthetic sessions.
+Package check: zero errors/warnings and the existing optional binsreg NOTE;
+--no-tests/--no-vignettes/--no-manual, _R_CHECK_FORCE_SUGGESTS_=false.
+The separate full source suite above includes all local tests.
+Use explicit elapsed_seconds: tinytest's printed native time labels minutes
+as seconds. The two-FE run took about 28.6 minutes, not 28.6 seconds.
+
+All final local/native/performance source manifests match the implementation.
+audit-source.R reproduces the check at this commit. Numerical reference:
+fixest 0.14.0; adjacent source v0.14.2, 789f888416e97673d154c840eec2d99101fc07b1.
+Per-run environment/source records identify R, packages and native timeout.
+
+Implemented behavior
+---------------------
+Oversized retained prediction with two FE blocks, without varying slopes, can
+keep its dictionaries in SQL. Slopes stay fixed at the original fit. Alternating
+projections recover nuisance effects and projections of the original expanded
+regressors. A bounded within-X null system certifies regressor relations.
+Graph component labels, with pointer compression, reject cross-component new
+combinations. Unobserved but estimable within-component combinations remain
+predictable. Recovery checks final eta or the fitted OLS RSS before transfer.
+
+One or two FE blocks support typed composite keys. Dictionaries store original
+typed key values, learned effects, regressor projections and component labels;
+only requested keys and bounded slope matrices leave SQL. Mathematical state
+and ownership leases remain separate. Two-FE recovery uses the fitted projection
+iteration limit and min(fitted tolerance, 1e-10). Nonconvergence errors clean up.
+Reusing native table names bounds the number of live row intermediates; physical
+backend history/disk storage was not measured by this gate.
+
+Existing single-FE matching now shares the bounded lookup/rank helper. FE-only
+GLMs correctly handle zero-column designs in both paths. Portable small-state
+and native compact defaults keep their existing behavior. Three or more large
+FE blocks and varying slopes still require portable feasibility; database
+prediction output, retained inference and compatibility adapters remain pending.
+
+Coverage
+---------
+Shared fixtures cover OLS demean/compress, binomial/Poisson GLMs and offsets,
+FE-only GLMs, exact text/composite keys, full coefficient/covariance invariance,
+fixest predictions, batching/order, disconnected groups, unseen estimable tuples,
+absorbed regressor relations, a million-fold unit change, source removal,
+invalid serialized handles, release and failure cleanup. Only the two final
+dictionaries survive fitting. The single-FE native regression retains its full
+typed BIGINT/double/text/date/logical and resource coverage.
+Seven local component checks include non-contiguous IDs, a known disconnected
+graph, a 1,000-link chain, forced label nonconvergence and caller-table survival.
+
+Large local resource fixture
+-----------------------------
+large-state.R generates a SQL-only million-row panel with 50,000 first-FE and
+49,997 second-FE levels, two slopes and the default 2e6 prediction entry budget.
+Each adjacent observation pair has identical regressors/FEs and opposite noise;
+the noise is exactly orthogonal to all model columns. Thus the fitted predictor
+is known analytically without collecting training rows into R.
+
+Six measured completed fits (three per mode after one warmup) match names,
+coefficients, full covariance and N. Retained predictions match the analytical
+target to 1e-7. Every close restores the original table inventory.
+
+                         compact default       retained prediction
+median fit               4.588s                9.713s
+peak process RSS         539,284 KiB           636,972 KiB
+mathematical state       0 bytes               8,120 bytes
+
+Retention added about 5.1s and 18% whole-process peak RSS here. DuckDB is
+embedded, so RSS includes database execution memory, not just the R heap.
+Instrumented two-FE recovery queries return at most one row during fitting,
+with 29,472 cumulative R result-object bytes (object.size, not wire bytes).
+Both dictionaries remain in SQL. Only 100 newdata rows are fetched for value
+checks outside fit timing; no training panel is collected into R.
+
+R 4.6.0, DuckDB 1.5.2; two DuckDB/BLAS/OMP threads and a 2GB DuckDB limit.
+Local tests/native clients were active in the background. These warmed resource
+measurements have timing variation and do not establish native or disk-bound
+performance. The native fixture deliberately forces tiny transfer budgets and
+many repeated predictions; its total runtime is not a per-fit latency benchmark.
+
+Reproduction from repository root
+----------------------------------
+Rscript _benchmarks/check_glm_fractional.R full /tmp/two-fe-local linear_prediction
+Rscript .github/scripts/run-databricks-tests.R /tmp/two-fe-native test_database_two_fe_live.R
+Rscript .github/scripts/run-databricks-tests.R /tmp/single-fe-native test_database_prediction_live.R
+Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_prediction_components.R")'
+
+Rscript _benchmarks/two_fe_prediction_20261024/large-state.R prepare /tmp/fresh-two-fe.duckdb
+Rscript _benchmarks/two_fe_prediction_20261024/large-state.R run /tmp/fresh-two-fe.duckdb none OUTPUT_PREFIX
+Rscript _benchmarks/two_fe_prediction_20261024/large-state.R run /tmp/fresh-two-fe.duckdb prediction OUTPUT_PREFIX
+
+Run modes sequentially with OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 and
+/usr/bin/time -v. summarize-large-state.R reproduces saved value checks and
+resource statistics; audit-source.R reproduces source-identity checks.

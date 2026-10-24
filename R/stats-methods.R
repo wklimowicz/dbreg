@@ -90,7 +90,7 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
 #' preserve newdata order and require neither outcomes nor fitting weights.
 #' Unknown FE keys and combinations outside the identified joint design span
 #' return `NA`. Retained learned-effect state supports `interval = "none"` only.
-#' Small dictionaries are portable; oversized single-FE dictionaries can stay
+#' Small dictionaries are portable; oversized one- or two-FE dictionaries can stay
 #' in their owning database session. See [close.dbreg()] for resource lifetime.
 #'
 #' Without prediction retention, `"demean"` models carry two caveats:

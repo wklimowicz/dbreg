@@ -1,0 +1,10 @@
+ℹ Loading dbreg
+
+test_database_two_fe.R........    0 tests
+test_database_two_fe.R........    0 tests    [Two-FE SQL prediction] demean
+[Two-FE SQL prediction] compress
+[Two-FE SQL prediction] binomial
+[Two-FE SQL prediction] poisson
+
+test_database_two_fe.R........   77 tests OK 6.5s
+All ok, 77 results (6.5s)

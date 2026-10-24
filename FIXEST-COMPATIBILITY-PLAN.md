@@ -112,10 +112,33 @@ whole-process peak RSS rises about 29% in this warmed local fixture. This
 includes embedded DuckDB execution memory and is not a native performance gate.
 Evidence: `_benchmarks/database_prediction_20261024/`.
 
+Two-FE database-backed prediction is now implemented as well, without varying
+slopes. It fixes the original slopes, recovers nuisance effects/regressor
+projections in SQL, and uses component labels plus a bounded within-X null
+system to distinguish estimable new combinations. It supports FE-only GLMs,
+checks eta/RSS recovery, and cleans up nonconverged requests. Small portable
+state and compact native defaults retain their existing behavior.
+
+This increment passes **4,258 local assertions**, **77 native two-FE checks**
+(1,717.93 seconds) and **60 native single-FE regression checks** (529.97 seconds),
+with zero package-check errors/warnings and the existing optional `binsreg`
+NOTE. All five final local/native/performance source manifests match. Evidence:
+`_benchmarks/two_fe_prediction_20261024/`.
+
+A SQL-only million-row, 50,000/49,997-level two-FE fixture has a known analytical
+predictor using paired opposite noise. Six fits match beta/full covariance/N;
+retained predictions match the analytical target. Mathematical state is 8,120
+bytes; recovery queries return at most one row during fitting. Retention adds
+about 5.1s (4.588s to 9.713s medians) and 18% whole-process peak RSS locally.
+Native large-state performance/disk-history storage remain unmeasured. Keyed
+database output is the next milestone; its numerical/lifetime prototype passes
+locally, but the public API and factor/portable-state paths are not implemented.
+
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
-Remaining dependencies include large multi-FE state and keyed database outputs,
-followed by formula adapters and post-fit inference. Use dbreg's
+Remaining dependencies include keyed database outputs, retained sample/score
+state, post-fit inference and formula adapters. Three or more large FE blocks
+and large varying-slope designs still need a supported recovery boundary. Use dbreg's
 existing conventions; consult fixest for unresolved user-facing compatibility
 choices. Concrete API/lifetime decisions are recorded in
 `inst/FIXEST-COMPATIBILITY.txt`. The complete replacement remains unfinished.

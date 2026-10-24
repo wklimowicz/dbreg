@@ -1,0 +1,7 @@
+ℹ Loading dbreg
+Starting native suite: test_database_prediction_live.R
+
+test_database_prediction_live.R   60 tests OK 8.8s
+All ok, 60 results (8.8s)
+                            suite assertions failures error elapsed_seconds
+1 test_database_prediction_live.R         60        0              529.9678

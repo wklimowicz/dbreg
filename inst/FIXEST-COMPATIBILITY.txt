@@ -27,8 +27,8 @@ Implementation sequence
    ownership. OLS/GLM now share typed-key validation and retained-key exports;
    OLS exports use an immutable snapshot throughout fitting. Bounded portable
    OLS/GLM learned-effect state is implemented behind explicit retention. Large
-   single-FE dictionaries and resource leases can stay in SQL; multi-FE SQL
-   recovery, database prediction outputs and post-fit scores remain pending.
+   one-/two-FE dictionaries and resource leases can stay in SQL; larger FE
+   systems, database prediction outputs and post-fit scores remain pending.
 3. Supported formula/argument normalization: i()/references, public coefficient
    identities, OLS offsets and varying slopes, fixef.rm, weights and subset.
    Partial existing formula support remains; compatibility entry points pending.
@@ -241,10 +241,10 @@ regressor factor levels keep the existing explicit error behavior.
 
 Portable recovery is limited by dbreg.prediction_max_entries (default 2e6), the
 FE moment row limit, and the existing dense/cross-product feasibility gates.
-The limits bound transfers and dense/null matrices. Oversized single-FE
+The limits bound transfers and dense/null matrices. Oversized one-/two-FE
 requests without varying slopes select owned database state when the bounded
 slope system fits the budget. Other oversized requests error and clean up;
-large multi-FE/varying-slope recovery remains required by the full target above. Dictionary creation
+large three-or-more-FE/varying-slope recovery remains part of the full target. Dictionary creation
 adds explicit SQL work; native default fitting does not create these dictionaries.
 
 Tiny group-specific weights require a relative group-equation certificate as
@@ -298,3 +298,26 @@ This implements single-FE database dictionaries and in-memory newdata matching.
 Database newdata/keyed output relations, large multi-FE/varying-slope state and
 post-fit inference remain pending. Resource sharing for future output relations
 is tested internally; this checkpoint does not expose a database output API.
+
+Database-backed two-FE extension (2026-10-24)
+--------------------------------------------
+Two FE blocks without varying slopes can also stay in SQL. Alternating
+projections recover learned effects and regressor projections at the original
+fitted slopes. Component labels reject cross-component combinations; bounded
+within-X null directions reject regressor relations outside the identified span.
+Unobserved but estimable combinations within a component remain predictable.
+Recovery checks eta or OLS RSS. It uses the fitted projection iteration limit
+and min(fitted tolerance, 1e-10); nonconvergence cleans up and errors explicitly.
+FE-only GLMs work in both single-/two-FE SQL paths. Existing leases/lifetimes
+and small portable prediction behavior are unchanged.
+
+Validation: 4,258 full local assertions, 77 native two-FE and 60 native single-FE
+checks; package check zero errors/warnings and the existing binsreg NOTE. A
+million-row/two-FE fixture with 50,000/49,997 levels keeps dictionaries in SQL
+under the default budget. Six fits match coefficients/full covariance/N and
+predictions match an analytical target. Mathematical state is 8,120 bytes;
+recovery queries return at most one row during fitting. Optional retention
+adds 5.1s and 18% whole-process RSS in that warmed local fixture. Evidence:
+_benchmarks/two_fe_prediction_20261024. Keyed database output, retained inference,
+compatibility adapters and large three-or-more-FE/varying-slope recovery remain
+unfinished. Native large-state performance/disk-history storage are unmeasured.

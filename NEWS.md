@@ -1,9 +1,11 @@
 # Fixest compatibility (development branch)
 
-- Oversized single-FE prediction dictionaries can stay in SQL, with bounded
+- Oversized one- or two-FE prediction dictionaries can stay in SQL, with bounded
   key matching and estimability checks. `close(model)` releases owned state;
   caller connections/exports survive. These live dictionaries cannot be restored
   by serializing their handles; small portable dictionaries remain supported.
+  Two-FE recovery checks connected components and regressor relations before
+  predicting new combinations. FE-only GLMs support zero-column designs.
 
 - `dbglm()` accepts nonnegative fractional observation weights for all supported
   families. Fitting and inference use the original weights; `nobs()` counts

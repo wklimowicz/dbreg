@@ -1,0 +1,9 @@
+ℹ Loading dbreg
+Failed to connect to system scope bus via local transport: Operation not permitted (consider using --machine=<user>@.host --user to connect to bus of other user)
+prediction repetition 0: 9.927s
+prediction repetition 1: 10.084s
+prediction repetition 2: 9.713s
+prediction repetition 3: 8.616s
+Warning message:
+In system("timedatectl", intern = TRUE) :
+  running command 'timedatectl' had status 1

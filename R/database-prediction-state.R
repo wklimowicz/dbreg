@@ -1,6 +1,7 @@
 # A single FE block has a diagonal nuisance system. Keep its dictionary and
 # within-group regressor means in SQL; only a p-by-p estimability system moves
-# into R. Multiple FE blocks/varying slopes still use the portable solver.
+# into R. Two FE blocks use SQL projections; varying slopes/three or more
+# blocks still require the portable solver.
 build_database_prediction_state = function(conn, working, retained, fe, components, x,
   design_names, center, create, n, dictionary_components, beta, expected_rss, constant) {
   p = length(x)
@@ -8,7 +9,7 @@ build_database_prediction_state = function(conn, working, retained, fe, componen
   if (length(beta) != p || any(!is.finite(beta))) stop("Database prediction requires finite fitted slopes.", call. = FALSE)
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
   metadata = prediction_key_metadata(conn, retained, dictionary_components[[1L]])
-  mx = paste0("m", seq_len(p))
+  mx = if (p) paste0("m", seq_len(p)) else character()
   slope = if (p) paste(sprintf("(%s)*s.%s", dbglm_number(beta), x), collapse = "+") else "0.0"
   target = "(s.eta-s.__dbglm_o)"
   fields = c(paste0("s.", fe, " AS id"),
@@ -37,13 +38,7 @@ build_database_prediction_state = function(conn, working, retained, fe, componen
     within = paste0("(", paste("SELECT s.__dbglm_a AS w,", paste(sprintf("(s.%s-g.%s) AS %s", x, mx, x), collapse = ","), join), ")")
     H = dbglm_read_information(dbglm_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", within)), p)
     raw = dbglm_read_information(dbglm_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "__dbglm_a"), collapse = ","), "FROM", working)), p)
-    absorbed = diag(H) <= 1e-12 * pmax(diag(raw), .Machine[["double.xmin"]])
-    H[absorbed, ] = 0
-    H[, absorbed] = 0
-    system = list(n = p + 1L, big = 1L, rest = 1L + seq_len(p), Dg = 1,
-      Cm = matrix(0, 1L, p), E = H, diag = c(1, diag(raw)))
-    solver = dbglm_fe_solver(system, new.env(parent = emptyenv()), retain_null = TRUE)
-    if (!is.null(solver[["null_basis"]])) null = solver[["null_basis"]][-1L, , drop = FALSE]
+    null = prediction_within_null(H, raw)
   }
   list(version = 1L, specification = list(design_names = design_names, design_center = unname(center),
       dictionaries = list(list(columns = unique(components[[1L]]), types = metadata[["types"]],
@@ -66,13 +61,28 @@ finalize_retained_resources = function(result, resources) {
 # original key types; incoming integers use exact decimal text, never doubles.
 prediction_database_lookup = function(state, lease, data) {
   conn = fitted_resource_connection(lease)
-  dictionary = state[["specification"]][["dictionaries"]][[1L]]
+  dictionaries = state[["specification"]][["dictionaries"]]
+  result = prediction_database_lookup_one(conn, dictionaries[[1L]], data)
+  if (length(dictionaries) > 1L) {
+    values = c("gamma", dictionaries[[1L]][["means"]])
+    for (i in seq.int(2L, length(dictionaries))) {
+      next_lookup = prediction_database_lookup_one(conn, dictionaries[[i]], data)
+      result[values] = result[values] + next_lookup[values]
+      identified = !is.na(result[["component"]]) & !is.na(next_lookup[["component"]]) &
+        result[["component"]] == next_lookup[["component"]]
+      result[["gamma"]][!identified] = NA_real_
+    }
+  }
+  result
+}
+
+prediction_database_lookup_one = function(conn, dictionary, data) {
   keys = dictionary[["keys"]]
   values = Map(function(name, type) {
     encoded = prediction_key_part(data[[name]], type)
     sub("^[0-9]+:", "", encoded)
   }, dictionary[["columns"]], dictionary[["types"]])
-  fields = c("gamma", dictionary[["means"]])
+  fields = c("gamma", dictionary[["means"]], dictionary[["component"]])
   result = as.data.frame(stats::setNames(rep(list(rep(NA_real_, nrow(data))), length(fields)), fields))
   if (!nrow(data)) return(result)
   batch = max(1L, min(4096L, floor(prediction_state_limit() / (length(fields) + length(keys) + 1L))))
@@ -108,10 +118,28 @@ predict_from_database_state = function(state, design, lookup) {
   null = state[["prediction"]][["null_basis"]]
   if (!is.null(null)) {
     means = as.matrix(lookup[specification[["dictionaries"]][[1L]][["means"]]])
+    scale = state[["prediction"]][["design_scale"]]
+    if (!is.null(scale)) {
+      x = sweep(x, 2L, scale, "/")
+      means = sweep(means, 2L, scale, "/")
+    }
     score = (x - means) %*% null
     norm = sqrt(1 + rowSums(x * x) + rowSums(means * means))
     prediction[sqrt(rowSums(score * score)) > state[["prediction"]][["tolerance"]] * norm] = NA_real_
   }
   prediction[!is.finite(prediction)] = NA_real_
   prediction
+}
+
+# Shared bounded rank certificate for one- and two-FE SQL dictionaries.
+prediction_within_null = function(H, raw) {
+  p = nrow(H)
+  if (!p) return(NULL)
+  absorbed = diag(H) <= 1e-12 * pmax(diag(raw), .Machine[["double.xmin"]])
+  H[absorbed, ] = 0
+  H[, absorbed] = 0
+  system = list(n = p + 1L, big = 1L, rest = 1L + seq_len(p), Dg = 1,
+    Cm = matrix(0, 1L, p), E = H, diag = c(1, diag(raw)))
+  solver = dbglm_fe_solver(system, new.env(parent = emptyenv()), retain_null = TRUE)
+  if (is.null(solver[["null_basis"]])) NULL else solver[["null_basis"]][-1L, , drop = FALSE]
 }

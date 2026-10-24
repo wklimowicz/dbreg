@@ -9,6 +9,11 @@
   newdata = NULL,
   interval = c("none", "confidence", "prediction"),
   level = 0.95,
+  conn = NULL,
+  table = NULL,
+  path = NULL,
+  row_id = NULL,
+  prediction_table = NULL,
   ...
 )
 }
@@ -26,6 +31,17 @@ additionally account for residual variance. See
 \code{\link[stats]{predict.lm}} for details.}
 
 \item{level}{Confidence level for intervals. Default is 0.95.}
+
+\item{conn, table, path}{Optional database connection and prediction source,
+following [dbreg()] source conventions. Supply exactly one of `newdata`,
+`table`, or `path`. DuckDB and native Databricks support database output.}
+
+\item{row_id}{Explicit unique, nonmissing prediction key column names.
+Supplying database arguments or `row_id` selects keyed database output.}
+
+\item{prediction_table}{Optional caller-named session table receiving output.
+Requires a caller-owned connection and must not already exist. Otherwise
+the result owns its temporary table; see [dbreg-prediction].}
 
 \item{...}{Additional arguments are not supported and produce an error.}
 }
@@ -68,6 +84,19 @@ produce an error; incomplete rows produce `NA` without changing row order.
 Compressed fits support prediction on their stored cells without raw outcomes
 or weights. Mundlak means are computed from the supplied population, using
 fitted-model weights when present; they are not saved training group means.
+}
+
+\section{Database prediction}{
+
+Returns a `dbreg_prediction` relation containing the original typed keys and
+  a prediction column. Its `prediction_column` field names that column.
+  Rows have no implicit order. `head()` previews and `as.data.frame()` collects
+  explicitly. Collection returns exact integer keys as text if the driver
+  would otherwise round them; database columns retain their original types.
+  Missing inputs and unknown/non-estimable FE combinations yield SQL `NULL`.
+  Ordinary unseen factor levels raise an error. Learned effects require
+  `retain = "prediction"`; database dictionaries require their owning session.
+  Intervals, IV and Mundlak database output are currently unsupported.
 }
 
 \examples{

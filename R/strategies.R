@@ -28,7 +28,7 @@ execute_moments_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
   
   frame = build_base_frame(inputs, xvars_sql, xvar_names)
   moments_sql = frame_moments_sql(frame, yvar, xvar_names, conn)
@@ -119,7 +119,7 @@ execute_demean_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
   
   frame = build_demean_frame(inputs, xvars_sql, xvar_names)
   if (inherits(frame, "dbreg_query_plan")) return(frame)
@@ -235,7 +235,7 @@ execute_mundlak_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
   
   weights_expr_base = sql_weight_expr(weights)
   weights_expr_aug = if (is.null(weights)) NULL else sql_weight_expr("weights")
@@ -432,7 +432,7 @@ execute_compress_strategy = function(inputs) {
     select_exprs = paste0(sql_design[["select_exprs"]], " AS ", sql_design[["aliases"]])
     xvars_sql = paste(select_exprs, collapse = ", ")
     xvar_names = sql_design[["aliases"]]
-    register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]])
+    register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
     # Both the compression and clustered score passes must read the expanded
     # columns. Aliases from a SELECT list do not exist in the original source.
     projection = frame_select(yvar, sql_design[["select_exprs"]], xvar_names,
@@ -482,6 +482,7 @@ execute_compress_strategy = function(inputs) {
   }
   compressed_frame = read_compressed_frame(inputs, query_string, from_statement)
   compressed_dat = compressed_frame[["data"]]
+  compressed_classes = vapply(compressed_dat, function(column) class(column)[[1L]], character(1))
   query_string = compressed_frame[["sql"]]
   nobs_orig = as.numeric(sum(compressed_dat[["n"]]))
   nobs_comp = nrow(compressed_dat)
@@ -528,9 +529,15 @@ execute_compress_strategy = function(inputs) {
   # Factor dummies (incl. FE) built in R are named after their (safe) variable
   # and level; register display names for them
   is_cat = vapply(c(design_vars, fe), function(v) {
-    v %in% names(compressed_dat) && (is.factor(compressed_dat[[v]]) || is.character(compressed_dat[[v]]))
+    v %in% names(compressed_dat) && (is.factor(compressed_dat[[v]]) || is.character(compressed_dat[[v]]) || is.logical(compressed_dat[[v]]))
   }, logical(1))
-  register_factor_display(inputs, lapply(setNames(nm = c(design_vars, fe)[is_cat]), function(v) levels(factor(compressed_dat[[v]]))))
+  categorical = unique(c(design_vars, fe)[is_cat])
+  factor_levels = lapply(setNames(nm = categorical), function(v) {
+    saved = inputs[["factor_levels"]][[v]]
+    if (!is.null(saved)) return(saved)
+    if (is.logical(compressed_dat[[v]])) c(FALSE, TRUE) else levels(factor(compressed_dat[[v]]))
+  })
+  register_factor_display(inputs, factor_levels, factor_classes = compressed_classes[categorical])
   matrix_formula = reformulate(c(design_vars, fe), intercept = intercept)
   X = fitted_model_matrix(matrix_formula, compressed_dat)
   slope_terms = match(design_vars, attr(terms(matrix_formula), "term.labels"))

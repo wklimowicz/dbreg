@@ -10,6 +10,7 @@ register_factor_display(
   level_aliases = NULL,
   col_names = NULL,
   aliases = NULL,
+  factor_classes = NULL,
   i_columns = NULL
 )
 }
@@ -23,6 +24,8 @@ and `level` (the `level_aliases` element of [sql_model_matrix()]).}
 `i_columns` element of [sql_model_matrix()]). Their display names, e.g.
 `period::5:treat`, are also recorded in `inputs$i_columns` for
 `predict()`.}
+
+\item{factor_classes}{Optional named fitted source classes for factors.}
 }
 \description{
 Adds entries to `inputs$name_map` so that factor dummies named after their

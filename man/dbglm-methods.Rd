@@ -20,7 +20,17 @@
 
 \method{confint}{dbglm}(object, parm, level = 0.95, fe = FALSE, ...)
 
-\method{predict}{dbglm}(object, newdata, type = c("link", "response"), ...)
+\method{predict}{dbglm}(
+  object,
+  newdata = NULL,
+  type = c("link", "response"),
+  conn = NULL,
+  table = NULL,
+  path = NULL,
+  row_id = NULL,
+  prediction_table = NULL,
+  ...
+)
 
 \method{tidy}{dbglm}(x, conf.int = FALSE, conf.level = 0.95, collin = FALSE, ...)
 
@@ -53,6 +63,15 @@ accepted for shared tidying; absorbed-effect intervals are not supported.}
 \item{newdata}{Data frame containing regressors, fitted FE keys and varying
 slope variables, and any fitted offset column. Outcomes and fitting weights
 are not required. Missing inputs preserve their positions as `NA` predictions.}
+
+\item{conn, table, path}{Optional database connection and prediction source, as
+in [predict.dbreg()]. Database output supports DuckDB and native Databricks.}
+
+\item{row_id}{Unique, nonmissing prediction key columns. This or any database
+argument selects keyed database output; see [dbreg-prediction].}
+
+\item{prediction_table}{Optional caller-named output session table. Requires
+a caller-owned connection and must not already exist.}
 
 \item{conf.int}{Include confidence intervals?}
 

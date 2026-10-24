@@ -86,7 +86,8 @@ prediction_database_lookup_one = function(conn, dictionary, data) {
   result = as.data.frame(stats::setNames(rep(list(rep(NA_real_, nrow(data))), length(fields)), fields))
   if (!nrow(data)) return(result)
   batch = max(1L, min(4096L, floor(prediction_state_limit() / (length(fields) + length(keys) + 1L))))
-  casts = sprintf("TRY_CAST(v.%s AS %s)", keys, dictionary[["sql_types"]])
+  casts = vapply(seq_along(keys), function(i) sql_prediction_key_cast(conn, paste0("v.", keys[[i]]),
+    dictionary[["types"]][[i]], dictionary[["sql_types"]][[i]]), character(1))
   join = paste(sprintf("g.%s=%s", keys, casts), collapse = " AND ")
   format = if (isTRUE(detect_backend(conn)[["is_databricks"]])) "json" else "values"
   for (first in seq.int(1L, nrow(data), by = batch)) {

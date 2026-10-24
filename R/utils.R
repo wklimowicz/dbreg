@@ -131,6 +131,8 @@ solve_with_fallback = function(XtX, Xty) {
 #' @keywords internal
 setup_db_connection = function(conn, table, data, path, caller = "dbreg",
                                resources = NULL, duckdb_config = list()) {
+  connection_lease = attr(conn, "dbreg_resource_lease", exact = TRUE)
+  if (!is.null(connection_lease)) fitted_resource_connection(connection_lease)
   own_conn = FALSE
   registered_table = NULL
   is_duckdb = FALSE
@@ -595,12 +597,17 @@ safe_source = function(conn, from_statement, vars) {
 #'   `i_columns` element of [sql_model_matrix()]). Their display names, e.g.
 #'   `period::5:treat`, are also recorded in `inputs$i_columns` for
 #'   `predict()`.
+#' @param factor_classes Optional named fitted source classes for factors.
 #' @keywords internal
-register_factor_display = function(inputs, factor_levels = list(), level_aliases = NULL, col_names = NULL, aliases = NULL, i_columns = NULL) {
+register_factor_display = function(inputs, factor_levels = list(), level_aliases = NULL, col_names = NULL, aliases = NULL, factor_classes = NULL, i_columns = NULL) {
   saved = inputs[["factor_levels"]]
   if (is.null(saved)) saved = list()
   for (nm in names(factor_levels)) saved[[nm]] = factor_levels[[nm]]
   inputs[["factor_levels"]] = saved
+  classes = inputs[["factor_classes"]]
+  if (is.null(classes)) classes = character()
+  classes[names(factor_classes)] = factor_classes
+  inputs[["factor_classes"]] = classes
   map = inputs[["name_map"]]
   if (is.null(map)) map = setNames(character(), character())
   disp = function(v) coef_var_name(ifelse(v %in% names(map), map[v], v))

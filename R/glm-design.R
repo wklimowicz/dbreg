@@ -47,6 +47,7 @@ build_model_spec = function(formula, conn, table, fe_vars = character(),
       stringsAsFactors = FALSE
     ),
     factor_levels = design[["factor_levels"]],
+    factor_classes = design[["factor_classes"]],
     factor_refs = factor_refs
   )
 }
@@ -121,6 +122,10 @@ glm_sql_model_matrix = function(
       coef_names = character(), terms = character(), factor_levels = list()))
   }
   col_info = glm_get_column_info(conn, table, term_labels, factor_refs)
+  glm_model_matrix_from_info(term_labels, col_info, expand, sep, fe_vars)
+}
+
+glm_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep = "_x_", fe_vars = character()) {
   result = list(
     select_exprs = character(),
     col_names = character(),
@@ -137,6 +142,7 @@ glm_sql_model_matrix = function(
     result[["terms"]] = c(result[["terms"]], rep(term, length(expanded)))
   }
   result[["factor_levels"]] = col_info[["levels"]]
+  result[["factor_classes"]] = col_info[["factor_classes"]]
   result
 }
 
@@ -158,7 +164,7 @@ glm_get_column_info = function(conn, table, term_labels, factor_refs = NULL) {
 
   if (detect_backend(conn)[["name"]] == "spark" && length(factor_vars) > 1L) {
     stack_args = unlist(lapply(factor_vars, function(v) {
-      c(as.character(DBI::dbQuoteString(conn, v)), sprintf("CAST(%s AS STRING)", v))
+      c(sql_value_literals(conn, v), sprintf("CAST(%s AS STRING)", v))
     }), use.names = FALSE)
     level_query = paste0(
       "SELECT factor_name, factor_level FROM (SELECT STACK(",
@@ -204,10 +210,8 @@ glm_get_column_info = function(conn, table, term_labels, factor_refs = NULL) {
       }
     }
   }
-  level_sql = lapply(levels, function(x) {
-    vapply(x, function(value) as.character(DBI::dbQuoteLiteral(conn, value)), character(1))
-  })
-  list(types = types, levels = levels, level_sql = level_sql)
+  level_sql = sql_factor_literals(conn, levels, classes)
+  list(types = types, levels = levels, level_sql = level_sql, factor_classes = classes[names(levels)])
 }
 
 glm_expand_term = function(term, col_info, expand, sep = "_x_", all_terms = character(), fe_vars = character()) {

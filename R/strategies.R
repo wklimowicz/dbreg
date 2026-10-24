@@ -427,6 +427,13 @@ execute_compress_strategy = function(inputs) {
     xvars_sql = paste(select_exprs, collapse = ", ")
     xvar_names = sql_design[["aliases"]]
     register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]])
+    # Both the compression and clustered score passes must read the expanded
+    # columns. Aliases from a SELECT list do not exist in the original source.
+    projection = frame_select(yvar, sql_design[["select_exprs"]], xvar_names,
+      id_cols = setdiff(fe, c(yvar, xvar_names)), extra = c(weights, inputs[["cluster_var"]]))
+    from_statement = paste0("FROM (SELECT ", paste(projection, collapse = ", "),
+      " ", from_statement, ") dbreg_compress_design")
+    xvars_sql = paste(xvar_names, collapse = ", ")
   } else {
     xvars_sql = paste(xvars, collapse = ", ")
     xvar_names = xvars

@@ -28,6 +28,9 @@ Implementation sequence
 3. Supported formula/argument normalization: i()/references, public coefficient
    identities, OLS offsets and varying slopes, fixef.rm, weights and subset.
    Partial existing formula support remains; compatibility entry points pending.
+   Native fitting/extraction checks now reject unsupported extra statistical
+   arguments, preserving explicit legacy aliases. Linear formulas no longer
+   capture caller or strategy environments in compact results.
 4. Fitted link/response prediction with learned effects, including estimable
    zero-weight rows, without outcomes in newdata. Not implemented for absorbed
    fits. Existing OLS conditional-population prediction remains unchanged.
@@ -132,6 +135,9 @@ strings through the existing built-in family validator: "binomial" means logit,
 The fixest-shaped feglm default is Gaussian identity and must route through the
 OLS compatibility engine with reference-checked extraction/inference. Until
 that route exists, reject it explicitly; do not substitute binomial cloglog.
+Identical Gaussian slopes do not establish equivalence: fixest's Gaussian
+feglm likelihood and covariance conventions differ from feols and need their
+own reference fixtures before enabling this route.
 
 Register real extraction methods, including fixest's se/coeftable generics when
 available, without a fixest class or an Imports dependency. At each increment,

@@ -14,8 +14,8 @@
 \item{collin}{Should regressors removed for collinearity be returned as `NA`?
 Default is `FALSE`.}
 
-\item{...}{Additional arguments. Currently unused, except to capture
-superseded arguments.}
+\item{...}{Only the superseded `fes` argument is accepted. Other arguments
+produce an error.}
 }
 \description{
 Extract coefficients from dbreg objects

@@ -1,0 +1,18 @@
+Argument/compact-state follow-up, 2026-10-24
+
+Full local suite: 3,594 assertions in 46 nonempty files, 0 failures.
+Package check: 0 errors, 0 warnings, the existing binsreg cross-reference NOTE.
+Check uses _R_CHECK_FORCE_SUGGESTS_=false with --no-manual --no-vignettes
+--no-tests; tests ran separately. Source identity and environment are recorded
+beside the raw RDS assertions and the full log.
+
+The follow-up rejects previously ignored fitting/extraction/prediction requests,
+preserves explicit legacy aliases and GLM tidying, and prevents saved linear
+formulas from capturing the original panel or fit-time connection environment.
+Its added tests cover values/aliases and prediction/serialization invariants.
+
+Native numerical validation belongs to the preceding fractional-weight checkpoint
+in ../fixest_fractional_20261024, whose 710 shared native assertions passed.
+This follow-up changes no SQL numerical kernel. It is not a claim of full fixest
+compatibility, native whole-suite validation or completed learned-FE prediction.
+Text evidence normalizes progress carriage returns and trailing padding only.

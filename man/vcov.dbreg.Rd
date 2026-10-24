@@ -12,7 +12,8 @@
 \item{fe}{Include covariance rows and columns for explicit fixed effects?
 Default is `FALSE`, matching [coef()].}
 
-\item{...}{Additional arguments (currently unused).}
+\item{...}{Additional covariance requests are not yet supported and produce
+an error. This method returns the covariance calculated when fitting.}
 }
 \description{
 Variance-covariance matrix for dbreg objects

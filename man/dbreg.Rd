@@ -145,8 +145,8 @@ and dropped-row counts? Default is \code{FALSE}. Counts may overlap across roles
 \item{factor_refs}{Named categorical reference levels. Numeric-coded columns
 named here are treated as factors.}
 
-\item{...}{Additional arguments. Currently ignored, except to handle
-superseded arguments for backwards compatibility.}
+\item{...}{Only supported legacy aliases are accepted for backwards
+compatibility. Other arguments produce an error.}
 }
 \value{
 A list of class "dbreg" containing various slots, including a table

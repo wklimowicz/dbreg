@@ -27,7 +27,7 @@ additionally account for residual variance. See
 
 \item{level}{Confidence level for intervals. Default is 0.95.}
 
-\item{...}{Additional arguments (currently unused).}
+\item{...}{Additional arguments are not supported and produce an error.}
 }
 \description{
 Predict method for dbreg objects

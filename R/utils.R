@@ -1139,6 +1139,21 @@ drop_table_if_exists = function(conn, table_name, backend) {
   tryCatch(dbExecute(conn, sql), error = function(e) NULL)
 }
 
+# Silently ignoring a requested offset or covariance specification changes the
+# statistical model. Keep intentional legacy aliases explicit at each caller.
+check_unused_args = function(dots, allowed = character()) {
+  if (!length(dots)) return(invisible(NULL))
+  labels = names(dots)
+  if (is.null(labels)) labels = rep("", length(dots))
+  labels[is.na(labels)] = ""
+  unused = !nzchar(labels) | !labels %in% allowed
+  if (any(unused)) {
+    stop("Unused arguments: ", paste(ifelse(nzchar(labels[unused]),
+      paste0("`", labels[unused], "`"), "<unnamed>"), collapse = ", "), call. = FALSE)
+  }
+  invisible(NULL)
+}
+
 #' Drop a materialized AP state table
 #' @keywords internal
 drop_ap_table_if_exists = function(conn, table_name, backend_info) {

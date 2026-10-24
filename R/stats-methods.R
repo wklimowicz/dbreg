@@ -18,8 +18,8 @@ nobs.dbreg = function(object, ...) object[["nobs_orig"]]
 #' @param fe Should the fixed effects be included? Default is `FALSE`.
 #' @param collin Should regressors removed for collinearity be returned as `NA`?
 #'   Default is `FALSE`.
-#' @param ... Additional arguments. Currently unused, except to capture
-#' superseded arguments.
+#' @param ... Only the superseded `fes` argument is accepted. Other arguments
+#'   produce an error.
 #' @examples
 #' mod = dbreg(Temp ~ Wind | Month, data = airquality)
 #' 
@@ -41,6 +41,7 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
   
   # superseded args handled through ...
   dots = list(...)
+  check_unused_args(dots, allowed = "fes")
   if (length(dots)) {
     if (!is.null(dots[["fes"]]) && !identical(fe, dots[["fes"]])) {
       fe = dots[["fes"]]
@@ -81,7 +82,7 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
 #'   additionally account for residual variance. See
 #'   \code{\link[stats]{predict.lm}} for details.
 #' @param level Confidence level for intervals. Default is 0.95.
-#' @param ... Additional arguments (currently unused).
+#' @param ... Additional arguments are not supported and produce an error.
 #' 
 #' @section Predicting on "demean" strategy objects:
 #' 
@@ -122,6 +123,7 @@ predict.dbreg = function(
   level = 0.95,
   ...
 ) {
+  check_unused_args(list(...))
   interval = match.arg(interval)
   strategy = object[["strategy"]] 
 
@@ -274,10 +276,12 @@ predict.dbreg = function(
 #' @param object A `dbreg` object.
 #' @param fe Include covariance rows and columns for explicit fixed effects?
 #'   Default is `FALSE`, matching [coef()].
-#' @param ... Additional arguments (currently unused).
+#' @param ... Additional covariance requests are not yet supported and produce
+#'   an error. This method returns the covariance calculated when fitting.
 #' @inherit coef.dbreg examples
 #' @export
 vcov.dbreg = function(object, fe = FALSE, ...) {
+  check_unused_args(list(...))
   out = object[["vcov"]]
   metadata = lapply(c("type", "n_clusters", "n_params", "rss", "tss"), function(nm) attr(out, nm))
   names(metadata) = c("type", "n_clusters", "n_params", "rss", "tss")
@@ -300,8 +304,8 @@ vcov.dbreg = function(object, fe = FALSE, ...) {
 #'   all parameters are considered.
 #' @param level the confidence level required. Default is 0.95.
 #' @param fe Should the fixed effects be included? Default is `FALSE`.
-#' @param ... Additional arguments. Currently unused, except to capture
-#' superseded arguments.
+#' @param ... Only the superseded `fes` argument is accepted. Other arguments
+#'   produce an error.
 #' @inherit coef.dbreg examples
 #' @importFrom stats qt
 #' @export
@@ -309,6 +313,7 @@ confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...) {
 
   # superseded args handled through ...
   dots = list(...)
+  check_unused_args(dots, allowed = "fes")
   if (length(dots)) {
     if (!is.null(dots[["fes"]]) && !identical(fe, dots[["fes"]])) {
       fe = dots[["fes"]]

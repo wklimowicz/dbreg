@@ -18,7 +18,7 @@
 
 \method{df.residual}{dbglm}(object, ...)
 
-\method{confint}{dbglm}(object, parm, level = 0.95, ...)
+\method{confint}{dbglm}(object, parm, level = 0.95, fe = FALSE, ...)
 
 \method{predict}{dbglm}(object, newdata, type = c("link", "response"), ...)
 
@@ -37,11 +37,15 @@ objective with unrounded observation weights. These differ for fractional
 binomial weights. For `predict`, `"link"` returns the linear predictor and
 `"response"` returns the response mean.}
 
-\item{...}{Additional method arguments. New-row prediction with absorbed effects is not supported.}
+\item{...}{Additional method arguments are not supported and produce an error.
+New-row prediction with absorbed effects is not supported.}
 
 \item{parm}{Coefficient names or positions, defaulting to all coefficients.}
 
 \item{level}{Confidence level.}
+
+\item{fe}{Must be `FALSE` for GLM confidence intervals. This argument is
+accepted for shared tidying; absorbed-effect intervals are not supported.}
 
 \item{newdata}{Data frame containing regressors and any fitted offset column.}
 

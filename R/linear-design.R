@@ -40,9 +40,15 @@ finalize_linear_design = function(result, inputs) {
   result[["composite_fes"]] = lapply(composites, function(vars) restore_names(vars, inputs[["source_map"]]))
   result[["composite_levels"]] = inputs[["composite_levels"]]
   result[["fe_labels"]] = inputs[["fe_labels"]]
-  if (!is.null(inputs[["original_fml"]])) result[["fml"]] = inputs[["original_fml"]]
+  fml = if (!is.null(inputs[["original_fml"]])) inputs[["original_fml"]] else result[["fml"]]
+  # The supported design uses columns and built-in transformations only.
+  # Retaining the caller/strategy frame can capture the entire original panel
+  # (and a live connection) through an otherwise compact formula object.
+  environment(fml) = baseenv()
+  result[["fml"]] = fml
   design = result[["compressed_design"]]
   if (!is.null(design)) {
+    environment(design[["formula"]]) = baseenv()
     design[["source_names"]] = setNames(design[["source_names"]], restore_names(design[["source_names"]], inputs[["name_map"]]))
     design[["columns"]] = setNames(rownames(result[["coeftable"]]), design[["columns"]])
     result[["compressed_design"]] = design

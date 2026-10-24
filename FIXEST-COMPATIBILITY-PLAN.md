@@ -14,6 +14,13 @@ zero warnings and the existing optional `binsreg` cross-reference NOTE. Native
 execution took about 44 minutes. Durable evidence, including source identity,
 is in `_benchmarks/fixest_fractional_20261024/`; see `inst/GLM-VALIDATION.txt`.
 
+This increment is committed as **`b9a8614`**. A subsequent argument/compact-state
+follow-up passes **3,594 local assertions across 46 nonempty files**, with the
+same package-check result. Unsupported OLS offsets and post-fit covariance
+arguments now error; legacy aliases and shared GLM tidying remain supported.
+Saved linear formulas no longer capture caller/strategy environments. Evidence
+for that follow-up is in `_benchmarks/fixest_argument_contract_20261024/`.
+
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
 The next dependency is shared observation identity and fitted state. Use dbreg's

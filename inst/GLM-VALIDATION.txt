@@ -214,3 +214,14 @@ value of a minute-based difftime with an "s" suffix; native-summary.csv converts
 it explicitly to seconds. The source checksums match the staged fractional
 checkpoint, before the subsequent argument/compact-state follow-up. The adjacent
 fixest source checkout is v0.14.2 (789f888); numerical tests used installed 0.14.0.
+
+Argument/compact-state follow-up, 2026-10-24
+-------------------------------------------
+The subsequent full local run passed 3,594 assertions across 46 nonempty files.
+It includes explicit rejection of ignored statistical requests, preserved legacy
+aliases/shared GLM tidying, and compact formula/serialization checks across all
+four OLS strategies. Existing OLS/IV/GLM tests passed. Package check again had
+zero errors, zero warnings and the same optional binsreg cross-reference NOTE.
+Durable source identity and results: _benchmarks/fixest_argument_contract_20261024.
+This follow-up changes argument handling and saved formula environments; the
+native numerical fractional-weight evidence above describes its own checkpoint.

@@ -42,7 +42,7 @@ execute_moments_strategy = function(inputs) {
   if (data_only) {
     return(moments_df)
   }
-  n_total = moments_df[["n_total"]]
+  n_total = as.numeric(moments_df[["n_total"]])
 
   S = cross_moments(moments_df, xvar_names, yvar, intercept = frame[["intercept"]])
   vars_all = c(if (frame[["intercept"]]) "(Intercept)", xvar_names)
@@ -134,7 +134,7 @@ execute_demean_strategy = function(inputs) {
   if (data_only) {
     return(demean_df)
   }
-  n_total = demean_df[["n_total"]]
+  n_total = as.numeric(demean_df[["n_total"]])
   n_fe_levels = vapply(seq_along(fe), function(k) {
     val = demean_df[[sprintf("n_fe%d", k)]]
     if (is.null(val)) 1L else as.integer(val)
@@ -336,7 +336,7 @@ execute_mundlak_strategy = function(inputs) {
     return(mundlak_df)
   }
 
-  n_total = mundlak_df[["n_total"]]
+  n_total = as.numeric(mundlak_df[["n_total"]])
   n_fe1 = mundlak_df[["n_fe1"]]
   n_fe2 = mundlak_df[["n_fe2"]]
 

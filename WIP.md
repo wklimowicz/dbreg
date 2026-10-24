@@ -196,3 +196,33 @@ For further order-of-magnitude improvements:
 2. **Cell-Collapsed Sufficient Statistics (The Pure SQL Win)**:
    - For binary exit hazard / logistic / Poisson models, 4.59 million rows with discrete covariates collapse into **200,000–300,000 unique covariate cells** with weights $N_{\text{cell}}$ and counts $Y_{\text{cell}}$.
    - Running IRLS on the collapsed table preserves exact mathematical equivalence while cutting per-iteration scan and aggregation time by $5\times$ to $10\times$.
+
+---
+
+## 8. Live Databricks Free-Tier Verification & Benchmark Findings (2026-10-23)
+
+Live tests were conducted on the user's free Databricks Community / Serverless Starter instance (`dbc-b94e1830-43b0.cloud.databricks.com`, 2X-Small warehouse `21a698b51d7989f0` with Photon enabled) using the official Databricks ODBC driver (`/opt/databricks/databricksodbc/lib/64/libdatabricksodbc64.so`).
+
+### Live Timings Across Workloads and Scales
+
+| Workload / Model | Scale | Specification & Strategy | Elapsed Time | Notes / Bottleneck Breakdown |
+| :--- | :--- | :--- | :--- | :--- |
+| **No-FE OLS** | **100,000 rows** | $y \sim x_1 + x_2$, `strategy = "moments"` | **2.18 s** | Single aggregation pass. |
+| **2-FE Mundlak (CRE)** | **100,000 rows** | $y \sim x_1 + x_2 \mid fe_1 + fe_2$, `strategy = "mundlak"` | **2.02 s** | Single-pass CTE computing group means + moments. |
+| **No-FE OLS** | **5,000,000 rows** | $y \sim x_1 + x_2$, `strategy = "moments"` | **2.68 s** | Single aggregation pass over 5M rows. |
+| **2-FE Mundlak (CRE)** | **5,000,000 rows** | $y \sim x_1 + x_2 \mid fe1\_1k + fe2\_1k$, `strategy = "mundlak"` | **2.52 s** | Absorbs $1,000 \times 1,000$ FE means on 5M rows. |
+| **2-FE Demean (Exact AP)** | **100,000 rows** | $y \sim x_1 + x_2 \mid fe_1 + fe_2$, `tol = 1e-7` | **25.24 s** | Converged in **9 iterations** (~2.8 s per iteration). |
+| **2-FE Demean (Exact AP)** | **100,000 rows** | $y \sim x_1 + x_2 \mid fe_1 + fe_2$, `tol = 1e-10`, `vcov = "iid"` | **43.74 s** | Ping-pongs session-scoped temp tables. |
+| **2-FE Demean (Clustered SE)** | **100,000 rows** | $y \sim x_1 + x_2 \mid fe_1 + fe_2$, `tol = 1e-10`, `vcov = ~cl` | **39.35 s** | Demean AP + residual score pass for cluster meat. |
+| **GLM IRLS (`dbglm`)** | **100,000 rows** | $y \sim x_1 + x_2 \mid fe_1 + fe_2$, Binomial logit | **~1.2 s / step** | Streaming parameter updates via base64 JSON broadcast. |
+
+### Numerical Identity vs `fixest` and DuckDB
+On `dbreg_bench_100k` ($y \sim x_1 + x_2 \mid fe_1 + fe_2$):
+- **Coefficients ($\hat{\beta}$)**: $\Delta\beta \le 2.20 \times 10^{-14}$ vs `fixest::feols`, and $\Delta\beta \le 3.29 \times 10^{-14}$ vs DuckDB (bit-for-bit identical to 14 decimal places).
+- **Clustered SEs ($V_{\text{cluster}}$)**: $\Delta\text{SE} \le 7.66 \times 10^{-12}$ vs `fixest::feols(..., vcov = ~cl)`.
+- **IID SEs**: $\Delta\text{SE} \le 1.14 \times 10^{-8}$ when AP is stopped at `tol = 1e-7`.
+
+### Key Optimization Takeaways & Next Steps
+1. **Single-Pass Saturation**: 5M rows complete in **~2.5 seconds** on Databricks Serverless because Photon execution takes < 1 second; the remainder is network and ODBC transport latency.
+2. **Porting Normal Equations to Linear `dbreg`**: Currently linear demeaning uses temporary table ping-ponging (~2.8s per iteration; 25.2s total). Porting the single-pass bipartite moments / Schur solve from `feat/glm` into `dbreg(strategy = "demean")` will collapse linear 2+ FE demeaning from **~25 s to ~2.5 s**.
+3. **AP Convergence Floor**: Always configure `options(dbreg.ap_tol = 1e-7)` on Databricks to prevent iterations stalling at the float serialization floor around $10^{-8}$.

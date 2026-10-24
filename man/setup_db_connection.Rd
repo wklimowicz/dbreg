@@ -4,7 +4,15 @@
 \alias{setup_db_connection}
 \title{Set up database connection and data source}
 \usage{
-setup_db_connection(conn, table, data, path, caller = "dbreg")
+setup_db_connection(
+  conn,
+  table,
+  data,
+  path,
+  caller = "dbreg",
+  resources = NULL,
+  duckdb_config = list()
+)
 }
 \arguments{
 \item{conn}{Database connection, or NULL to create a DuckDB connection}

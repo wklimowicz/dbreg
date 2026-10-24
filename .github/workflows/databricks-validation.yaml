@@ -1,0 +1,86 @@
+name: Native Databricks validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - 'R/**'
+      - 'inst/tinytest/**'
+      - 'DESCRIPTION'
+      - 'NAMESPACE'
+      - '.github/scripts/run-databricks-tests.R'
+      - '.github/workflows/databricks-validation.yaml'
+  schedule:
+    - cron: '23 6 * * 1'
+
+# Credentialed code runs only from merged/default-branch code or an explicit
+# maintainer dispatch, never from pull_request_target or an untrusted PR head.
+permissions:
+  contents: read
+
+concurrency:
+  group: databricks-validation
+  cancel-in-progress: false
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    environment: databricks-validation
+    timeout-minutes: 90
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_SQL_PATH: ${{ secrets.DATABRICKS_SQL_PATH }}
+      DATABRICKS_ODBC_DRIVER: /opt/databricks/databricksodbc/lib/64/libdatabricksodbc64.so
+      OPENBLAS_NUM_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require native-test configuration
+        shell: bash
+        run: |
+          for key in DATABRICKS_HOST DATABRICKS_TOKEN DATABRICKS_SQL_PATH; do
+            if [[ -z "${!key}" ]]; then
+              echo "::error::Missing $key in the databricks-validation environment."
+              exit 1
+            fi
+          done
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+      - name: Install validated ODBC driver
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev
+          curl --fail --location --retry 3 --max-time 180 \
+            'https://databricks-bi-artifacts.s3.us-east-2.amazonaws.com/simba-databricks-odbc-drivers/2.12.0/DatabricksODBC-2.12.0-Debian-64bit/databricksodbc_2.12.0.1008-2_amd64.deb' \
+            --output "$RUNNER_TEMP/databricks.deb"
+          printf '%s  %s\n' 'f116aa536ec5338d1e0728b3f766c899611581190c308677d9968cfbfd873c61' "$RUNNER_TEMP/databricks.deb" | sha256sum --check
+          sudo apt-get install -y "$RUNNER_TEMP/databricks.deb"
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            any::pkgload
+            any::tinytest
+            any::fixest
+            any::odbc
+          needs: check
+      - name: Run synthetic native parity and failure tests
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/databricks-validation"
+          Rscript .github/scripts/run-databricks-tests.R "$RUNNER_TEMP/databricks-validation" \
+            2>&1 | tee "$RUNNER_TEMP/databricks-validation/run.log"
+      - name: Preserve validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: databricks-validation-${{ github.sha }}
+          path: ${{ runner.temp }}/databricks-validation
+          if-no-files-found: warn
+          retention-days: 30

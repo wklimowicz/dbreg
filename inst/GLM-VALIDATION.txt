@@ -1,0 +1,155 @@
+Research validation of database GLMs
+====================================
+
+Scope
+-----
+These checks use synthetic data only. They verify numerical implementation and
+sample selection for the supported API; they do not establish an empirical
+model's identification, causal interpretation or finite-sample inference.
+Neither a large assertion count nor fixest agreement covers every possible
+separation pattern or data configuration.
+
+New regression suites
+---------------------
+test_glm_stress.R runs four design profiles at three fixed seeds (12 distinct
+datasets). The profiles vary baseline event rates from 0.3% to 5%, dependence
+between FE dimensions, group-size imbalance, original frequency weights,
+offsets and nearly collinear regressors. Every model has six FEs. IID, HC1 and
+clustered covariance rotate through the grid. The native runner uses two of
+the seeds (eight datasets), with the same generator and assertions.
+
+References use fixest's own estimates and full-predictor refinement until both
+coefficients and covariance stabilize. Outcomes are not altered to keep groups
+in the sample. Tests independently compare the exact retained source IDs,
+coefficient identities and values, the full covariance, standard errors,
+likelihood, observation and parameter counts, and convergence certificates.
+Row permutations, bijective FE relabeling and changes of regressor units must
+preserve estimates (after changing units back), likelihood and retained IDs.
+
+test_glm_separation.R constructs complete and quasi-separated cloglog designs,
+including separation involving multiple regressors and absorbed FEs. Explicit
+separating directions certify the fixtures without trusting either estimator.
+The fitter must error and leave no successful sample export or owned tables.
+Analytic finite-MLE controls with one contrary observation per 1,001 frequency
+observations check that genuinely finite fits still succeed, including their
+Fisher covariance and absorbed-FE analogue. These are regression checks for
+known cases, not a general-purpose separation detector.
+
+test_glm_audit_designs.R now shares its 44,000-row, rare-exit teacher fixture
+with test_glm_wide_live.R: 88 wage-by-Experience slopes, six correlated FEs,
+district clustering, full covariance and exact retained-row comparisons.
+The independent fixest reference centers the wage columns and expands the six
+FEs into explicit indicator columns. This avoids iterative demeaning noise in
+the small fixture's reference covariance. Both estimators count all nuisance
+parameters in the clustered small-sample correction (K.fixef="full"). A constant shift
+in each wage-by-Experience column lies in the absorbed Experience span, so
+slopes, fitted probabilities, covariance and likelihood are unchanged. This
+conditioning uses only synthetic inputs, never dbreg's estimates.
+
+The separate teacher_cloglog_wide_validation.R script checks the same
+88-slope formula at five million rows on the original teacher benchmark input.
+Its synthetic teacher wage uses binary fractions so both SQL engines construct
+identical doubles. Model fitting, reference fitting and validation durations
+are recorded separately from performance claims. The large fixest reference
+uses absorbed FEs, a 1e-10 demeaning tolerance, and the known synthetic
+generating probabilities as its initial predictor; its final coefficient and
+covariance stability gates are unchanged. It never uses dbglm estimates.
+A separate full-indicator sparse Fisher-scoring reference
+(teacher_cloglog_sparse_reference.R) checks the large fit without iterative
+FE demeaning. It uses raw rows, the Bernoulli likelihood, a final score and
+Newton-step certificate, and the full nuisance-parameter cluster sandwich.
+This additional reference is not a fixest run; report the two separately.
+Reproduce it from the
+repository root (native credentials are needed for prepare and databricks):
+
+  Rscript _benchmarks/teacher_cloglog_wide_validation.R INPUT OUT prepare
+  Rscript _benchmarks/teacher_cloglog_wide_validation.R INPUT OUT reference
+  Rscript _benchmarks/teacher_cloglog_wide_validation.R INPUT OUT duckdb
+  Rscript _benchmarks/teacher_cloglog_wide_validation.R INPUT OUT databricks
+  Rscript _benchmarks/teacher_cloglog_sparse_reference.R INPUT OUT
+
+INPUT and OUT are local directories. Use a disk-backed OUT directory with
+space for spilling; a memory-backed /tmp does not relieve RAM pressure.
+Preparation creates only a temporary
+remote table and downloads the synthetic rows to INPUT/teachers.parquet;
+skip it when reusing that file. Completed comparisons write *_checks.csv and
+*_metrics.csv to OUT. A generated input, completed reference, or saved fit
+alone does not count as successful parity validation. Engine runs always save
+their fit first; if reference.rds is absent they explicitly report that fixest
+parity has NOT been checked. The teacher_wide_compare() helper applies the same
+gates to saved fits, and its output filenames identify the reference used.
+For example, after completing the sparse reference, run in an R session:
+
+  pkgload::load_all()
+  source("_benchmarks/teacher_cloglog_wide_compare.R")
+  teacher_wide_compare(readRDS("OUT/databricks_pending_reference.rds"),
+    readRDS("OUT/sparse_reference.rds"), "OUT", label = "sparse")
+
+This is an explicitly labeled sparse-reference comparison, not fixest parity.
+
+test_glm_sql_literals.R checks multi-megabyte SQL literals, quoted identifier
+escapes and Unicode. The shared Databricks cases also execute a large literal
+on the actual warehouse. These cover the SQL-tokenizer match-limit failure
+exposed by the five-million-row, 88-slope clustered covariance query.
+The shared cases also execute a 2,400-row, 88-column coefficient dictionary
+through six FE operations. Its SQL must contain one shared lookup and remain
+within the transfer bound; all returned aggregates are checked. This covers
+the subsequent query-size failure caused by repeating the lookup per FE.
+
+test_integer64_input.R checks in-memory integer64 FE keys (including adjacent
+values above 2^53), frequency weights, GLM/OLS parity and failure cleanup.
+Automatically created DuckDB connections preserve integer64 inputs. Supplied
+connections must preserve their SQL BIGINT type; otherwise fitting errors with
+instructions to use duckdb::duckdb(bigint="integer64"). This prevents drivers
+from silently treating integer64 storage bits as tiny floating-point values.
+The large synthetic export also checks exact ID coverage before and after
+import. Invalid transport is a failed fixture, not evidence about an estimator.
+
+Local and native execution
+--------------------------
+From the repository root:
+
+  Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_glm_stress.R")'
+  Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_glm_separation.R")'
+  Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_glm_audit_designs.R")'
+  make test-databricks
+
+The native runner in .github/scripts/run-databricks-tests.R includes the new
+suites and the existing GLM, pruning, FE-edge and OLS/IV moment suites. It
+requires the native driver and DATABRICKS_HOST, DATABRICKS_TOKEN and
+DATABRICKS_SQL_PATH. DATABRICKS_ODBC_DRIVER can override the local driver path.
+Missing configuration, any failed assertion or a zero-assertion suite fails
+the run. Results include per-suite RDS files, a CSV summary and environment
+metadata. Native temporary-table inventories use SHOW TABLES because ODBC's
+dbListTables may omit session tables.
+
+Continuous integration
+----------------------
+.github/workflows/databricks-validation.yaml runs on relevant main/master
+pushes, weekly, and explicit workflow dispatch. The ordinary cross-platform
+R CMD check workflow continues to run the local tests on pull requests.
+Native tests use the databricks-validation GitHub environment. Configure that
+environment's three secrets: DATABRICKS_HOST, DATABRICKS_TOKEN and
+DATABRICKS_SQL_PATH. Use a warehouse/account intended for synthetic validation.
+Missing secrets fail visibly rather than silently skipping native validation.
+The workflow must be merged/published before GitHub can trigger it; this local
+file is not evidence that a GitHub Actions run has passed.
+
+Credentialed execution is limited to merged code and maintainer dispatches;
+the workflow does not execute arbitrary PR heads with secrets. Configure
+environment protection/allowed branches to match the repository's trusted
+release process. Per-run artifacts are retained for 30 days. The pinned ODBC
+2.12.0 installer is downloaded from Databricks and checked against its recorded
+SHA256. Updating that driver should be followed by the full native suite.
+The large five-million-row validation remains an explicit release check,
+separate from the smaller routine CI fixtures.
+
+Driver download and archive:
+https://docs.databricks.com/aws/en/integrations/odbc/download
+https://www.databricks.com/spark/odbc-drivers-archive
+
+Public API limits remain explicit: original GLM weights are integer
+frequencies; grouped binomial responses, multiway clustering and prediction
+with absorbed FEs are not supported. Failed numerical convergence withholds
+ordinary inference. A successful numerical fit alone is not a general proof
+that a finite MLE exists under every possible separation configuration.

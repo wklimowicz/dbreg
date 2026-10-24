@@ -1,25 +1,25 @@
-# SQL kernels for the DuckDB binomial and Poisson implementations.
+# SQL kernels for binomial and Poisson GLMs on supported backends.
 dbglm_family = function(family) {
   if (!inherits(family, "family") ||
-      !is.character(family$link) || length(family$link) != 1 ||
-      is.na(family$link) ||
-      !(identical(family$family, "binomial") && family$link %in% c("cloglog", "logit", "probit") ||
-        identical(family$family, "poisson") && family$link == "log")) {
+    !is.character(family[["link"]]) || length(family[["link"]]) != 1 ||
+    is.na(family[["link"]]) ||
+    !(identical(family[["family"]], "binomial") && family[["link"]] %in% c("cloglog", "logit", "probit") ||
+      identical(family[["family"]], "poisson") && family[["link"]] == "log")) {
     stop("`family` must be binomial('cloglog'), binomial('logit'), binomial('probit') or poisson('log').", call. = FALSE)
   }
   # Literal link arguments keep canonical family closures independent of this
   # validator's evaluation frame and the caller's family object.
-  canonical = switch(paste(family$family, family$link, sep = "/"),
+  canonical = switch(paste(family[["family"]], family[["link"]], sep = "/"),
     "binomial/logit" = stats::binomial("logit"),
     "binomial/probit" = stats::binomial("probit"),
     "binomial/cloglog" = stats::binomial("cloglog"),
     "poisson/log" = stats::poisson("log"))
   functions = c("linkfun", "linkinv", "mu.eta", "variance", "dev.resids", "aic",
-                "validmu", "valideta")
+    "validmu", "valideta")
   for (name in functions) {
     if (!is.function(family[[name]]) ||
-        !identical(body(family[[name]]), body(canonical[[name]])) ||
-        !identical(formals(family[[name]]), formals(canonical[[name]]))) {
+      !identical(body(family[[name]]), body(canonical[[name]])) ||
+      !identical(formals(family[[name]]), formals(canonical[[name]]))) {
       stop("Modified GLM family functions are not supported.", call. = FALSE)
     }
   }
@@ -44,7 +44,7 @@ dbglm_normal_sql = function(eta, a = paste0("ABS(", eta, ")"), exp_half = paste0
   q = c(440.4137358247522, 793.8265125199484, 637.3336333788311,
     296.5642487796737, 86.78073220294608, 16.06417757920695,
     1.755667163182642, .08838834764831844)
-  density = paste0(exp_half, "/", dbglm_number(sqrt(2*pi)))
+  density = paste0(exp_half, "/", dbglm_number(sqrt(2 * pi)))
   fraction = paste0("(", a, "+1.0/(", a, "+2.0/(", a, "+3.0/(", a,
     "+4.0/(", a, "+0.65)))))")
   tail = paste0("(CASE WHEN ", a, ">38 THEN 0.0 WHEN ", a, "<",
@@ -55,26 +55,26 @@ dbglm_normal_sql = function(eta, a = paste0("ABS(", eta, ")"), exp_half = paste0
 
 dbglm_boundary = function(state, link) {
   if (link == "log") {
-    !is.finite(state$mu_min) || !is.finite(state$mu_max) || state$mu_min <= 0
-  } else state$mu_min <= .Machine$double.eps || state$mu_max >= 1-.Machine$double.eps
+    !is.finite(state[["mu_min"]]) || !is.finite(state[["mu_max"]]) || state[["mu_min"]] <= 0
+  } else state[["mu_min"]] <= .Machine[["double.eps"]] || state[["mu_max"]] >= 1 - .Machine[["double.eps"]]
 }
 
 dbglm_family_sql = function(link, eta = "eta", a = NULL, exp_half = NULL) {
-  eps = dbglm_number(.Machine$double.eps)
+  eps = dbglm_number(.Machine[["double.eps"]])
   if (link == "logit") {
     mu = sprintf(paste0("CASE WHEN %1$s < -30 THEN %2$s WHEN %1$s > 30 THEN %3$s ",
-                        "ELSE EXP(%1$s) / (1.0 + EXP(%1$s)) END"),
-                 eta, dbglm_number(.Machine$double.eps / (1 + .Machine$double.eps)),
-                 dbglm_number(1 / (1 + .Machine$double.eps)))
+      "ELSE EXP(%1$s) / (1.0 + EXP(%1$s)) END"),
+    eta, dbglm_number(.Machine[["double.eps"]] / (1 + .Machine[["double.eps"]])),
+    dbglm_number(1 / (1 + .Machine[["double.eps"]])))
     derivative = sprintf(paste0("CASE WHEN ABS(%1$s) > 30 THEN %2$s ",
-                                "ELSE EXP(%1$s) / POWER(1.0 + EXP(%1$s), 2) END"), eta, eps)
+      "ELSE EXP(%1$s) / POWER(1.0 + EXP(%1$s), 2) END"), eta, eps)
   } else if (link == "probit") {
     a_expr = if (is.null(a)) paste0("ABS(", eta, ")") else a
     eh_expr = if (is.null(exp_half)) paste0("EXP(-0.5*POWER(", eta, ",2))") else exp_half
     mu = paste0("GREATEST(LEAST((", dbglm_normal_sql(eta, a_expr, eh_expr), "),",
-      dbglm_number(1-.Machine$double.eps), "),", eps, ")")
+      dbglm_number(1 - .Machine[["double.eps"]]), "),", eps, ")")
     derivative = paste0("CASE WHEN ", a_expr, ">38 THEN ", eps,
-      " ELSE GREATEST(", eh_expr, "/", dbglm_number(sqrt(2*pi)), ",", eps, ") END")
+      " ELSE GREATEST(", eh_expr, "/", dbglm_number(sqrt(2 * pi)), ",", eps, ") END")
   } else if (link == "log") {
     mu = paste0("CASE WHEN ", eta, ">700 THEN 'Infinity'::DOUBLE ELSE EXP(", eta, ") END")
     derivative = mu
@@ -86,7 +86,7 @@ dbglm_family_sql = function(link, eta = "eta", a = NULL, exp_half = NULL) {
       "(%2$s - POWER(%2$s, 2)/2.0 + POWER(%2$s, 3)/6.0) ",
       "ELSE 1.0 - EXP(-(%2$s)) END"), eta, h)
     mu = sprintf("GREATEST(LEAST((%s), %s), %s)", probability,
-                 dbglm_number(1 - .Machine$double.eps), eps)
+      dbglm_number(1 - .Machine[["double.eps"]]), eps)
     derivative = sprintf("GREATEST((%s) * EXP(-(%s)), %s)", h, h, eps)
   } else stop("Unsupported GLM link.", call. = FALSE)
   list(mu = mu, derivative = derivative)
@@ -98,7 +98,7 @@ dbglm_working_sql = function(table, x, beta, link, eta = NULL) {
     kernel = dbglm_family_sql(link)
     return(paste0(
       "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
-      "means AS (SELECT *, ", kernel$mu, " AS mu, ", kernel$derivative, " AS d FROM predictor), ",
+      "means AS (SELECT *, ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM predictor), ",
       "working AS (SELECT *, __dbglm_a*mu AS w, eta-__dbglm_o+(__dbglm_y-mu)/mu AS z, ",
       "__dbglm_a*(__dbglm_y-mu) AS score, ",
       "2.0*__dbglm_a*(CASE WHEN __dbglm_y=0 THEN mu ELSE ",
@@ -110,12 +110,8 @@ dbglm_working_sql = function(table, x, beta, link, eta = NULL) {
     return(paste0(
       "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
       "prep AS (SELECT *, ABS(eta) AS __dbglm_abs_eta, EXP(-0.5*POWER(eta,2)) AS __dbglm_eh FROM predictor), ",
-      "means AS (SELECT * EXCLUDE (__dbglm_abs_eta, __dbglm_eh), ", kernel$mu, " AS mu, ", kernel$derivative, " AS d FROM prep), ",
-      "working AS (SELECT *, __dbglm_a*d*d/(mu*(1.0-mu)) AS w, ",
-      "eta-__dbglm_o+(__dbglm_y-mu)/d AS z, ",
-      "__dbglm_a*d*(__dbglm_y-mu)/(mu*(1.0-mu)) AS score, ",
-      "-2.0*__dbglm_a*(CASE WHEN __dbglm_y=1 THEN LN(mu) ELSE LN(1.0-mu) END) AS dev ",
-      "FROM means) "
+      "means AS (SELECT * EXCLUDE (__dbglm_abs_eta, __dbglm_eh), ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM prep), ",
+      dbglm_binomial_working_cte()
     ))
   }
   if (link == "cloglog") {
@@ -123,18 +119,22 @@ dbglm_working_sql = function(table, x, beta, link, eta = NULL) {
     return(paste0(
       "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
       "prep AS (SELECT *, EXP(LEAST(eta, 700.0)) AS __dbglm_eh FROM predictor), ",
-      "means AS (SELECT * EXCLUDE (__dbglm_eh), ", kernel$mu, " AS mu, ", kernel$derivative, " AS d FROM prep), ",
-      "working AS (SELECT *, __dbglm_a*d*d/(mu*(1.0-mu)) AS w, ",
-      "eta-__dbglm_o+(__dbglm_y-mu)/d AS z, ",
-      "__dbglm_a*d*(__dbglm_y-mu)/(mu*(1.0-mu)) AS score, ",
-      "-2.0*__dbglm_a*(CASE WHEN __dbglm_y=1 THEN LN(mu) ELSE LN(1.0-mu) END) AS dev ",
-      "FROM means) "
+      "means AS (SELECT * EXCLUDE (__dbglm_eh), ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM prep), ",
+      dbglm_binomial_working_cte()
     ))
   }
   kernel = dbglm_family_sql(link)
   paste0(
     "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
-    "means AS (SELECT *, ", kernel$mu, " AS mu, ", kernel$derivative, " AS d FROM predictor), ",
+    "means AS (SELECT *, ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM predictor), ",
+    dbglm_binomial_working_cte()
+  )
+}
+
+# All binomial links share working weights, response, score and deviance.
+# Link-specific code only constructs the mean and its derivative.
+dbglm_binomial_working_cte = function() {
+  paste0(
     "working AS (SELECT *, __dbglm_a*d*d/(mu*(1.0-mu)) AS w, ",
     "eta-__dbglm_o+(__dbglm_y-mu)/d AS z, ",
     "__dbglm_a*d*(__dbglm_y-mu)/(mu*(1.0-mu)) AS score, ",

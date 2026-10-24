@@ -59,9 +59,11 @@ Imports:
   utils
 Suggests:
   binsreg,
+  bit64,
   here,
   fixest (>= 0.13.0),
   knitr,
+  odbc,
   quarto,
   tinytest
 Enhances:

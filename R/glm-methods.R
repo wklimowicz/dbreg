@@ -8,17 +8,17 @@ NULL
 #' @rdname dbglm-methods
 #' @export
 logLik.dbglm = function(object, ...) {
-  structure(object$loglik, class = "logLik", df = if(isFALSE(object$finite_mle)) NA_integer_ else object$n_params_model,
-            nobs = object$nobs_orig, finite_mle = object$finite_mle)
+  structure(object[["loglik"]], class = "logLik", df = if (isFALSE(object[["finite_mle"]])) NA_integer_ else object[["n_params_model"]],
+    nobs = object[["nobs_orig"]], finite_mle = object[["finite_mle"]])
 }
 
 #' @rdname dbglm-methods
 #' @export
-nobs.dbglm = function(object, ...) object$nobs_orig
+nobs.dbglm = function(object, ...) object[["nobs_orig"]]
 
 #' @rdname dbglm-methods
 #' @export
-df.residual.dbglm = function(object, ...) object$df_residual
+df.residual.dbglm = function(object, ...) object[["df_residual"]]
 
 #' @rdname dbglm-methods
 #' @param parm Coefficient names or positions, defaulting to all coefficients.
@@ -46,32 +46,36 @@ confint.dbglm = function(object, parm, level = 0.95, ...) {
 predict.dbglm = function(object, newdata, type = c("link", "response"), ...) {
   type = match.arg(type)
   if (missing(newdata)) stop("`newdata` is required; dbglm does not retain input rows.", call. = FALSE)
-  if(length(object$fe)) stop("New-row prediction for absorbed GLMs is not implemented.",call.=FALSE)
+  if (length(object[["fe"]])) stop("New-row prediction for absorbed GLMs is not implemented.", call. = FALSE)
   newdata = as.data.frame(newdata)
-  for(a in names(object$factor_sources)) {
-    source = object$factor_sources[[a]]
-    if(!source %in% names(newdata)) stop("newdata is missing columns: ",source,call.=FALSE)
+  for (a in names(object[["factor_sources"]])) {
+    source = object[["factor_sources"]][[a]]
+    if (!source %in% names(newdata)) stop("newdata is missing columns: ", source, call. = FALSE)
     newdata[[a]] = newdata[[source]]
   }
-  required = unique(c(object$model_spec$source_vars, object$offset))
+  required = unique(c(object[["model_spec"]][["source_vars"]], object[["offset"]]))
   absent = setdiff(required, names(newdata))
   if (length(absent)) stop("newdata is missing columns: ", paste(absent, collapse = ", "), call. = FALSE)
   valid = rep(TRUE, nrow(newdata))
   for (name in required) {
     valid = valid & !is.na(newdata[[name]])
-    if (is.numeric(newdata[[name]])) valid = valid & is.finite(newdata[[name]])
+    # Nonmissing integer64 values are finite; avoid a lossy conversion of
+    # categorical keys merely to test finiteness.
+    if (is.numeric(newdata[[name]]) && !inherits(newdata[[name]], "integer64")) {
+      valid = valid & is.finite(newdata[[name]])
+    }
   }
   prediction = rep(NA_real_, nrow(newdata))
   if (!any(valid)) return(prediction)
   data = newdata[valid, , drop = FALSE]
-  design = as.matrix(evaluate_model_spec(object$model_spec, data))
-  colnames(design) = object$model_spec$columns$name
-  if (object$has_intercept) design = cbind("(Intercept)" = 1, design)
+  design = as.matrix(evaluate_model_spec(object[["model_spec"]], data))
+  colnames(design) = object[["model_spec"]][["columns"]][["name"]]
+  if (object[["has_intercept"]]) design = cbind("(Intercept)" = 1, design)
   beta = stats::coef(object)
-  names(beta) = object$design_names
+  names(beta) = object[["design_names"]]
   eta = as.vector(design[, names(beta), drop = FALSE] %*% beta)
-  if (!is.null(object$offset)) eta = eta + data[[object$offset]]
-  prediction[valid] = if (type == "link") eta else object$family$linkinv(eta)
+  if (!is.null(object[["offset"]])) eta = eta + as.numeric(data[[object[["offset"]]]])
+  prediction[valid] = if (type == "link") eta else object[["family"]][["linkinv"]](eta)
   prediction
 }
 
@@ -87,19 +91,19 @@ tidy.dbglm = function(x, conf.int = FALSE, conf.level = 0.95, collin = FALSE, ..
 #' @rdname dbglm-methods
 #' @export
 glance.dbglm = function(x, ...) {
-  data.frame(nobs = x$nobs_orig, nobs.input = x$nobs_input, nobs.dropped = x$nobs_dropped,
-    logLik = x$loglik, deviance = x$deviance, AIC = stats::AIC(x), BIC = stats::BIC(x),
-    df.residual = x$df_residual, n.params = x$n_params_model, family = x$family$family,
-    link = x$family$link, vcov.type = x$vcov_type, converged = x$converged,
-    finite.mle = x$finite_mle, iterations = x$iterations, score.max = x$score_max)
+  data.frame(nobs = x[["nobs_orig"]], nobs.input = x[["nobs_input"]], nobs.dropped = x[["nobs_dropped"]],
+    logLik = x[["loglik"]], deviance = x[["deviance"]], AIC = stats::AIC(x), BIC = stats::BIC(x),
+    df.residual = x[["df_residual"]], n.params = x[["n_params_model"]], family = x[["family"]][["family"]],
+    link = x[["family"]][["link"]], vcov.type = x[["vcov_type"]], converged = x[["converged"]],
+    finite.mle = x[["finite_mle"]], iterations = x[["iterations"]], score.max = x[["score_max"]])
 }
 
 #' @rdname dbglm-methods
 #' @export
 print.dbglm = function(x, ...) {
-  cat("Database ",x$family$family," GLM (", x$family$link, "), ", x$nobs_orig,
-      " observations; ", x$iterations, " IRLS iterations\n", sep = "")
-  if(isFALSE(x$finite_mle)) cat("Boundary probability approximation; no finite MLE established; inference unavailable.\n")
-  print(x$coeftable)
+  cat("Database ", x[["family"]][["family"]], " GLM (", x[["family"]][["link"]], "), ", x[["nobs_orig"]],
+    " observations; ", x[["iterations"]], " IRLS iterations\n", sep = "")
+  if (isFALSE(x[["finite_mle"]])) cat("Boundary probability approximation; no finite MLE established; inference unavailable.\n")
+  print(x[["coeftable"]])
   invisible(x)
 }

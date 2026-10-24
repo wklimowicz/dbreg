@@ -136,6 +136,8 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
   is_duckdb = FALSE
   table_name = NULL
   from_statement = NULL
+  setup_complete = FALSE
+  on.exit(if (!setup_complete) release_db_setup(conn, own_conn, registered_table), add = TRUE)
 
 
   # If table is tbl_lazy and conn is NULL, try to infer conn from the table
@@ -154,7 +156,10 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
 
   # Create default connection if still NULL (for data.frame or path inputs)
   if (is.null(conn)) {
-    conn = dbConnect(duckdb(config = duckdb_config), shutdown = TRUE)
+    integer64_data = is.null(table) && is.data.frame(data) &&
+      any(vapply(data, inherits, logical(1), "integer64"))
+    conn = dbConnect(duckdb(config = duckdb_config,
+      bigint = if (integer64_data) "integer64" else "numeric"), shutdown = TRUE)
     own_conn = TRUE
     is_duckdb = TRUE
   } else {
@@ -212,6 +217,18 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
     }
     duckdb_register(conn, temp_name, data)
     registered_table = temp_name
+    integer64_columns = names(data)[vapply(data, inherits, logical(1), "integer64")]
+    if (length(integer64_columns)) {
+      # Some DuckDB versions interpret integer64 storage as raw doubles when
+      # the supplied connection uses bigint="numeric". Check SQL types before
+      # fitting so keys cannot silently change or collapse above 2^53.
+      schema = dbGetQuery(conn, paste("DESCRIBE", DBI::dbQuoteIdentifier(conn, temp_name)))
+      types = schema[["column_type"]][match(integer64_columns, schema[["column_name"]])]
+      if (anyNA(types) || any(types != "BIGINT")) {
+        stop("DuckDB did not preserve integer64 input columns. Use a connection created with ",
+          "duckdb::duckdb(bigint = 'integer64'), or convert those columns explicitly before fitting.", call. = FALSE)
+      }
+    }
     table_name = temp_name
     from_statement = paste("FROM", temp_name)
   } else if (!is.null(path)) {
@@ -231,6 +248,7 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
     stop("Provide one of `table`, `data`, or `path`.")
   }
 
+  setup_complete = TRUE
   list(
     conn = conn,
     table_name = table_name,
@@ -397,6 +415,18 @@ release_db_setup = function(conn, own_conn, registered_table) {
     dbDisconnect(conn, shutdown = TRUE)
   }
   invisible(NULL)
+}
+
+# R's matrix builders do not decode integer64 storage. Evaluate factor()
+# first, preserving exact categorical labels, then convert numeric columns to
+# the same double precision used by the SQL regression arithmetic.
+model_matrix_data = function(formula, data) {
+  if (!any(vapply(data, inherits, logical(1), "integer64"))) return(data)
+  data = stats::model.frame(formula, data = data, na.action = stats::na.pass)
+  for (name in names(data)) if (inherits(data[[name]], "integer64")) {
+    data[[name]] = as.numeric(data[[name]])
+  }
+  data
 }
 
 # ---- SQL-safe identifiers ---------------------------------------------------

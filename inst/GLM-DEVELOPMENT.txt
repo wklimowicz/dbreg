@@ -1,0 +1,159 @@
+Maintaining the database GLM implementation
+==========================================
+
+Start with R/dbglm.R. It validates the public API, fixes the estimation sample
+and design, dispatches fitting, and assembles the compact result. It does not
+retain input rows, connections or fit-owned tables in the returned model.
+Use pkgload::load_all() when developing this package.
+
+Source map
+----------
+R/dbglm.R                  Public API, preparation and result assembly.
+R/glm-sample.R             Formula normalization, recursive FE exclusions, df.
+R/glm-design.R             Shared SQL fitting/R prediction design specification.
+R/glm-family.R             Family validation and stable mean/working SQL kernels.
+R/glm-fit.R                Small information-matrix solves and no-FE IRLS.
+R/glm-fe-fit.R             Absorbed Fisher-scoring IRLS and line search.
+R/glm-state.R              FE predictor/working relations and fit diagnostics.
+R/glm-projection.R         Weighted projection dispatch and feasibility cache.
+R/glm-projection-moments.R Bounded FE summaries, Schur solve and reconstruction.
+R/glm-projection-sql.R     SQL coefficient CG and batched window AP fallbacks.
+R/glm-vcov.R               Small-sample corrections and covariance passes.
+R/glm-backend.R            SQL translation, query transport and scalar helpers.
+R/glm-databricks.R         Pruning preflight, grouped moments and array lookups.
+R/glm-resources.R          Resource ownership and coefficient lookup transfer.
+R/glm-methods.R            S3 methods, summaries and prediction.
+R/ap-moments.R             OLS/IV adapter to the shared bounded FE projector.
+
+The former R/wls-state.R responsibilities are now in the projection, state,
+FE fitting and covariance modules. OLS/IV now reuse the bounded FE moment
+solver through R/ap-moments.R; changes need the OLS/IV and GLM tests. The
+iterative OLS/IV fallbacks remain in R/dbreg.R and R/duckdb-ap.R.
+
+Flow and contracts
+------------------
+1. dbglm() establishes resource ownership before connection/input preparation.
+   It validates source keys, outcomes and frequency weights; removes ineligible
+   observations; and applies the requested recursive FE pruning rule.
+2. The model specification expands factors/interactions to internal aliases.
+   Retained FE designs are centered before projection. Structural rank and
+   column identities are fixed before IRLS and shared with result metadata.
+3. No-FE fitting uses dbglm_irls(). Absorbed fitting uses dbglm_fe_fit(). Both
+   are Fisher scoring, with damping and explicit convergence checks. There is
+   no production observed-Hessian/Newton branch.
+4. dbglm_fe_state_builder() captures immutable fit context and returns a state
+   callback. Each call receives use_moments and collect_fe_moments explicitly:
+   feasibility can change after a bounded-summary fallback. Its result contains
+   state, working and an optional physical lookup dependency.
+5. Working SQL supplies eta, mu, derivative d, weight w, response z, score and
+   deviance dev. z excludes the offset; predictor reconstruction adds it back.
+   Binomial links share one working-equation tail. Only their mean/derivative
+   kernels differ. Original weights are integer frequencies; IRLS weights are
+   positive doubles and must never be rounded to integers.
+6. solve_partial_wls() selects a bounded FE solve or SQL projection. Its common
+   diagnostics are cycles, residual and method. Depending on the strategy it
+   returns projected rows, cross-product reductions, or both. Coefficients,
+   ops and info support parameter-space predictor reconstruction. sub_tables
+   records physical dependencies; a NULL table is valid when moments suffice.
+7. FE evaluation returns deviance, mean limits, invalid-row count, normalized
+   score, raw score, information moments and scales. A fused evaluation can
+   also return fe_moments for reuse in the next projection. Final inference
+   requires a converged projection and a certified profiled score.
+8. Covariance is computed at the final accepted fit. Sample-key exports are
+   created only after successful fitting and belong to the caller.
+
+Numerical and backend invariants
+--------------------------------
+* Do not relax score/projection tolerances to pass a benchmark or parity test.
+  A full accepted step, relative deviance and normalized score are all checked.
+  Both fitters permit only 64 * double.eps * max(1, abs(deviance)) roundoff in
+  deviance monotonicity. The two absorbed step paths share an acceptance helper.
+* The no-FE acceptance policy intentionally differs: explicit boundary-only
+  prediction may return a flagged, nonconverged approximation without inference.
+  Do not silently apply that policy to absorbed fits.
+* FE summary transfer and dense systems have caps. Check those before transfer
+  or allocation. Overflow uses the existing SQL path; numerical failure must
+  not be disguised as successful convergence.
+* The OLS/IV adapter ranks distinct raw FE keys in SQL, preserving text and
+  BIGINT identity. Only bounded summaries enter R. It centers design columns,
+  solves all projected columns together, and certifies weighted group means,
+  finite values and row count on the reconstructed SQL rows. The final table
+  follows the existing AP contract; ordinary moment and covariance passes
+  still read actual transformed rows. Failed certification selects iterative
+  AP. The adapter transfers only its final table to the frame's cleanup owner.
+* Cached FE support belongs to the immutable retained sample. Its cardinality
+  is checked when reusing the bound. A different sample needs a fresh cache.
+* Databricks grouped moments have three branches: globals, FE marginals, and
+  weight-only FE pairs. Global JSON scalars are decoded into the dbglm_globals
+  attribute, separately from numeric FE rows. Preserve this reader contract.
+* Arrays are only for bounded, sufficiently dense FE coefficient dictionaries.
+  Sparse/large dictionaries use the bounded join path. Decode integer64 keys
+  before combining them, and serialize coefficient doubles with 17 digits.
+  Define a shared dictionary CTE before filtering per FE operation; duplicating
+  its literal for every FE can exceed the warehouse's query-text limit.
+* The raw-key pruning preflight skips recursion only after proving there are
+  no removable groups. Joint keys are separate columns, not joined strings.
+* create() registers physical tables for cleanup before executing CREATE.
+  Temporary registrations are released even if coefficient upload fails.
+  DuckDB can release intermediate tables promptly. Databricks inline relations
+  may still reference them, so their drops are deferred until fit cleanup.
+  Reused target tables must already be owned by the fit. Never track a caller's
+  input or successful sample export as a fit-owned table.
+
+Validation
+----------
+Run from the repository root:
+
+  Rscript -e 'pkgload::load_all(); tinytest::test_all(".")'
+  make check
+
+Relevant test groups in inst/tinytest/:
+  test_glm_reference/numerics/families: glm/fixest values and kernel tails.
+  test_glm_absorbed/trends/many_fe/audit_designs/wls: absorbed inference,
+    heterogeneous slopes, correlated FE, wide designs and projection equations.
+  test_glm_boundary/sample/resources: nonconvergence, pruning, stable keys,
+    ownership and cleanup, including injected coefficient-upload failure.
+  test_glm_databricks: dialect support and bounded fallback behavior.
+  test_glm_sql_literals: multi-megabyte literals, quoting and Unicode survive
+    SQL translation; the optimized/native cases also execute large literals.
+  test_integer64_input: exact in-memory BIGINT keys above 2^53, GLM/OLS
+    parity, predictions, and cleanup when a supplied connection loses types.
+  test_glm_databricks_optimized: optimized transport/solver regression cases.
+  test_glm_databricks_sample: pruning and sample-key cases.
+  test_fe_edges: shared GLM/OLS comparisons with fixest for disconnected FE,
+    unequal frequencies/offsets, redundant columns and rare correlated panels.
+    test_fe_edges_live runs the same cases on native Databricks when enabled.
+  test_ap_moments: OLS/IV parity with fixest, fractional weights, 2/3/6 FE,
+    text/BIGINT keys, IID/HC1/cluster inference, limits and failure cleanup.
+    test_ap_moments_live runs these checks on native Databricks when enabled.
+    test_ap/test_ap_windows/test_duckdb_cg retain explicit fallback coverage.
+  test_glm_stress: seeded six-FE rare-outcome/weight/collinearity grid, retained
+    row IDs and invariance to order, FE labels and units; native counterpart.
+  test_glm_separation: known complete/quasi-separated cloglog designs and
+    analytic finite-MLE controls, including absorbed effects; native counterpart.
+  test_glm_audit_designs/test_glm_wide_live: the same 88-slope rare-exit teacher
+    fixture on DuckDB and native Databricks, including full covariance/sample.
+
+The optimized and sample tests use a DuckDB-backed SQL fixture offline. This
+checks numerical contracts but is not a Spark execution-engine substitute.
+With the Databricks driver and credentials configured, also run:
+
+  DBREG_TEST_DATABRICKS=TRUE Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_glm_databricks_live.R")'
+  DBREG_TEST_DATABRICKS=TRUE Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_glm_databricks_sample.R")'
+
+Live tests require odbc, DATABRICKS_HOST, DATABRICKS_TOKEN and DATABRICKS_SQL_PATH.
+DATABRICKS_ODBC_DRIVER optionally overrides the driver path. They create small
+synthetic temporary relations on a session-preserving native-query connection.
+Their shared case helpers avoid separate offline/native expected-value code.
+`make test-databricks` runs all native suites with explicit failure/skip checks.
+See inst/GLM-VALIDATION.txt for fixture scope, CI setup and release validation.
+
+Use explicit coefficient, covariance, likelihood and sample tolerances. The
+fixest reference helper refines only fixest's own predictor until its output
+stabilizes, independently of dbglm. Match pruning and small-sample conventions
+when comparing packages. Passing tests does not establish support for grouped
+binomial responses, fractional original weights or absorbed-FE prediction;
+those remain unsupported public API cases.
+
+See _benchmarks/GLM-INDEX.txt in the repository for performance evidence and
+the distinction between production benchmarks and exploratory prototypes.

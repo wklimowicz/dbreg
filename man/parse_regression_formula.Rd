@@ -4,7 +4,7 @@
 \alias{parse_regression_formula}
 \title{Parse regression formula}
 \usage{
-parse_regression_formula(fml)
+parse_regression_formula(fml, allow_empty = FALSE)
 }
 \arguments{
 \item{fml}{A formula object (will be converted to Formula)}

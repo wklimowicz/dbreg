@@ -6,7 +6,7 @@ library(fixest)
   old = options(dbreg.duckdb_ap_method = "cg", dbreg.ap_tol = 1e-10,
     dbreg.ap_max_iter = 100L, dbreg.duckdb_ap_max_edges = 1e6,
     dbreg.duckdb_ap_max_entries = 2e6)
-  con = dbConnect(duckdb::duckdb(shared_home = FALSE),
+  con = dbConnect(duckdb::duckdb(),
     config = list(temp_directory = "", memory_limit = "1GiB", threads = "2"))
   on.exit({ options(old); dbDisconnect(con, shutdown = TRUE) })
   set.seed(20261022)

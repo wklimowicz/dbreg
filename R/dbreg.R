@@ -130,10 +130,13 @@
 #'    however, the double demeaning strategy is not algebraically equivalent to
 #'    the fixed effects projection and therefore does not recover the exact TWFE
 #'    coefficients. In such cases, and also for weighted two-way FE, `dbreg`
-#'    uses alternating projections (AP) to recover the exact FE coefficients,
-#'    at the cost of extra passes over the data. AP also generalizes the
-#'    `"demean"` strategy to three or more FE. On Spark/Databricks, AP uses SQL
-#'    window functions and writes one table per three cycles
+#'    uses an exact joint FE projection, also supporting three or more FE.
+#'    DuckDB and native Databricks first try a bounded solve from FE sufficient
+#'    statistics; observation rows stay in SQL. The transformed rows must pass
+#'    the requested group-mean tolerance before the result is accepted.
+#'    Unsupported or oversized systems, or failed numerical certification,
+#'    fall back to alternating projections (AP). On Spark/Databricks, AP uses
+#'    SQL window functions and writes one table per three cycles
 #'    (`options(dbreg.ap_method = "window", dbreg.ap_batch_size = 3L)`).
 #'    Use `options(dbreg.ap_method = "join")` to select the join implementation.
 #' 4. `"mundlak"`: a generalized Mundlak (1978), or correlated random effects
@@ -162,13 +165,30 @@
 #' However, the demeaning approaches invite tradeoffs of their own. For example,
 #' the single-pass double demeaning transformation only obtains exact TWFE
 #' results for balanced panels with two FE. For unbalanced panels, weighted
-#' regressions, or three or more FE, `dbreg` uses alternating projections
-#' (iterative demeaning) which is exact but requires multiple passes and may be
-#' slower to converge on very large datasets. In such cases, `"mundlak"` (CRE)
+#' regressions, or three or more FE, `dbreg` uses a bounded FE solve where
+#' feasible, otherwise alternating projections (iterative demeaning). AP may
+#' be slower to converge on very large datasets. In such cases, `"mundlak"` (CRE)
 #' may be preferable as it is a single-pass estimator that obtains consistent
 #' coefficients regardless of panel structure and FE count, but at the "cost" of
 #' recovering a different estimand. (It is a different model to TWFE, after
 #' all.) See Wooldridge (2025) for an extended discussion of these issues.
+#'
+#' `options(dbreg.ap_solver = "auto")` is the default for joint FE projection.
+#' Use `"iterative"` to bypass the bounded solver, or `"moments"` to try it even
+#' when an explicit `dbreg.ap_method` or `dbreg.duckdb_ap_method` is set. Under
+#' `"auto"`, those explicit method choices retain their existing behavior.
+#' All modes retain the existing fallback and convergence checks.
+#' `dbreg.ap_tol` (default `1e-10`) bounds the absolute weighted group means;
+#' `dbreg.ap_max_iter` (default `100`) limits projection iterations.
+#' The bounded solver uses `dbreg.duckdb_ap_max_edges` (default `1e6` summary
+#' rows), `dbreg.duckdb_ap_max_entries` (default `2e6` FE-by-design entries),
+#' and `dbreg.ap_moment_max_cells` (default `8e6` rectangular transfer cells)
+#' on both backends. Its dense system also shares the GLM limits
+#' `dbreg.glm_fe_dense_max` (default `4096` remaining FE levels after absorbing
+#' the largest block) and `dbreg.glm_fe_cross_max` (default `5e7` cross entries).
+#' Exceeding a limit selects iterative AP. Successful bounded projections
+#' report `ap_method = "bounded_moments"`; `ap_iterations` counts solve and
+#' refinement steps and `ap_max_abs` reports the certified group-mean residual.
 #' 
 #' Users should weigh these tradeoffs when choosing their acceleration strategy.
 #' Summarising, we can provide a few guiding principles. `"compress"` is a good
@@ -193,9 +213,9 @@
 #'   `"demean"`.
 #' - ELSE IF 2 FE AND (poor compression ratio OR too big compressed data):
 #'   - IF balanced panel THEN `"demean"`.
-#'   - ELSE `"demean"` via alternating projections.
+#'   - ELSE `"demean"` via joint FE projection.
 #' - ELSE IF 3+ FE AND (poor compression ratio OR too big compressed data)
-#'   THEN `"demean"` via alternating projections.
+#'   THEN `"demean"` via joint FE projection.
 #' - ELSE THEN `"compress"`.
 #' 
 #' _Tip: set `dbreg(..., verbose = TRUE)` to print information about the auto
@@ -379,7 +399,7 @@ dbreg = function(
     chosen_strategy,
     # sufficient statistics with no fixed effects
     "moments" = execute_moments_strategy(inputs),
-    # fixed effects via demeaning (1 FE: analytic; 2+ FE: alternating projections)
+    # Fixed effects via analytic demeaning or joint projection.
     "demean" = execute_demean_strategy(inputs),
     # true Mundlak/CRE: Y ~ X + group means of X
     "mundlak" = execute_mundlak_strategy(inputs),
@@ -706,6 +726,11 @@ dbreg_alternating_projections = function(
   if (!positive(tol)) {
     stop("[dbreg] dbreg.ap_tol must be a positive number.", call. = FALSE)
   }
+  solver = getOption("dbreg.ap_solver", "auto")
+  if (!is.character(solver) || length(solver) != 1L || is.na(solver) ||
+      !solver %in% c("auto", "moments", "iterative")) {
+    stop('`dbreg.ap_solver` must be "auto", "moments" or "iterative".', call. = FALSE)
+  }
   backend = detect_backend(conn)[["name"]]
   if (backend == "duckdb") {
     method = getOption("dbreg.duckdb_ap_method", "join")
@@ -713,7 +738,7 @@ dbreg_alternating_projections = function(
         !method %in% c("join", "cg")) {
       stop('`dbreg.duckdb_ap_method` must be "join" or "cg".', call. = FALSE)
     }
-    if (method == "cg" && length(fe) == 2L) {
+    if (method == "cg" && length(fe) == 2L && solver != "moments") {
       projected = dbreg_duckdb_cg_projections(
         conn, from_statement, fe, yvar, xvars_sql, xvar_names, weights,
         cluster_var, verbose, max_iter, tol
@@ -721,6 +746,13 @@ dbreg_alternating_projections = function(
       if (!is.null(projected)) return(projected)
       if (verbose) message("[dbreg] Bounded DuckDB projection unavailable; using join AP")
     }
+  }
+  explicit_method = !is.null(getOption("dbreg.ap_method")) ||
+    (backend == "duckdb" && !is.null(getOption("dbreg.duckdb_ap_method")))
+  if (solver == "moments" || (solver == "auto" && !explicit_method)) {
+    projected = dbreg_moment_projections(inputs, xvars_sql, xvar_names, max_iter, tol)
+    if (!is.null(projected)) return(projected)
+    if (verbose) message("[dbreg] Bounded FE moments unavailable; using iterative AP")
   }
   use_windows = ap_method(backend) == "window"
   batch_size = 1L
@@ -1016,11 +1048,11 @@ choose_strategy = function(inputs) {
             if (isTRUE(is_balanced)) {
               message("        - panel is balanced")
             } else {
-              message("        - panel is unbalanced (using alternating projections)")
+              message("        - panel is unbalanced (using joint FE projection)")
             }
           }
         } else if (length(fe) > 2 && verbose) {
-          message("        - more than 2 FEs, using alternating projections")
+          message("        - more than 2 FEs, using joint FE projection")
         }
       } else {
         chosen_strategy = "compress"

@@ -4,7 +4,13 @@
 \alias{register_factor_display}
 \title{Register display names for expanded factor columns}
 \usage{
-register_factor_display(inputs, factor_levels = list(), level_aliases = NULL)
+register_factor_display(
+  inputs,
+  factor_levels = list(),
+  level_aliases = NULL,
+  col_names = NULL,
+  aliases = NULL
+)
 }
 \arguments{
 \item{factor_levels}{Named list of levels by (safe) variable name.}

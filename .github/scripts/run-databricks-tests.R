@@ -1,5 +1,6 @@
 # Called from the repository root by CI or `make test-databricks`.
 # Missing credentials/driver or an empty suite fails; it never counts as a pass.
+# Optional arguments: output directory, then one or more known suite filenames.
 args = commandArgs(TRUE)
 out = if (length(args)) args[[1]] else file.path(tempdir(), "dbreg-databricks-validation")
 required = c("DATABRICKS_HOST", "DATABRICKS_TOKEN", "DATABRICKS_SQL_PATH")
@@ -12,8 +13,25 @@ pkgload::load_all()
 fixest::setFixest_nthreads(2)
 dir.create(out, recursive = TRUE, showWarnings = FALSE)
 writeLines(c(paste("UTC:", format(Sys.time(), tz = "UTC")), capture.output(sessionInfo())), file.path(out, "environment.txt"))
+writeLines(c(paste("dbreg revision:", system2("git", c("rev-parse", "HEAD"), stdout = TRUE)),
+  paste("fixest version:", as.character(utils::packageVersion("fixest"))),
+  paste("native statement timeout:", getOption("dbreg.test_statement_timeout", 300L)),
+  "Working-tree contents are identified by source-md5.csv; revision alone may include uncommitted changes."),
+  file.path(out, "versions.txt"))
+sources = c("DESCRIPTION", "NAMESPACE", ".github/scripts/run-databricks-tests.R",
+  list.files("R", full.names = TRUE), list.files("inst/tinytest", full.names = TRUE))
+hashes = tools::md5sum(sources)
+write.csv(data.frame(file = names(hashes), md5 = unname(hashes)), file.path(out, "source-md5.csv"), row.names = FALSE)
 suites = c("test_glm_databricks_live.R", "test_glm_databricks_sample.R", "test_fe_edges_live.R",
-  "test_ap_moments_live.R", "test_glm_stress_live.R", "test_glm_separation_live.R", "test_glm_wide_live.R", "test_linear_design_live.R")
+  "test_ap_moments_live.R", "test_glm_stress_live.R", "test_glm_separation_live.R", "test_glm_wide_live.R", "test_linear_design_live.R",
+  "test_glm_fractional_live.R")
+if (length(args) > 1L) {
+  requested = args[-1L]
+  if (anyDuplicated(requested) || any(!requested %in% suites)) {
+    stop("Specify unique known native suite filenames after the output directory.", call. = FALSE)
+  }
+  suites = requested
+}
 records = list()
 for (file in suites) {
   message("Starting native suite: ", file)

@@ -1,0 +1,190 @@
+Fixest replacement implementation contract
+==========================================
+
+Branch: feat/fixest-compat, based on wojtek-dev at 00f2868.
+This is a staged implementation. The checklist below distinguishes the target
+from implemented behavior; it is not a claim of complete fixest compatibility.
+
+Target and boundaries
+---------------------
+Provide regression-only replacements for supported feols/feglm calls on DuckDB
+and native Databricks. Include OLS/LPM, binomial cloglog/logit/probit and the
+existing Poisson family. The caller owns data preparation, external weights,
+initializations and any EM/other outer algorithm. No outer-algorithm state or
+orchestration belongs in dbreg.
+
+Keep existing dbreg/dbglm entry points compatible. Introduce fixest-shaped
+entry points for positional/named arguments and defaults rather than silently
+changing native prediction defaults or OLS small-sample policies. Unsupported
+arguments must fail explicitly. Do not pretend to be a fixest object: support
+the agreed extraction generics with real methods and document other consumers.
+
+Implementation sequence
+-----------------------
+1. Fractional observation weights and independently checked likelihood reporting.
+   Implemented in this increment; validation evidence is in GLM-VALIDATION.txt.
+2. Shared fitted-state contract for learned effects, sample keys and resource
+   ownership. Not implemented. This precedes prediction and post-fit clustering.
+3. Supported formula/argument normalization: i()/references, public coefficient
+   identities, OLS offsets and varying slopes, fixef.rm, weights and subset.
+   Partial existing formula support remains; compatibility entry points pending.
+4. Fitted link/response prediction with learned effects, including estimable
+   zero-weight rows, without outcomes in newdata. Not implemented for absorbed
+   fits. Existing OLS conditional-population prediction remains unchanged.
+5. Two-way OLS cluster covariance and post-fit inference on the fitted sample.
+   Not implemented. Include small-sample/FE-nesting policies and test df.
+6. Summary, se/coeftable, likelihood, sample and df extraction; convergence,
+   persistence and large-output contracts. Existing methods cover only a subset.
+7. End-to-end local/native and large-resource acceptance checks. Not complete.
+
+Statistical contract
+--------------------
+Weights multiply each observation's objective and score. Zero-weight rows are
+excluded from fitting, not automatically from later prediction. N is the number
+of retained source observations, never the weight sum or compressed-cell count.
+Changing weights between calls must recompute the eligible sample, pruning,
+design identification and weighted projections; no stale weight-dependent cache.
+
+For binary responses, fixest::feglm uses R's binomial family$aic for logLik.
+With fractional weights this rounds original weights to integers, ties to even.
+dbglm reports that convention through logLik(model) and standard AIC/BIC;
+logLik(model, type="weighted") exposes the unrounded Bernoulli objective.
+Fitting, deviance and covariance use unrounded weights in all cases. Poisson
+and integer-weight binomial likelihoods are unchanged. The reference convention
+was inspected and tested with fixest 0.14.0; future reference changes must be
+reviewed explicitly. Never infer weight semantics from coefficient parity alone.
+
+Compare ordinary fixest default calls as well as explicitly aligned policies.
+In particular, fixef.rm="none" tests do not establish default sample parity.
+Keep model df, covariance correction K and inference df distinct. Match the full
+covariance and named coefficient table, including off-diagonal entries.
+
+Fitted-state design requirements (pending implementation)
+---------------------------------------------------------
+Retain the original formula and fitted design coding separately from SQL aliases;
+retain FE key dictionaries, slopes, learned coefficients and centering metadata.
+Recovery must work on both bounded and SQL fallback solvers. Prediction must be
+invariant to other rows/outcomes in the supplied prediction batch. Individual
+FE coefficients need a normalization; unidentified new combinations across
+disconnected components must not produce arbitrary predictions.
+
+Use stable source keys for retained-row information and database output. A SQL
+relation has no implicit row order. In-memory predictions preserve input order,
+including missing/nonestimable positions. Database predictions return a keyed
+relation or write to a caller-selected destination; full collection is explicit.
+Distinguish fitting-sample predictions, original-sample alignment and newdata
+prediction, including the behavior of observations excluded only by zero weight.
+
+Small FE dictionaries may be portable R state. Large dictionaries and retained
+sample/score state may require owned database relations with explicit release
+and export/reopen behavior. Newdata prediction need not retain training outcomes;
+post-estimation clustering needs sufficient state for the original fitted sample.
+Source mutation must not silently change an existing fit. Define behavior after
+disconnect, serialization and cleanup; do not serialize live connection pointers
+as though they were durable model state.
+
+Validation gates
+----------------
+Use fixest as the primary oracle, independently refined where needed; never warm
+the reference from dbreg estimates. Compare exact retained IDs and term names,
+full covariance, SEs/tests/CIs, likelihood/objective, N, df and predictions. Use
+explicit absolute-plus-relative tolerances, and investigate unstable references.
+Check small explicit-dummy fits and analytic objectives/information separately.
+
+Fixtures cover multiple seeds, rare events, missing/zero/tiny weights, successive
+weight changes, offsets, factors, interactions, varying slopes, composite FEs,
+singleton chains, separation, collinearity and disconnected FE graphs. Include
+row permutation, FE relabeling, unit changes and independent weight-rescaling
+checks. Test forced solver fallbacks and cleanup after failed fits.
+
+Run shared fixtures on DuckDB and native Databricks, plus the existing OLS/IV
+suite. Native skip or missing credentials is not a successful backend check.
+Large release checks measure client RSS, transfer size, database memory/storage,
+query count, prediction output and repeated-call resource growth. Respect the
+existing compact FE-transfer follow-up in TODO.md; performance evidence must
+identify source revisions, input generators and actual completed fits.
+
+Decisions for the next increment (design, not implemented API)
+------------------------------------------------------------
+Follow dbreg's existing implementation, naming and resource conventions. Use
+fixest to resolve user-facing compatibility questions when dbreg has no existing
+contract; do not copy fixest's internal object structure or numerical engine.
+The executable numerical reference remains installed fixest 0.14.0. The adjacent
+fixest source checkout can be newer, so identify its revision separately.
+
+Entry points: add dbreg::feols(fml, data, ...) and dbreg::feglm(fml, data, ...).
+Keep native dbreg()/dbglm() defaults and argument order. Database binding uses
+the existing named conn/table/path arguments, with data optional for that form.
+Require exactly one adapter data source, rather than silently picking among
+conflicting bindings. Explicit namespace use avoids masking ambiguity.
+
+Adapters accept weights/offsets as a column name or one-sided column formula.
+For in-memory data only, numeric vectors align to original input positions
+before any filtering and must have exactly nrow(data) elements. Database inputs
+require columns; externally prepared vectors must be joined by explicit keys
+by the caller. Never attach a vector using database fetch order. Start subset
+support with logical in-memory vectors and documented SQL-compatible forms;
+reject other expressions until their semantics are implemented and tested.
+
+Use fixest's response prediction default in adapters. Resolve supported family
+strings through the existing built-in family validator: "binomial" means logit,
+"poisson" means log, and cloglog/probit require an explicit binomial family.
+The fixest-shaped feglm default is Gaussian identity and must route through the
+OLS compatibility engine with reference-checked extraction/inference. Until
+that route exists, reject it explicitly; do not substitute binomial cloglog.
+
+Register real extraction methods, including fixest's se/coeftable generics when
+available, without a fixest class or an Imports dependency. At each increment,
+publish a support table covering fitting AND methods; unsupported post-fit
+arguments must error, including cluster/ssc requests in lean objects. Default
+and explicitly aligned statistical policies need distinct reference fixtures.
+
+Internal state is a versioned list named fitted_state shared by OLS and GLM.
+Keep mathematical state as values; use a separate resource environment only
+for connection/table ownership and explicit release. Proposed list sections:
+
+  specification: original formula, fitted model_spec, public/internal names,
+    retained/dropped basis, factor sources/levels/references, intercept, offset,
+    FE component columns and varying-slope coding.
+  coefficients: slopes, centers, learned FE coefficients and solver-specific
+    normalization corrections. Store an estimability representation as well as
+    coefficients; known marginal levels alone do not identify new combinations.
+  sample: original/eligible/retained counts, validated typed key columns,
+    in-memory input positions when applicable, exclusions and immutable keys.
+  inference: bread and the immutable fitted rows/score inputs required for
+    supported post-fit covariance. Store original weight units and the fitting
+    scale separately. New cluster data require a validated one-to-one key map.
+  resources: backend, owned relations, connection ownership, release status,
+    storage schema version, and advertised portable/live capabilities.
+
+Retain current compact native defaults. The adapter default retains the state
+needed by its advertised methods; a lean adapter deliberately discards state
+and errors for methods that require it. Do not add retained database resources
+to the current native default as an accidental side effect of adapters.
+
+In-memory input gets an original-position key before filtering. A database
+caller supplies nonmissing unique row_id columns (including composite/integer64
+keys) whenever stable external alignment is required. An internally generated
+key is valid only inside its owned materialized snapshot, never as a reusable
+identity on the source relation. Database prediction returns caller keys; an
+unkeyed output may only promise identity inside its own materialized output.
+
+Materialize inference/sample state before releasing fit-owned relations. Copy
+only required columns, and never retain a source query that changes with later
+writes. Bounded FE dictionaries may live in R; exceeding a declared transfer
+budget selects owned database dictionaries, never an unbounded fetch. Retained
+state must use typed source keys, not only temporary dense ranks.
+
+Portable dictionaries support newdata prediction after disconnect/saveRDS.
+Database-backed state requires its live owning session until an explicit export
+is implemented. A disconnected or deserialized invalid handle must error before
+SQL execution; it cannot silently refit or reread the original source. Release
+is idempotent and affects only that model's owned relations; caller connections
+and explicit sample/prediction exports remain caller-owned. Unsupported export/
+reopen operations remain explicit errors until backed by tested storage logic.
+
+First fitted-state slice: preserve/reconstruct learned GLM effects on both
+moment and SQL projection paths and verify their sum against the fitted predictor.
+Then add typed dictionaries, sample snapshots and lifecycle tests before exposing
+prediction/post-fit covariance. Reuse the same state schema for OLS recovery;
+do not ship a GLM-only public persistence interface that OLS cannot adopt.

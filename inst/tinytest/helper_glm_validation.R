@@ -1,10 +1,21 @@
 # Shared native/local validation plumbing. Only synthetic rows enter a backend.
 dbglm_validation_connection = function(live = FALSE) {
   if (!live) return(DBI::dbConnect(duckdb::duckdb(config = list(temp_directory = "", threads = "2"))))
+  timeout = getOption("dbreg.test_statement_timeout", 300L)
+  if (!is.numeric(timeout) || length(timeout) != 1L || !is.finite(timeout) ||
+    timeout < 1 || timeout > 172800 || timeout != floor(timeout)) {
+    stop("Native test statement timeout must be an integer from 1 to 172800 seconds.", call. = FALSE)
+  }
   conn = DBI::dbConnect(odbc::databricks(),
     driver = Sys.getenv("DATABRICKS_ODBC_DRIVER", "/opt/databricks/databricksodbc/lib/64/libdatabricksodbc64.so"),
     httpPath = Sys.getenv("DATABRICKS_SQL_PATH"), useNativeQuery = TRUE, DefaultStringColumnLength = 65536)
+  ready = FALSE
+  on.exit(if (!ready) DBI::dbDisconnect(conn))
   DBI::dbExecute(conn, "SET use_cached_result=false")
+  # Bound native execution on the server, including calls that block in ODBC.
+  # https://docs.databricks.com/aws/en/sql/language-manual/parameters/statement_timeout
+  DBI::dbExecute(conn, paste("SET STATEMENT_TIMEOUT =", sprintf("%.0f", timeout)))
+  ready = TRUE
   conn
 }
 

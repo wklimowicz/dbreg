@@ -6,9 +6,16 @@
 NULL
 
 #' @rdname dbglm-methods
+#' @param type For `logLik`, `"fixest"` reports the likelihood using the
+#'   `fixest::feglm()` convention (the default); `"weighted"` returns the
+#'   objective with unrounded observation weights. These differ for fractional
+#'   binomial weights. For `predict`, `"link"` returns the linear predictor and
+#'   `"response"` returns the response mean.
 #' @export
-logLik.dbglm = function(object, ...) {
-  structure(object[["loglik"]], class = "logLik", df = if (isFALSE(object[["finite_mle"]])) NA_integer_ else object[["n_params_model"]],
+logLik.dbglm = function(object, type = c("fixest", "weighted"), ...) {
+  type = match.arg(type)
+  value = if (type == "weighted" && !is.null(object[["weighted_loglik"]])) object[["weighted_loglik"]] else object[["loglik"]]
+  structure(value, class = "logLik", df = if (isFALSE(object[["finite_mle"]])) NA_integer_ else object[["n_params_model"]],
     nobs = object[["nobs_orig"]], finite_mle = object[["finite_mle"]])
 }
 
@@ -40,8 +47,6 @@ confint.dbglm = function(object, parm, level = 0.95, ...) {
 
 #' @rdname dbglm-methods
 #' @param newdata Data frame containing regressors and any fitted offset column.
-#' @param type Predict the linear predictor (`"link"`) or response mean
-#'   (`"response"`): a probability for binomial models or expected count for Poisson.
 #' @export
 predict.dbglm = function(object, newdata, type = c("link", "response"), ...) {
   type = match.arg(type)

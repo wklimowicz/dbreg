@@ -1,0 +1,22 @@
+ℹ Loading dbreg
+Failed to connect to system scope bus via local transport: Operation not permitted (consider using --machine=<user>@.host --user to connect to bus of other user)
+Warning message:
+In system("timedatectl", intern = TRUE) :
+  running command 'timedatectl' had status 1
+
+test_glm_fractional.R.........    0 tests
+test_glm_fractional.R.........    0 tests
+test_glm_fractional.R.........    0 tests    The variable 'z' has been removed because of collinearity (see $collin.var).
+The variable 'z' has been removed because of collinearity (see $collin.var).
+The variable 'z' has been removed because of collinearity (see $collin.var).
+The variable 'z' has been removed because of collinearity (see $collin.var).
+The variable 'z' has been removed because of collinearity (see $collin.var).
+The variable 'z' has been removed because of collinearity (see $collin.var).
+
+test_glm_fractional.R.........  710 tests OK 23.4s
+
+File                    Results fails passes
+  test_glm_fractional.R     710     0    710
+  Total                     710     0    710
+   mode assertions failures elapsed_seconds error
+1 local        710        0         23.4326

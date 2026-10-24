@@ -12,7 +12,7 @@
 \alias{print.dbglm}
 \title{Methods for database binomial and Poisson GLMs}
 \usage{
-\method{logLik}{dbglm}(object, ...)
+\method{logLik}{dbglm}(object, type = c("fixest", "weighted"), ...)
 
 \method{nobs}{dbglm}(object, ...)
 
@@ -31,6 +31,12 @@
 \arguments{
 \item{object, x}{A `dbglm` model.}
 
+\item{type}{For `logLik`, `"fixest"` reports the likelihood using the
+`fixest::feglm()` convention (the default); `"weighted"` returns the
+objective with unrounded observation weights. These differ for fractional
+binomial weights. For `predict`, `"link"` returns the linear predictor and
+`"response"` returns the response mean.}
+
 \item{...}{Additional method arguments. New-row prediction with absorbed effects is not supported.}
 
 \item{parm}{Coefficient names or positions, defaulting to all coefficients.}
@@ -38,9 +44,6 @@
 \item{level}{Confidence level.}
 
 \item{newdata}{Data frame containing regressors and any fitted offset column.}
-
-\item{type}{Predict the linear predictor (`"link"`) or response mean
-(`"response"`): a probability for binomial models or expected count for Poisson.}
 
 \item{conf.int}{Include confidence intervals?}
 

@@ -28,6 +28,21 @@ dbglm_family = function(family) {
 
 dbglm_number = function(x) sprintf("%.17g", x)
 
+# R's binomial family$aic uses dbinom(round(w*y), round(w), mu). With a
+# binary outcome this reduces to round(w) times the Bernoulli log density.
+# SQL ROUND commonly rounds halves away from zero, so implement R's ties to
+# even explicitly. Weights here are finite and strictly positive. This is a
+# reporting convention only: never use the rounded values in IRLS or scores.
+dbglm_binomial_loglik = function(conn, working, weight_scale = 1) {
+  a = paste0("(__dbglm_a*(", dbglm_number(weight_scale), "))")
+  rounded = paste0("(CASE WHEN ", a, "-FLOOR(", a, ")<0.5 THEN FLOOR(", a, ") ",
+    "WHEN ", a, "-FLOOR(", a, ")>0.5 THEN CEIL(", a, ") ",
+    "WHEN MOD(FLOOR(", a, "),2.0)=0 THEN FLOOR(", a, ") ELSE CEIL(", a, ") END)")
+  term = paste0(rounded, "*(CASE WHEN __dbglm_y=1 THEN LN(mu) ELSE LN(1.0-mu) END)")
+  as.numeric(dbglm_get_query(conn, paste0("SELECT ", dbglm_exact_sum(conn, term),
+    " AS ll FROM ", working))[["ll"]])
+}
+
 # Standard normal CDF using the Hart rational coefficients, evaluated in SQL
 # with Horner polynomials and a continued-fraction tail. The scalar result is
 # checked against R's pnorm in the numerical tests, including the joins/tails.

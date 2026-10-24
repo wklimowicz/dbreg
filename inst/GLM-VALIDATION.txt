@@ -122,6 +122,15 @@ Missing configuration, any failed assertion or a zero-assertion suite fails
 the run. Results include per-suite RDS files, a CSV summary and environment
 metadata. Native temporary-table inventories use SHOW TABLES because ODBC's
 dbListTables may omit session tables.
+Shared validation connections set a five-minute session STATEMENT_TIMEOUT;
+options(dbreg.test_statement_timeout = 600L) can override it for an explicitly
+slower validation run (allowed range: 1 through 172800 seconds). This changes
+only test-owned sessions, not callers' production connections or warehouse
+configuration. Connection setup failures release the newly opened connection.
+The native runner also records source checksums and the fixest version. Pass
+an output directory followed by known suite filenames to run a focused subset:
+
+  Rscript .github/scripts/run-databricks-tests.R OUTPUT test_glm_fractional_live.R
 
 Continuous integration
 ----------------------
@@ -148,8 +157,60 @@ Driver download and archive:
 https://docs.databricks.com/aws/en/integrations/odbc/download
 https://www.databricks.com/spark/odbc-drivers-archive
 
-Public API limits remain explicit: original GLM weights are integer
-frequencies; grouped binomial responses, multiway clustering and prediction
+Public API limits remain explicit: grouped binomial responses, multiway clustering and prediction
 with absorbed FEs are not supported. Failed numerical convergence withholds
 ordinary inference. A successful numerical fit alone is not a general proof
 that a finite MLE exists under every possible separation configuration.
+
+Fractional observation weights
+------------------------------
+test_glm_fractional.R and test_glm_fractional_live.R share the same synthetic
+fixtures. They compare all four supported families, with/without absorbed FEs,
+offsets, IID/HC1/cluster covariance, missing and zero weights, posterior-like
+weights, half-integer ties and tiny positive weights against fixest. They check
+exact retained IDs, complete covariance, model/covariance parameter counts,
+likelihood reporting and the independently calculated unrounded objective.
+Repeated fits change weight columns and replace values in the same named source
+column, checking earlier objects remain unchanged. A deterministic cycle fixture
+loses/restores regressor identification and FE levels through weight-dependent
+recursive exclusions; retained IDs and full covariance match fixest at every
+stage. Tiny-weight sandwich checks include absorbed and unabsorbed fits. Forced
+SQL projection exercises the fallback path. Native progress names and times each
+fit phase, with IRLS progress enabled for the expensive SQL fallback.
+The native runner includes the new suite. Execution results must be recorded
+separately from the presence of test code.
+
+For fractional binomial weights, logLik(model) follows fixest/R's rounded-weight
+binomial AIC convention. logLik(model,type="weighted") exposes the unrounded
+weighted Bernoulli objective. Rounding never enters fitting or covariance.
+
+Reproduce a local, full local, or focused native run with durable RDS results,
+per-run source checksums, assertion summaries and environment metadata:
+
+  Rscript _benchmarks/check_glm_fractional.R local OUTPUT
+  Rscript _benchmarks/check_glm_fractional.R full OUTPUT
+  Rscript _benchmarks/check_glm_fractional.R native OUTPUT
+
+Redirect stdout/stderr to a log alongside those artifacts when running it.
+
+Completed fractional-weight checkpoint, 2026-10-24
+------------------------------------------------
+R 4.6.0, installed fixest 0.14.0, DuckDB 1.5.2 and tinytest 1.4.3:
+  local fractional suite: 710 assertions, zero failures;
+  full local suite at this checkpoint: 3,549 assertions, zero failures;
+  actual native Databricks fractional suite: 710 assertions, zero failures.
+The native suite took about 44 minutes, including all four forced SQL fallback
+families, absorbed/unabsorbed tiny-weight fits and changing source values.
+Native skips or partial progress are not included in these completed totals.
+R CMD check --no-manual --no-vignettes --no-tests completed with zero errors,
+zero warnings and one NOTE for the existing unavailable optional binsreg
+documentation cross-reference; tests were run separately. The check used
+_R_CHECK_FORCE_SUGGESTS_=false because optional packages are unavailable locally.
+
+Durable evidence: _benchmarks/fixest_fractional_20261024 contains RDS assertions,
+CSV summaries, environment metadata, source checksums, native/local logs and
+build/check output. Tinytest's native console elapsed label prints the numeric
+value of a minute-based difftime with an "s" suffix; native-summary.csv converts
+it explicitly to seconds. The source checksums match the staged fractional
+checkpoint, before the subsequent argument/compact-state follow-up. The adjacent
+fixest source checkout is v0.14.2 (789f888); numerical tests used installed 0.14.0.

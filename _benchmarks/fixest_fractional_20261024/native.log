@@ -1,0 +1,237 @@
+ℹ Loading dbreg
+[Fractional weights] starting binomial cloglog y ~ x + z "iid" reference
+[Fractional weights] binomial cloglog y ~ x + z "iid" reference: 0.15s
+[Fractional weights] starting binomial cloglog y ~ x + z "iid" dbglm
+[Fractional weights] binomial cloglog y ~ x + z "iid" dbglm: 18.59s
+[Fractional weights] starting binomial cloglog y ~ x + z "hc1" reference
+[Fractional weights] binomial cloglog y ~ x + z "hc1" reference: 0.06s
+[Fractional weights] starting binomial cloglog y ~ x + z "hc1" dbglm
+[Fractional weights] binomial cloglog y ~ x + z "hc1" dbglm: 15.8s
+[Fractional weights] starting binomial cloglog y ~ x + z ~cl reference
+[Fractional weights] binomial cloglog y ~ x + z ~cl reference: 0.04s
+[Fractional weights] starting binomial cloglog y ~ x + z ~cl dbglm
+[Fractional weights] binomial cloglog y ~ x + z ~cl dbglm: 14.94s
+[Fractional weights] starting binomial cloglog y ~ x + z | g + h "iid" reference
+[Fractional weights] binomial cloglog y ~ x + z | g + h "iid" reference: 0.09s
+[Fractional weights] starting binomial cloglog y ~ x + z | g + h "iid" dbglm
+[Fractional weights] binomial cloglog y ~ x + z | g + h "iid" dbglm: 35.62s
+[Fractional weights] starting binomial cloglog y ~ x + z | g + h "hc1" reference
+[Fractional weights] binomial cloglog y ~ x + z | g + h "hc1" reference: 0.11s
+[Fractional weights] starting binomial cloglog y ~ x + z | g + h "hc1" dbglm
+[Fractional weights] binomial cloglog y ~ x + z | g + h "hc1" dbglm: 33.9s
+[Fractional weights] starting binomial cloglog y ~ x + z | g + h ~cl reference
+[Fractional weights] binomial cloglog y ~ x + z | g + h ~cl reference: 0.1s
+[Fractional weights] starting binomial cloglog y ~ x + z | g + h ~cl dbglm
+[Fractional weights] binomial cloglog y ~ x + z | g + h ~cl dbglm: 35.8s
+[Fractional weights] starting repeated weights: first fit
+[Fractional weights] repeated weights: first fit: 26.77s
+[Fractional weights] starting repeated weights: changed column
+[Fractional weights] repeated weights: changed column: 18.84s
+[Fractional weights] starting repeated weights: restored column
+[Fractional weights] repeated weights: restored column: 26.18s
+[Fractional weights] starting forced SQL projection
+[dbglm] iteration 1: deviance=983.814378, score=0.754
+[dbglm] iteration 2: deviance=980.285781, score=0.222
+[dbglm] iteration 3: deviance=980.162695, score=0.0459
+[dbglm] iteration 4: deviance=980.156091, score=0.0179
+[dbglm] iteration 5: deviance=980.155501, score=0.00525
+[dbglm] iteration 6: deviance=980.155432, score=0.00204
+[dbglm] iteration 7: deviance=980.155423, score=0.000682
+[dbglm] iteration 8: deviance=980.155422, score=0.000263
+[dbglm] iteration 9: deviance=980.155422, score=9.44e-05
+[dbglm] iteration 10: deviance=980.155422, score=3.51e-05
+[dbglm] iteration 11: deviance=980.155422, score=1.28e-05
+[dbglm] iteration 12: deviance=980.155422, score=4.73e-06
+[dbglm] iteration 13: deviance=980.155422, score=1.73e-06
+[dbglm] iteration 14: deviance=980.155422, score=6.38e-07
+[dbglm] iteration 15: deviance=980.155422, score=2.34e-07
+[dbglm] iteration 16: deviance=980.155422, score=8.6e-08
+[dbglm] iteration 17: deviance=980.155422, score=3.16e-08
+[dbglm] iteration 18: deviance=980.155422, score=1.16e-08
+[dbglm] iteration 19: deviance=980.155422, score=4.27e-09
+[Fractional weights] forced SQL projection: 463.54s
+[Fractional weights] starting binomial logit y ~ x + z "iid" reference
+[Fractional weights] binomial logit y ~ x + z "iid" reference: 0.03s
+[Fractional weights] starting binomial logit y ~ x + z "iid" dbglm
+[Fractional weights] binomial logit y ~ x + z "iid" dbglm: 8.91s
+[Fractional weights] starting binomial logit y ~ x + z "hc1" reference
+[Fractional weights] binomial logit y ~ x + z "hc1" reference: 0.03s
+[Fractional weights] starting binomial logit y ~ x + z "hc1" dbglm
+[Fractional weights] binomial logit y ~ x + z "hc1" dbglm: 9.34s
+[Fractional weights] starting binomial logit y ~ x + z ~cl reference
+[Fractional weights] binomial logit y ~ x + z ~cl reference: 0.04s
+[Fractional weights] starting binomial logit y ~ x + z ~cl dbglm
+[Fractional weights] binomial logit y ~ x + z ~cl dbglm: 10.29s
+[Fractional weights] starting binomial logit y ~ x + z | g + h "iid" reference
+[Fractional weights] binomial logit y ~ x + z | g + h "iid" reference: 0.05s
+[Fractional weights] starting binomial logit y ~ x + z | g + h "iid" dbglm
+[Fractional weights] binomial logit y ~ x + z | g + h "iid" dbglm: 15.3s
+[Fractional weights] starting binomial logit y ~ x + z | g + h "hc1" reference
+[Fractional weights] binomial logit y ~ x + z | g + h "hc1" reference: 0.04s
+[Fractional weights] starting binomial logit y ~ x + z | g + h "hc1" dbglm
+[Fractional weights] binomial logit y ~ x + z | g + h "hc1" dbglm: 16.49s
+[Fractional weights] starting binomial logit y ~ x + z | g + h ~cl reference
+[Fractional weights] binomial logit y ~ x + z | g + h ~cl reference: 0.05s
+[Fractional weights] starting binomial logit y ~ x + z | g + h ~cl dbglm
+[Fractional weights] binomial logit y ~ x + z | g + h ~cl dbglm: 15.51s
+[Fractional weights] starting repeated weights: first fit
+[Fractional weights] repeated weights: first fit: 11.65s
+[Fractional weights] starting repeated weights: changed column
+[Fractional weights] repeated weights: changed column: 10.95s
+[Fractional weights] starting repeated weights: restored column
+[Fractional weights] repeated weights: restored column: 11.35s
+[Fractional weights] starting forced SQL projection
+[dbglm] iteration 1: deviance=1006.8697, score=0.442
+[dbglm] iteration 2: deviance=1006.18821, score=0.016
+[dbglm] iteration 3: deviance=1006.18759, score=2.15e-05
+[dbglm] iteration 4: deviance=1006.18759, score=3.65e-11
+[Fractional weights] forced SQL projection: 128.46s
+[Fractional weights] starting binomial probit y ~ x + z "iid" reference
+[Fractional weights] binomial probit y ~ x + z "iid" reference: 0.04s
+[Fractional weights] starting binomial probit y ~ x + z "iid" dbglm
+[Fractional weights] binomial probit y ~ x + z "iid" dbglm: 10.18s
+[Fractional weights] starting binomial probit y ~ x + z "hc1" reference
+[Fractional weights] binomial probit y ~ x + z "hc1" reference: 0.04s
+[Fractional weights] starting binomial probit y ~ x + z "hc1" dbglm
+[Fractional weights] binomial probit y ~ x + z "hc1" dbglm: 10.49s
+[Fractional weights] starting binomial probit y ~ x + z ~cl reference
+[Fractional weights] binomial probit y ~ x + z ~cl reference: 0.04s
+[Fractional weights] starting binomial probit y ~ x + z ~cl dbglm
+[Fractional weights] binomial probit y ~ x + z ~cl dbglm: 10.05s
+[Fractional weights] starting binomial probit y ~ x + z | g + h "iid" reference
+[Fractional weights] binomial probit y ~ x + z | g + h "iid" reference: 0.06s
+[Fractional weights] starting binomial probit y ~ x + z | g + h "iid" dbglm
+[Fractional weights] binomial probit y ~ x + z | g + h "iid" dbglm: 19.53s
+[Fractional weights] starting binomial probit y ~ x + z | g + h "hc1" reference
+[Fractional weights] binomial probit y ~ x + z | g + h "hc1" reference: 0.04s
+[Fractional weights] starting binomial probit y ~ x + z | g + h "hc1" dbglm
+[Fractional weights] binomial probit y ~ x + z | g + h "hc1" dbglm: 19.29s
+[Fractional weights] starting binomial probit y ~ x + z | g + h ~cl reference
+[Fractional weights] binomial probit y ~ x + z | g + h ~cl reference: 0.05s
+[Fractional weights] starting binomial probit y ~ x + z | g + h ~cl dbglm
+[Fractional weights] binomial probit y ~ x + z | g + h ~cl dbglm: 18.75s
+[Fractional weights] starting repeated weights: first fit
+[Fractional weights] repeated weights: first fit: 14.73s
+[Fractional weights] starting repeated weights: changed column
+[Fractional weights] repeated weights: changed column: 15s
+[Fractional weights] starting repeated weights: restored column
+[Fractional weights] repeated weights: restored column: 15.74s
+[Fractional weights] starting forced SQL projection
+[dbglm] iteration 1: deviance=936.951151, score=1.55
+[dbglm] iteration 2: deviance=932.548496, score=0.294
+[dbglm] iteration 3: deviance=932.442124, score=0.0144
+[dbglm] iteration 4: deviance=932.441715, score=0.000616
+[dbglm] iteration 5: deviance=932.441714, score=2.31e-05
+[dbglm] iteration 6: deviance=932.441714, score=1.67e-06
+[dbglm] iteration 7: deviance=932.441714, score=1.04e-07
+[dbglm] iteration 8: deviance=932.441714, score=8.81e-09
+[Fractional weights] forced SQL projection: 200.56s
+[Fractional weights] starting poisson log y ~ x + z "iid" reference
+[Fractional weights] poisson log y ~ x + z "iid" reference: 0.08s
+[Fractional weights] starting poisson log y ~ x + z "iid" dbglm
+[Fractional weights] poisson log y ~ x + z "iid" dbglm: 10.26s
+[Fractional weights] starting poisson log y ~ x + z "hc1" reference
+[Fractional weights] poisson log y ~ x + z "hc1" reference: 0.05s
+[Fractional weights] starting poisson log y ~ x + z "hc1" dbglm
+[Fractional weights] poisson log y ~ x + z "hc1" dbglm: 10.57s
+[Fractional weights] starting poisson log y ~ x + z ~cl reference
+[Fractional weights] poisson log y ~ x + z ~cl reference: 0.03s
+[Fractional weights] starting poisson log y ~ x + z ~cl dbglm
+[Fractional weights] poisson log y ~ x + z ~cl dbglm: 10.21s
+[Fractional weights] starting poisson log y ~ x + z | g + h "iid" reference
+[Fractional weights] poisson log y ~ x + z | g + h "iid" reference: 0.04s
+[Fractional weights] starting poisson log y ~ x + z | g + h "iid" dbglm
+[Fractional weights] poisson log y ~ x + z | g + h "iid" dbglm: 14.31s
+[Fractional weights] starting poisson log y ~ x + z | g + h "hc1" reference
+[Fractional weights] poisson log y ~ x + z | g + h "hc1" reference: 0.05s
+[Fractional weights] starting poisson log y ~ x + z | g + h "hc1" dbglm
+[Fractional weights] poisson log y ~ x + z | g + h "hc1" dbglm: 15.27s
+[Fractional weights] starting poisson log y ~ x + z | g + h ~cl reference
+[Fractional weights] poisson log y ~ x + z | g + h ~cl reference: 0.05s
+[Fractional weights] starting poisson log y ~ x + z | g + h ~cl dbglm
+[Fractional weights] poisson log y ~ x + z | g + h ~cl dbglm: 15.58s
+[Fractional weights] starting repeated weights: first fit
+[Fractional weights] repeated weights: first fit: 11.57s
+[Fractional weights] starting repeated weights: changed column
+[Fractional weights] repeated weights: changed column: 10.68s
+[Fractional weights] starting repeated weights: restored column
+[Fractional weights] repeated weights: restored column: 11.27s
+[Fractional weights] starting forced SQL projection
+[dbglm] iteration 1: deviance=839.944825, score=1.22
+[dbglm] iteration 2: deviance=834.283732, score=0.0809
+[dbglm] iteration 3: deviance=834.26473, score=0.000395
+[dbglm] iteration 4: deviance=834.26473, score=1.42e-08
+[dbglm] iteration 5: deviance=834.26473, score=2.13e-14
+[Fractional weights] forced SQL projection: 139.75s
+[Fractional weights] starting binomial cloglog y ~ x unit scale
+[Fractional weights] binomial cloglog y ~ x unit scale: 5.94s
+[Fractional weights] starting binomial cloglog y ~ x tiny scale
+[Fractional weights] binomial cloglog y ~ x tiny scale: 6.11s
+[Fractional weights] starting binomial cloglog y ~ x | g unit scale
+[Fractional weights] binomial cloglog y ~ x | g unit scale: 61.13s
+[Fractional weights] starting binomial cloglog y ~ x | g tiny scale
+[Fractional weights] binomial cloglog y ~ x | g tiny scale: 62.51s
+[Fractional weights] starting binomial logit y ~ x unit scale
+[Fractional weights] binomial logit y ~ x unit scale: 6.25s
+[Fractional weights] starting binomial logit y ~ x tiny scale
+[Fractional weights] binomial logit y ~ x tiny scale: 6.19s
+[Fractional weights] starting binomial logit y ~ x | g unit scale
+[Fractional weights] binomial logit y ~ x | g unit scale: 61.52s
+[Fractional weights] starting binomial logit y ~ x | g tiny scale
+[Fractional weights] binomial logit y ~ x | g tiny scale: 60.1s
+[Fractional weights] starting binomial probit y ~ x unit scale
+[Fractional weights] binomial probit y ~ x unit scale: 6.62s
+[Fractional weights] starting binomial probit y ~ x tiny scale
+[Fractional weights] binomial probit y ~ x tiny scale: 6.91s
+[Fractional weights] starting binomial probit y ~ x | g unit scale
+[Fractional weights] binomial probit y ~ x | g unit scale: 59.83s
+[Fractional weights] starting binomial probit y ~ x | g tiny scale
+[Fractional weights] binomial probit y ~ x | g tiny scale: 63.68s
+[Fractional weights] starting poisson log y ~ x unit scale
+[Fractional weights] poisson log y ~ x unit scale: 6.8s
+[Fractional weights] starting poisson log y ~ x tiny scale
+[Fractional weights] poisson log y ~ x tiny scale: 6.95s
+[Fractional weights] starting poisson log y ~ x | g unit scale
+[Fractional weights] poisson log y ~ x | g unit scale: 68.31s
+[Fractional weights] starting poisson log y ~ x | g tiny scale
+[Fractional weights] poisson log y ~ x | g tiny scale: 69.87s
+[Fractional weights] starting sandwich scale y ~ x "hc1" unit
+[Fractional weights] sandwich scale y ~ x "hc1" unit: 6.63s
+[Fractional weights] starting sandwich scale y ~ x "hc1" tiny
+[Fractional weights] sandwich scale y ~ x "hc1" tiny: 6.61s
+[Fractional weights] starting sandwich scale y ~ x ~cl unit
+[Fractional weights] sandwich scale y ~ x ~cl unit: 6.3s
+[Fractional weights] starting sandwich scale y ~ x ~cl tiny
+[Fractional weights] sandwich scale y ~ x ~cl tiny: 6.76s
+[Fractional weights] starting sandwich scale y ~ x | g "hc1" unit
+[Fractional weights] sandwich scale y ~ x | g "hc1" unit: 60.9s
+[Fractional weights] starting sandwich scale y ~ x | g "hc1" tiny
+[Fractional weights] sandwich scale y ~ x | g "hc1" tiny: 59.49s
+[Fractional weights] starting sandwich scale y ~ x | g ~cl unit
+[Fractional weights] sandwich scale y ~ x | g ~cl unit: 61.55s
+[Fractional weights] starting sandwich scale y ~ x | g ~cl tiny
+[Fractional weights] sandwich scale y ~ x | g ~cl tiny: 59.72s
+[Fractional weights] starting source mutation binomial full
+[Fractional weights] source mutation binomial full: 27.59s
+The variable 'z' has been removed because of collinearity (see $collin.var).
+The variable 'z' has been removed because of collinearity (see $collin.var).
+The variable 'z' has been removed because of collinearity (see $collin.var).
+[Fractional weights] starting source mutation binomial pruned
+[Fractional weights] source mutation binomial pruned: 35.79s
+[Fractional weights] starting source mutation binomial full
+[Fractional weights] source mutation binomial full: 26.41s
+[Fractional weights] starting source mutation poisson full
+[Fractional weights] source mutation poisson full: 14.57s
+The variable 'z' has been removed because of collinearity (see $collin.var).
+The variable 'z' has been removed because of collinearity (see $collin.var).
+The variable 'z' has been removed because of collinearity (see $collin.var).
+[Fractional weights] starting source mutation poisson pruned
+[Fractional weights] source mutation poisson pruned: 38.62s
+[Fractional weights] starting source mutation poisson full
+[Fractional weights] source mutation poisson full: 14.63s
+
+test_glm_fractional_live.R....  710 tests OK 43.8s
+
+File                         Results fails passes
+  test_glm_fractional_live.R     710     0    710
+  Total                          710     0    710

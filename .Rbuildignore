@@ -16,4 +16,5 @@ README.qmd
 ^Makefile$
 ^CLAUDE\.md$
 ^TODO\.md$
+^FIXEST-COMPATIBILITY-PLAN\.md$
 ^.claude

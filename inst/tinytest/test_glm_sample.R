@@ -50,7 +50,8 @@ expect_equal(coef(m),coef(r),tolerance=1e-7)
 expect_equal(predict(m,clean[1,],type="response"),unname(predict(r,clean[1,],type="response")),tolerance=1e-7)
 expect_equal(as.numeric(m$model_spec$factor_levels[[1]]),c(1,2,10,20))
 expect_error(predict(m,transform(clean[1,],code=99)),"unseen")
-expect_error(dbglm(y~x,conn=cs,data=transform(clean,a=.5),weights="a"),"integer")
+expect_equal(coef(dbglm(y~x,conn=cs,data=transform(clean,a=.5),weights="a")),
+             coef(dbglm(y~x,conn=cs,data=clean)),tolerance=1e-7)
 expect_equal(length(dbListTables(cs)),0L)
 # Wrapper calls stay compact even if do.call supplies literal rows/connections.
 big <- data.frame(x=seq(-2,2,length.out=2000),y=rep(c(0,1),1000),

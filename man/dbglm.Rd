@@ -41,8 +41,10 @@ disabled. Caller connections retain their settings and remain open.}
 `binomial("probit")`, or `poisson("log")`. Poisson responses must be
 nonnegative integer counts; binomial responses must be zero or one.}
 
-\item{weights}{Optional column of nonnegative integer frequency weights.
-Zero weights are omitted. Fractional original weights are not yet supported.}
+\item{weights}{Optional column of nonnegative observation weights, including
+fractional weights. Zero weights are omitted. Weights multiply each row's
+log likelihood and score; observation counts are counts of retained rows,
+not sums of weights. See the likelihood conventions below.}
 
 \item{offset}{Optional numeric column entering the predictor with coefficient one.}
 
@@ -94,8 +96,20 @@ Missing/nonfinite model values and zero weights are omitted. Model
   error rather than returning ordinary successful inference. These checks
   do not constitute a complete general separation detector. Absorbed fits
   support coefficients and inference; new-row prediction with absorbed effects
-  is not yet implemented. Grouped binomial responses, fractional original
-  weights and categorical no-intercept models remain unsupported.
+  is not yet implemented. Grouped binomial responses and categorical
+  no-intercept models remain unsupported.
+  For binomial models, [logLik()] follows the `fixest::feglm()` / R binomial
+  AIC convention: original weights are rounded to integers (ties to even)
+  when reporting the likelihood. Fitting, deviance and covariance always use
+  the unrounded weights. Use `logLik(model, type = "weighted")` for the
+  weighted Bernoulli objective actually optimized. For Poisson models and
+  integer-weight binomial models the two likelihoods coincide.
+  If all retained weights are below one, fitting rescales them by a power
+  of two to avoid premature convergence and loss of precision for very small
+  weights. The divisor is recorded in `weight_scale`. Likelihood, deviance
+  and IID covariance are returned on the original weight scale; sandwich
+  covariances are invariant to this rescaling. Score diagnostics use the
+  internal scale.
   With absorbed effects, expanded regressor columns are centered internally
   before forming projection moments. Their slopes, units and covariance are
   unchanged; the retained column centers are recorded in `design_center`.

@@ -1,0 +1,22 @@
+Fractional-weight checkpoint, 2026-10-24
+
+Local fractional suite: 710 assertions, 0 failures.
+Full local suite: 3,549 assertions, 0 failures.
+Native Databricks fractional suite: 710 assertions, 0 failures.
+Native wall time: about 44 minutes; native-summary.csv reports seconds.
+The tinytest console label incorrectly appends s to a minute-based difftime.
+
+Numerical reference: installed fixest 0.14.0, independently refined from its
+own estimates. Adjacent API source reference: fixest v0.14.2, 789f888.
+Environment and source identity are in local-environment.txt and *-source-md5.csv.
+All 109 recorded source files matched the staged fractional checkpoint before
+the argument/compact-formula follow-up. Local and native use the same helpers.
+
+Build and check completed with 0 errors, 0 warnings and the existing binsreg
+cross-reference NOTE. Check command: _R_CHECK_FORCE_SUGGESTS_=false R CMD check
+--no-manual --no-vignettes --no-tests; whole-package tests ran separately.
+
+RDS files preserve raw assertions. Text logs normalize carriage-return progress
+lines and trailing padding; their statistical results are unchanged.
+This is a completed fractional-weight gate, not full fixest compatibility or
+a claim that all existing native suites and large release checks were rerun.

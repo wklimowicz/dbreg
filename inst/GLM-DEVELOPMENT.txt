@@ -33,7 +33,7 @@ iterative OLS/IV fallbacks remain in R/dbreg.R and R/duckdb-ap.R.
 Flow and contracts
 ------------------
 1. dbglm() establishes resource ownership before connection/input preparation.
-   It validates source keys, outcomes and frequency weights; removes ineligible
+   It validates source keys, outcomes and nonnegative weights; removes ineligible
    observations; and applies the requested recursive FE pruning rule.
 2. The model specification expands factors/interactions to internal aliases.
    Retained FE designs are centered before projection. Structural rank and
@@ -48,8 +48,10 @@ Flow and contracts
 5. Working SQL supplies eta, mu, derivative d, weight w, response z, score and
    deviance dev. z excludes the offset; predictor reconstruction adds it back.
    Binomial links share one working-equation tail. Only their mean/derivative
-   kernels differ. Original weights are integer frequencies; IRLS weights are
-   positive doubles and must never be rounded to integers.
+   kernels differ. Original weights can be fractional; IRLS weights are positive
+   doubles. Neither is rounded during estimation. Only the reported binomial
+   logLik uses R's rounded-weight AIC convention; type="weighted" returns the
+   unrounded objective. See inst/FIXEST-COMPATIBILITY.txt.
 6. solve_partial_wls() selects a bounded FE solve or SQL projection. Its common
    diagnostics are cycles, residual and method. Depending on the strategy it
    returns projected rows, cross-product reductions, or both. Coefficients,
@@ -152,7 +154,7 @@ Use explicit coefficient, covariance, likelihood and sample tolerances. The
 fixest reference helper refines only fixest's own predictor until its output
 stabilizes, independently of dbglm. Match pruning and small-sample conventions
 when comparing packages. Passing tests does not establish support for grouped
-binomial responses, fractional original weights or absorbed-FE prediction;
+binomial responses or absorbed-FE prediction;
 those remain unsupported public API cases.
 
 See _benchmarks/GLM-INDEX.txt in the repository for performance evidence and

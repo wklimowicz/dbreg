@@ -172,9 +172,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   trend_sources = unique(unlist(normalized[["slopes"]]))
   trend_aliases = if (length(trend_sources)) stats::setNames(paste0("__dbglm_t", seq_along(trend_sources)), trend_sources) else character()
   attr(fe, "slopes") = lapply(parsed[["fe_labels"]], function(label) unname(trend_aliases[normalized[["slopes"]][[label]]]))
-  if (!is.null(row_id) && (!is.character(row_id) || !length(row_id) || anyNA(row_id) || anyDuplicated(row_id))) {
-    stop("`row_id` must name unique source key columns.", call. = FALSE)
-  }
+  validate_row_id_arg(row_id)
   if (!is.null(sample_table) && (is.null(conn) || !is.character(sample_table) || length(sample_table) != 1 || is.na(sample_table))) {
     stop("`sample_table` requires a caller connection and one new table name.", call. = FALSE)
   }
@@ -207,7 +205,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     stop("dbglm() supports native DuckDB or Databricks connections.", call. = FALSE)
   }
   if (isTRUE(backend_info[["is_databricks"]])) validate_databricks_ap_backend(backend_info)
-  if (!is.null(sample_table) && DBI::dbExistsTable(conn, sample_table)) stop("Sample export table already exists.", call. = FALSE)
+  if (!is.null(sample_table) && sample_table_exists(conn, sample_table)) stop("Sample export table already exists.", call. = FALSE)
   quote_id = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
   tables = dbglm_table_manager(conn, resources, backend_info)
   create = tables[["create"]]
@@ -218,13 +216,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   snapshot = create(paste("SELECT", paste(c(quote_id(real_vars),
     vapply(names(normalized[["factors"]]), function(a) paste(quote_id(normalized[["factors"]][[a]]), "AS", a), character(1)),
     if (isTRUE(backend_info[["is_databricks"]])) "monotonically_increasing_id() AS __dbglm_key" else "ROW_NUMBER() OVER () AS __dbglm_key"), collapse = ", "), setup[["from_statement"]]), materialize = !is.null(sample_table) && is.null(row_id))
-  if (!is.null(row_id)) {
-    dup_info = dbglm_get_query(conn, paste0("SELECT COUNT(*) AS n_groups, COALESCE(SUM(cnt), 0) AS n_total, ",
-      "COALESCE(SUM(CASE WHEN ", paste(paste0(quote_id(row_id), " IS NULL"), collapse = " OR "), " THEN cnt ELSE 0 END), 0) AS n_null ",
-      "FROM (SELECT ", paste(quote_id(row_id), collapse = ","), ", COUNT(*) AS cnt FROM ", snapshot,
-      " GROUP BY ", paste(quote_id(row_id), collapse = ","), ") t"))
-    if (dup_info[["n_null"]] > 0 || dup_info[["n_groups"]] != dup_info[["n_total"]]) stop("Source row_id must be unique and nonmissing.", call. = FALSE)
-  }
+  validate_source_row_id(conn, paste("FROM", snapshot), row_id)
   schema = dbglm_get_query(conn, paste("SELECT * FROM", snapshot, "LIMIT 0"))
   for (name in c(parsed[["yvar"]], weights, offset, unlist(normalized[["slopes"]]))) {
     if (!is.numeric(schema[[name]]) && !(name == parsed[["yvar"]] && is.logical(schema[[name]]))) {
@@ -480,8 +472,8 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     projection_iterations = fit[["ap_cycles"]], projection_residual = fit[["ap_residual"]],
     projection_method = if (!is.null(fit[["projection_method"]])) fit[["projection_method"]] else if (length(fe)) "group" else "none", call = call)
   if (!is.null(sample_table)) {
-    keys = if (length(row_id)) paste(quote_id(row_id), collapse = ",") else "__dbglm_key"
-    DBI::dbExecute(conn, paste("CREATE TEMP TABLE", quote_id(sample_table), "AS SELECT", keys, from))
+    keys = if (length(row_id)) row_id else "__dbglm_key"
+    export_retained_sample(conn, sample_table, keys, from)
   }
   class(result) = c("dbglm", "dbreg")
   result

@@ -1,0 +1,24 @@
+Observation-identity foundation, 2026-10-24
+
+Shared fixture: 59 local assertions and 59 actual native Databricks assertions,
+all passed. Native elapsed time: about 78 seconds (summary.csv reports seconds;
+the tinytest console incorrectly appends s to a minute-based difftime).
+Full local suite: 3,653 assertions in 47 nonempty files, 0 failures.
+Package check: 0 errors, 0 warnings, existing optional binsreg xref NOTE.
+Check uses _R_CHECK_FORCE_SUGGESTS_=false with --no-manual --no-vignettes
+--no-tests; tests ran separately.
+
+All recorded native and full-local source checksums matched the completed
+working tree before this checkpoint. Raw RDS assertions preserve test evidence.
+Text logs normalize carriage-return progress and trailing padding only.
+
+The fixture tests exact SQL tuple/BIGINT keys, names, sample identities across
+four OLS strategies and GLM, export protection and real snapshot immutability/
+cleanup. Native probes established scoped Delta name column mapping for session
+tables; native SHOW TABLES fixes preflight checks that ODBC metadata missed.
+Caller tables and warehouse configuration are not modified.
+
+This is a focused identity/state foundation. Learned FE dictionaries, model-owned
+retained inference state, compatibility adapters and whole native/release gates
+remain pending. Optional snapshots/key validation/export can add substantial
+database work; performance has not yet been benchmarked by these correctness tests.

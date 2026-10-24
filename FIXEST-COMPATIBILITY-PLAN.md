@@ -21,6 +21,14 @@ arguments now error; legacy aliases and shared GLM tidying remain supported.
 Saved linear formulas no longer capture caller/strategy environments. Evidence
 for that follow-up is in `_benchmarks/fixest_argument_contract_20261024/`.
 
+The observation-identity foundation now passes **59 shared assertions on each
+engine** and **3,653 full local assertions across 47 nonempty files**, with the
+same package-check result. OLS and GLM share typed key validation/export helpers;
+requested OLS exports use an owned immutable fit snapshot. Evidence is in
+`_benchmarks/sample_identity_20261024/`. Default fits do not retain these tables.
+Performance benchmarking of default fitting versus optional identity/export
+paths is next, before broader retained-state work.
+
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
 The next dependency is shared observation identity and fitted state. Use dbreg's

@@ -1,0 +1,7 @@
+ℹ Loading dbreg
+Starting native suite: test_sample_identity_live.R
+
+test_sample_identity_live.R...   59 tests OK 1.3s
+All ok, 59 results (1.3s)
+                        suite assertions failures error elapsed_seconds
+1 test_sample_identity_live.R         59        0              77.93141

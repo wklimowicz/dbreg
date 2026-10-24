@@ -1,0 +1,12 @@
+* checking for file ‘/home/wojtek/coding/R/dbreg/dbreg/DESCRIPTION’ ... OK
+* preparing ‘dbreg’:
+* checking DESCRIPTION meta-information ... OK
+* checking for LF line-endings in source and make files and shell scripts
+* checking for empty or unneeded directories
+Removed empty directory ‘dbreg/.agents’
+Removed empty directory ‘dbreg/.aws’
+Removed empty directory ‘dbreg/.codex’
+Removed empty directory ‘dbreg/SCRATCH’
+Removed empty directory ‘dbreg/_benchmarks’
+Removed empty directory ‘dbreg/vignettes’
+* building ‘dbreg_0.0.3.99.tar.gz’

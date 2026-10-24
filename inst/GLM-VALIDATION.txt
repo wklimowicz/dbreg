@@ -225,3 +225,19 @@ zero errors, zero warnings and the same optional binsreg cross-reference NOTE.
 Durable source identity and results: _benchmarks/fixest_argument_contract_20261024.
 This follow-up changes argument handling and saved formula environments; the
 native numerical fractional-weight evidence above describes its own checkpoint.
+
+Observation-identity foundation, 2026-10-24
+------------------------------------------
+Shared local/native test_sample_identity fixtures passed 59 assertions on each
+engine. Full local suite: 3,653 assertions in 47 nonempty files, zero failures.
+Package check: zero errors, zero warnings, the same optional binsreg NOTE.
+Durable source identity and results: _benchmarks/sample_identity_20261024.
+
+Coverage includes all four OLS strategies, GLM reuse, exact BIGINT values above
+2^53, composite keys, a generated-counter name collision, nonstandard names,
+sample filtering, existing-export protection, invalid keys/weights, cleanup and
+source replacement after snapshot creation. Native tests caught and resolved
+Delta's column-mapping requirement for spaces in physical column names and
+ODBC's omission of session tables from existence metadata. Column mapping is
+set on newly created owned tables only; existence checks use native SHOW TABLES.
+No full native suite or large performance gate is claimed by this focused run.

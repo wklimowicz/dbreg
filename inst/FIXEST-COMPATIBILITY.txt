@@ -24,7 +24,10 @@ Implementation sequence
 1. Fractional observation weights and independently checked likelihood reporting.
    Implemented in this increment; validation evidence is in GLM-VALIDATION.txt.
 2. Shared fitted-state contract for learned effects, sample keys and resource
-   ownership. Not implemented. This precedes prediction and post-fit clustering.
+   ownership. OLS/GLM now share typed-key validation and retained-key exports;
+   OLS exports use an immutable snapshot throughout fitting. Learned effects,
+   model-owned state/lifetime and post-fit scores remain pending. These precede
+   prediction and post-fit clustering.
 3. Supported formula/argument normalization: i()/references, public coefficient
    identities, OLS offsets and varying slopes, fixef.rm, weights and subset.
    Partial existing formula support remains; compatibility entry points pending.
@@ -189,8 +192,25 @@ is idempotent and affects only that model's owned relations; caller connections
 and explicit sample/prediction exports remain caller-owned. Unsupported export/
 reopen operations remain explicit errors until backed by tested storage logic.
 
-First fitted-state slice: preserve/reconstruct learned GLM effects on both
-moment and SQL projection paths and verify their sum against the fitted predictor.
-Then add typed dictionaries, sample snapshots and lifecycle tests before exposing
-prediction/post-fit covariance. Reuse the same state schema for OLS recovery;
-do not ship a GLM-only public persistence interface that OLS cannot adopt.
+Observation-identity foundation: native OLS now accepts the existing GLM names
+row_id/sample_table. OLS exports require explicit keys and a caller connection;
+they reject sql_only/data_only, copy required source columns once into an owned
+fit snapshot, and export retained typed tuples without collecting them into R.
+Source-key validation precedes filtering and compares counts in SQL. Private
+snapshots are released on success/error; caller-owned exports survive the fit
+and last for their database session. Collect BIGINT keys using an integer64
+DBI conversion setting. No inference method silently rereads these exports.
+
+DuckDB and native Databricks support these exports. Databricks creates scoped
+column mapping on new snapshot/export tables only when their names require it;
+it never changes a caller table or warehouse setting. Native SHOW TABLES checks
+existing exports because ODBC's catalog metadata can omit session tables.
+An export never replaces an existing relation. Explicit snapshots cost database
+storage for required source columns plus the retained-key output; default native
+fits do not retain these resources. This is not portable fitted-state persistence.
+
+Next fitted-state slice: preserve/reconstruct learned GLM effects on both moment
+and SQL projection paths and verify their sum against the fitted predictor. Add
+typed dictionaries and model-owned lifecycle tests before exposing prediction/
+post-fit covariance. Reuse the state schema for OLS recovery; do not ship a
+GLM-only public persistence interface that OLS cannot adopt.

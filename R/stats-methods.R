@@ -171,6 +171,7 @@ predict.dbreg = function(
     return(predict_retained_sample(object, sample = sample))
   }
   if (is.null(newdata) && sample == "original") stop("Original-sample prediction requires retain='all'.", call. = FALSE)
+  if (is.null(newdata) && !is.null(object[["offset"]])) stop("Offset models require newdata or retain='all' for prediction.", call. = FALSE)
   stored_compression = identical(object[["strategy"]], "compress") &&
     (is.null(newdata) || identical(newdata, object[["data"]]))
   if (!is.null(object[["fitted_state"]][["prediction"]]) && !stored_compression) return(predict_linear_state(object, newdata, interval))
@@ -201,7 +202,7 @@ predict.dbreg = function(
   yvar = object[["yvar"]]
   intercept = "(Intercept)" %in% names(betas)
 
-  required = unique(c(all.vars(stats::formula(fml, lhs = 0, rhs = 1)),
+  required = unique(c(all.vars(stats::formula(fml, lhs = 0, rhs = 1)), object[["offset"]],
     unlist(object[["composite_fes"]]), setdiff(fe, names(object[["composite_fes"]])),
     if (strategy %in% c("demean", "mundlak")) object[["weights"]],
     if (strategy == "demean" && yvar %in% names(newdata)) yvar))
@@ -272,7 +273,7 @@ predict.dbreg = function(
     sweep_fe = function(v) demean_prediction_data(v, groups, weights)
     mm = sweep_fe(mm)
     if (has_y) {
-      y = as.numeric(newdata[[yvar]])
+      y = as.numeric(newdata[[yvar]]) - linear_prediction_offset(object, newdata)
       y_group_mean = y - drop(sweep_fe(matrix(y, ncol = 1L)))
     } else {
       y_group_mean = 0
@@ -288,6 +289,7 @@ predict.dbreg = function(
   if (strategy == "demean") {
     fit = fit + y_group_mean
   }
+  fit = fit + linear_prediction_offset(object, newdata)
  
   if (interval != "none") {
     vcovm = vcov(object, fe = TRUE)

@@ -67,7 +67,7 @@ predict_linear_state = function(object, newdata, interval) {
   state = object[["fitted_state"]]
   database = identical(state[["prediction"]][["storage"]], "database")
   if (database) fitted_resource_connection(object[["resource_state"]])
-  required = unique(c(all.vars(rhs), unlist(lapply(state[["specification"]][["dictionaries"]], `[[`, "columns"))))
+  required = unique(c(all.vars(rhs), object[["offset"]], unlist(lapply(state[["specification"]][["dictionaries"]], `[[`, "columns"))))
   absent = setdiff(required, names(data))
   if (length(absent)) stop("newdata is missing required columns: ", paste(absent, collapse = ", "), call. = FALSE)
   valid = rep(TRUE, nrow(data))
@@ -96,6 +96,6 @@ predict_linear_state = function(object, newdata, interval) {
   design = as.matrix(fitted_model_matrix(rhs, coded))
   absent = setdiff(state[["specification"]][["design_names"]], colnames(design))
   if (length(absent)) stop("Could not reconstruct fitted OLS design: ", paste(absent, collapse = ", "), call. = FALSE)
-  prediction[positions] = predict_from_fitted_state(state, design, rows, groups = groups, lookup = lookup)
+  prediction[positions] = predict_from_fitted_state(state, design, rows, groups = groups, lookup = lookup) + linear_prediction_offset(object, rows)
   prediction
 }

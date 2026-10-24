@@ -28,6 +28,7 @@ dbreg(
   row_id = NULL,
   sample_table = NULL,
   retain = c("none", "prediction", "all"),
+  offset = NULL,
   ...
 )
 }
@@ -173,11 +174,15 @@ Two-FE recovery uses \code{fe_max_iter} and a tolerance at least as strict as
 \code{1e-10}; varying slopes require portable state.
 \code{"all"} additionally saves an immutable original sample with fitted
 predictors, residuals and scores in the database. It enables default/sample
-prediction, \code{\link[fixest:obs]{fixest::obs()}}, \code{\link[=residuals]{residuals()}} and post-fit covariance through \code{\link[=summary]{summary()}}.
+prediction, \code{\link[=obs]{obs()}}, \code{\link[=residuals]{residuals()}} and post-fit covariance through \code{\link[=summary]{summary()}}.
 This adds row-sized backend storage and SQL work; no panel is implicitly
 collected into R for SQL inputs. R inputs retain their original positions;
 SQL inputs use \code{row_id}, or snapshot-local generated keys when it is absent.
 Full state needs its live owning session and is released by \code{\link[=close]{close()}}.}
+
+\item{offset}{Optional numeric column added to the linear predictor with
+coefficient one. Estimation uses outcome minus offset. Supported on DuckDB
+and native Databricks; newdata predictions require the offset column.}
 
 \item{...}{Only supported legacy aliases are accepted for backwards
 compatibility. Other arguments produce an error.}

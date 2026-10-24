@@ -1,0 +1,7 @@
+ℹ Loading dbreg
+Starting native suite: test_linear_offset_live.R
+
+test_linear_offset_live.R.....   44 tests OK 2.3s
+All ok, 44 results (2.3s)
+                      suite assertions failures error elapsed_seconds
+1 test_linear_offset_live.R         44        0              136.9426

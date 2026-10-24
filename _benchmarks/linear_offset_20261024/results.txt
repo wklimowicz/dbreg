@@ -1,0 +1,29 @@
+OLS offset checkpoint, 2026-10-24
+--------------------------------
+Native dbreg accepts offset="column" on DuckDB/native Databricks. A collision-safe
+derived outcome reuses every existing estimation strategy; original columns
+remain independent. Saved-sample eta uses original outcome minus residual, and
+R/SQL newdata adds the fitted offset exactly once. Finite offset/outcome filtering
+follows the original snapshot/audit; native compact defaults remain unchanged.
+Compact offset models require explicit newdata for prediction (compressed cell
+means cannot identify original row-specific offsets); retain="all" saves rows.
+
+Full local: 4,849 assertions, zero failures, 222.24 seconds. Focused native: 44,
+zero failures, 136.94 seconds. Package check: zero errors/warnings, existing
+optional binsreg NOTE. Local fixture has 56 checks: shared moments/compression/
+one-/two-FE values, full IID/HC/cluster matrices, likelihood, keyed SQL predictions,
+residuals, missing/zero-weight omissions, nonfinite offsets, original R positions,
+release and cleanup. These gates validate exactly the final R/test source.
+
+Million-row no-FE moments benchmark: five measured warmed fits per mode, with
+order randomized and values checked before timing comparisons. Named slopes,
+full covariance and N match outcome-shift/offset algebra. Baseline median .018s;
+explicit nonzero offset .035s (+.017s, roughly 94%). This optional offset adds
+schema/type validation and per-row subtraction/finite checks; it does not imply
+a slowdown for offset-free fits. Fits collect at most one row per query and keep
+9,568/10,168-byte R objects; caller tables remain unchanged. Results are local,
+warmed/in-memory and too small to predict remote/disk-bound performance.
+
+Evidence: _benchmarks/linear_offset_20261024. Reference fixest 0.14.0; adjacent
+source 0.14.2 used only to resolve conventions. Entry points, subset/vector sample
+normalization, OLS singleton removal/varying slopes and final integration remain.

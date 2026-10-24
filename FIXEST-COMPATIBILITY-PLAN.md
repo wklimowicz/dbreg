@@ -160,6 +160,11 @@ archived source plus final focused coverage are documented in
 only bounded score/covariance summaries; full retention increases whole-process
 peak RSS about 21% versus prediction-only in this noisy local comparison.
 
+Native OLS offsets now pass **4,849 full local assertions** and **44 native
+checks**, with the same package-check result. All existing strategies share a
+derived outcome; R/SQL prediction adds the offset once and full retention keeps
+original R positions. Evidence: `_benchmarks/linear_offset_20261024/`.
+
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
 Remaining dependencies include compatibility entry points/formula adapters,

@@ -39,7 +39,9 @@ binomial weights. For `predict`, `"link"` returns the linear predictor and
 
 \item{...}{Additional method arguments are not supported and produce an error.
 New-row prediction with absorbed effects requires `retain = "prediction"`
-when fitting. Unknown or non-estimable FE combinations return `NA`.}
+when fitting. Unknown or non-estimable FE combinations return `NA`.
+Database-backed dictionaries need their live owning session; see
+[close.dbreg()] for release and serialization behavior.}
 
 \item{parm}{Coefficient names or positions, defaulting to all coefficients.}
 

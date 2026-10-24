@@ -53,8 +53,8 @@ dbglm_deviance_term = function(conn) paste(dbglm_exact_sum(conn, "dev"), "AS dev
 
 dbglm_get_query = function(conn, sql) DBI::dbGetQuery(conn, dbglm_sql(conn, sql))
 
-# Bounded lookup literals are FE-level coefficients, never observation data.
-# A size limit prevents constructing an unbounded SQL statement. The caller
+# Bounded lookup literals hold FE coefficients or requested prediction keys,
+# never training observation state. A size limit bounds SQL text. The caller
 # owns materialization and cleanup just as for every other projector state.
 dbglm_values_sql = function(conn, frame, max_bytes = 8 * 1024^2,
                              format = getOption("dbreg.glm_databricks_lookup", "json")) {

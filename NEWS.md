@@ -1,5 +1,10 @@
 # Fixest compatibility (development branch)
 
+- Oversized single-FE prediction dictionaries can stay in SQL, with bounded
+  key matching and estimability checks. `close(model)` releases owned state;
+  caller connections/exports survive. These live dictionaries cannot be restored
+  by serializing their handles; small portable dictionaries remain supported.
+
 - `dbglm()` accepts nonnegative fractional observation weights for all supported
   families. Fitting and inference use the original weights; `nobs()` counts
   retained observations. For fractional binomial weights, `logLik()` matches

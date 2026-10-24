@@ -64,6 +64,8 @@ predict_linear_state = function(object, newdata, interval) {
   data = as.data.frame(newdata)
   rhs = stats::formula(object[["fml"]], lhs = 0, rhs = 1)
   state = object[["fitted_state"]]
+  database = identical(state[["prediction"]][["storage"]], "database")
+  if (database) fitted_resource_connection(object[["resource_state"]])
   required = unique(c(all.vars(rhs), unlist(lapply(state[["specification"]][["dictionaries"]], `[[`, "columns"))))
   absent = setdiff(required, names(data))
   if (length(absent)) stop("newdata is missing required columns: ", paste(absent, collapse = ", "), call. = FALSE)
@@ -76,12 +78,15 @@ predict_linear_state = function(object, newdata, interval) {
   if (!any(valid)) return(prediction)
   rows = data[valid, , drop = FALSE]
   positions = which(valid)
-  groups = prediction_match_groups(state, rows)
-  known = if (length(groups)) Reduce(`&`, lapply(groups, function(group) !is.na(group))) else rep(TRUE, nrow(rows))
+  lookup = if (database) prediction_database_lookup(state, object[["resource_state"]], rows) else NULL
+  groups = if (!database) prediction_match_groups(state, rows) else NULL
+  known = if (database) !is.na(lookup[["gamma"]]) else if (length(groups))
+    Reduce(`&`, lapply(groups, function(group) !is.na(group))) else rep(TRUE, nrow(rows))
   if (!any(known)) return(prediction)
   if (!all(known)) {
     rows = rows[known, , drop = FALSE]
     groups = lapply(groups, function(group) group[known])
+    if (database) lookup = lookup[known, , drop = FALSE]
     positions = positions[known]
   }
   levels = object[["factor_levels"]]
@@ -90,6 +95,6 @@ predict_linear_state = function(object, newdata, interval) {
   design = as.matrix(fitted_model_matrix(rhs, coded))
   absent = setdiff(state[["specification"]][["design_names"]], colnames(design))
   if (length(absent)) stop("Could not reconstruct fitted OLS design: ", paste(absent, collapse = ", "), call. = FALSE)
-  prediction[positions] = predict_from_fitted_state(state, design, rows, groups = groups)
+  prediction[positions] = predict_from_fitted_state(state, design, rows, groups = groups, lookup = lookup)
   prediction
 }

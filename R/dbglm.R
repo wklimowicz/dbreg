@@ -83,12 +83,16 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #' @param retain Default `"none"` keeps the compact fit. `"prediction"` saves
 #'   bounded portable FE dictionaries and learned coefficients for new-row
 #'   prediction. It adds SQL aggregation and dictionary transfer, without keeping
-#'   input rows or a connection. Oversized state errors instead of collecting
-#'   the panel; `options(dbreg.prediction_max_entries = 2e6)` bounds matrix and
-#'   transfer entries alongside the existing FE moment limits.
+#'   input rows. `options(dbreg.prediction_max_entries = 2e6)` bounds matrix and
+#'   transfer entries alongside the existing FE moment limits. A single FE
+#'   without varying slopes can keep an oversized dictionary in SQL instead.
+#'   That state needs its live owning session, cannot be restored with
+#'   `saveRDS()`, and can be released with [close()]. Other oversized designs
+#'   error instead of collecting the panel.
 #' @return A compact object of class `c("dbglm", "dbreg")`, containing slopes,
 #'   covariance, log likelihood, sample counts and convergence diagnostics. Input
-#'   rows, database connections and temporary relations are not retained.
+#'   rows are not retained. Database-backed prediction retention keeps its owned
+#'   dictionary and live connection until [close()] or garbage collection.
 #' @details Missing/nonfinite model values and zero weights are omitted. Model
 #'   specification is fixed before IRLS, and rank decisions are held constant.
 #'   Fits that fail convergence or reach the numerical mean boundary
@@ -475,15 +479,18 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     projection_iterations = fit[["ap_cycles"]], projection_residual = fit[["ap_residual"]],
     projection_method = if (!is.null(fit[["projection_method"]])) fit[["projection_method"]] else if (length(fe)) "group" else "none", call = call)
   if (retain == "prediction" && length(fe)) {
+    prediction_beta = numeric(length(all_x))
+    prediction_beta[keep] = fit[["beta"]]
     result[["fitted_state"]] = dbglm_prediction_state(conn, fit[["working"]], base,
       fe, parsed[["fe_components"]], all_x, spec[["columns"]][["name"]],
       design_center, trend_aliases, counts[["sizes"]], create, drop, n,
-      dictionary_components = prediction_keys[["columns"]])
+      dictionary_components = prediction_keys[["columns"]], fitted_beta = prediction_beta)
   }
   if (!is.null(sample_table)) {
     keys = if (length(row_id)) row_id else "__dbglm_key"
     export_retained_sample(conn, sample_table, keys, from)
   }
+  result = finalize_retained_resources(result, resources)
   class(result) = c("dbglm", "dbreg")
   result
 }

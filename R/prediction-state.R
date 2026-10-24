@@ -96,11 +96,16 @@ dbglm_prediction_state = function(...) build_prediction_state(...)
 build_prediction_state = function(conn, working, retained, fe, components, x, design_names,
                                   center, trend_aliases, sizes, create, drop, n,
                                   dictionary_components = components, beta = NULL,
-                                  expected_rss = NULL, constant = 0, fitted_beta = beta) {
+                                  expected_rss = NULL, constant = 0, fitted_beta = beta,
+                                  recovery_control = list(tol = 1e-10, max_iter = 100L)) {
   tryCatch(build_portable_prediction_state(conn, working, retained, fe, components, x, design_names,
     center, trend_aliases, sizes, create, drop, n, dictionary_components, beta, expected_rss, constant),
     dbreg_prediction_overflow = function(error) {
-      if (length(fe) != 1L || length(unlist(attr(fe, "slopes"))) || is.null(fitted_beta)) stop(error)
+      if (!length(fe) || length(fe) > 2L || length(unlist(attr(fe, "slopes"))) || is.null(fitted_beta)) stop(error)
+      if (length(fe) == 2L) {
+        return(build_database_two_fe_state(conn, working, retained, fe, components, x, design_names,
+          center, create, drop, n, dictionary_components, fitted_beta, expected_rss, constant, recovery_control))
+      }
       build_database_prediction_state(conn, working, retained, fe, components, x, design_names,
         center, create, n, dictionary_components, fitted_beta, expected_rss, constant)
     })

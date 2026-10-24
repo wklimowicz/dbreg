@@ -116,9 +116,11 @@
 #'   private tables. Outcomes and fitting weights are not required in newdata.
 #'   Cannot be combined with `sql_only`/`data_only`; Mundlak retention and
 #'   learned-effect prediction intervals are not implemented.
-#'   Oversized single-FE dictionaries can stay in SQL, requiring their live
+#'   Oversized one- or two-FE dictionaries can stay in SQL, requiring their live
 #'   owning session until [close()] or garbage collection. Such state cannot
 #'   be restored with `saveRDS()`; other oversized designs error explicitly.
+#'   Two-FE recovery uses `fe_max_iter` and a tolerance at least as strict as
+#'   `1e-10`; varying slopes require portable state.
 #' @param fe_tol Positive per-fit tolerance for the fixed-effect projection.
 #' @param fe_max_iter Positive maximum number of fixed-effect projection iterations.
 #' @param diagnostics Run an additional input scan for per-variable missingness

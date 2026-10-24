@@ -51,7 +51,8 @@ finalize_linear_prediction = function(result, inputs) {
   result[["fitted_state"]] = build_prediction_state(conn, frame, frame, fe, public_components,
     x, design_names, center, character(), sizes, manager[["create"]], manager[["drop"]], n,
     dictionary_components = keys[["columns"]], beta = unname(full_beta),
-    expected_rss = attr(result[["vcov"]], "rss") / weight_scale, constant = y_center)
+    expected_rss = attr(result[["vcov"]], "rss") / weight_scale, constant = y_center,
+    recovery_control = list(tol = inputs[["fe_tol"]], max_iter = inputs[["fe_max_iter"]]))
   levels = inputs[["factor_levels"]]
   if (length(levels)) names(levels) = restore_names(names(levels), inputs[["source_map"]])
   result[["factor_levels"]] = levels

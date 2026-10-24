@@ -82,11 +82,12 @@ tests and AIC/BIC. Coefficients are finite approximations, not a finite MLE.}
 bounded portable FE dictionaries and learned coefficients for new-row
 prediction. It adds SQL aggregation and dictionary transfer, without keeping
 input rows. `options(dbreg.prediction_max_entries = 2e6)` bounds matrix and
-transfer entries alongside the existing FE moment limits. A single FE
-without varying slopes can keep an oversized dictionary in SQL instead.
+transfer entries alongside the existing FE moment limits. One or two FEs
+without varying slopes can keep oversized dictionaries in SQL instead.
 That state needs its live owning session, cannot be restored with
 `saveRDS()`, and can be released with [close()]. Other oversized designs
-error instead of collecting the panel.}
+error instead of collecting the panel. Two-FE recovery uses the fitted
+projection iteration limit and a tolerance at least as strict as `1e-10`.}
 }
 \value{
 A compact object of class `c("dbglm", "dbreg")`, containing slopes,

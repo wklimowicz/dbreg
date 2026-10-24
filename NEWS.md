@@ -1,3 +1,14 @@
+## Additional linear-model improvements
+
+- OLS supports restricted square/cube terms, explicit factor references and
+  composite fixed effects. Predictions retain factor coding and missing-row
+  positions, including integer64 inputs; weighted multiway demeaning is fixed.
+- Covariance extraction matches visible coefficients. Clustered compression
+  shares its expanded design with the score query, and generated SQL aliases
+  avoid existing column names.
+- OLS/IV gain optional sample audits, per-fit projection controls, and executable
+  SQL inspection plans. These additions build on PR80 without changing its head.
+
 # News
 
 _This NEWS file is best viewed on our [website](https://grantmcdermott.com/dbreg/NEWS.html)._

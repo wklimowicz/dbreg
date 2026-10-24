@@ -21,6 +21,10 @@ dbreg(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
+  diagnostics = FALSE,
+  factor_refs = NULL,
   ...
 )
 }
@@ -31,8 +35,8 @@ estimated. Fixed effects should be included after a pipe, e.g
 standard R syntax (\code{:} for interactions, \code{*} for main effects plus
 interaction). \code{fixest}-style \code{i()} terms are also supported, e.g.
 \code{i(period, treat, ref = 5)} for event studies; see
-\code{\link[=sql_model_matrix]{sql_model_matrix()}} for details. Transformations and literals are not yet
-supported.}
+\code{\link[=sql_model_matrix]{sql_model_matrix()}} for details. Squares and cubes use \code{I(x^2)} and
+\code{I(x^3)}; combine fixed effects as tuples with \code{fe1^fe2}.}
 
 \item{conn}{Database connection, e.g. created with
 \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
@@ -112,9 +116,10 @@ This distinction only matters for small samples. For large datasets
 (\code{dbreg}'s target use case), the difference is negligible and hence we
 default to the simple \code{"full"} option.}
 
-\item{sql_only}{Logical indicating whether only the underlying compression
-SQL query should be returned (i.e., no computation will be performed).
-Default is \code{FALSE}.}
+\item{sql_only}{Return SQL without estimating coefficients? Multiway
+demeaning returns a \code{dbreg_query_plan} with executable templates for the
+iterative projection fallback; other strategies return their primary query.
+Schema and strategy-selection queries may still run. Default is \code{FALSE}.}
 
 \item{data_only}{Logical indicating whether only the compressed dataset
 should be returned (i.e., no regression is run). Default is \code{FALSE}.}
@@ -130,6 +135,16 @@ to skip some internal checks. (Even then, it probably isn't worth it.)}
 console? Defaults to \code{FALSE}. This can be overridden for a single call
 by supplying \code{verbose = TRUE}, or set globally via
 \code{options(dbreg.verbose = TRUE)}.}
+
+\item{fe_tol}{Positive per-fit tolerance for the fixed-effect projection.}
+
+\item{fe_max_iter}{Positive maximum number of fixed-effect projection iterations.}
+
+\item{diagnostics}{Run an additional input scan for per-variable missingness
+and dropped-row counts? Default is \code{FALSE}. Counts may overlap across roles.}
+
+\item{factor_refs}{Named categorical reference levels. Numeric-coded columns
+named here are treated as factors.}
 
 \item{...}{Additional arguments. Currently ignored, except to handle
 superseded arguments for backwards compatibility.}

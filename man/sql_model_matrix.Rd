@@ -11,7 +11,8 @@ sql_model_matrix(
   expand = c("all", "interactions"),
   sep = "_x_",
   fe_vars = character(),
-  intercept = TRUE
+  intercept = TRUE,
+  factor_refs = NULL
 )
 }
 \arguments{
@@ -36,6 +37,8 @@ in interactions.}
 \item{intercept}{Logical. Whether the model has an intercept. As in
 [stats::model.matrix()], without an intercept the first factor main effect
 keeps all of its levels (no reference level is dropped).}
+
+\item{factor_refs}{Optional named reference levels for categorical regressors.}
 }
 \value{
 List with:

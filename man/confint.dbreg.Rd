@@ -17,8 +17,8 @@ all parameters are considered.}
 
 \item{fe}{Should the fixed effects be included? Default is `FALSE`.}
 
-\item{...}{Additional arguments. Currently unused, except to capture
-superseded arguments.}
+\item{...}{Only the superseded `fes` argument is accepted. Other arguments
+produce an error.}
 }
 \description{
 Confidence intervals for dbreg objects

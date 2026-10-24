@@ -7,6 +7,13 @@
   `logLik(model, type = "weighted")` for the unrounded objective.
 - See `inst/FIXEST-COMPATIBILITY.txt` for the staged compatibility contract and
   outstanding prediction, formula, inference and fitted-state work.
+- `dbreg()` rejects unused arguments, including unsupported OLS offsets.
+  Coefficient, covariance, confidence-interval and prediction methods reject
+  unsupported requests rather than silently ignoring them. Existing `query_only`
+  and `fes` aliases remain supported. Post-fit clustering remains pending.
+- Saved linear-model formulas and compressed prediction formulas no longer
+  capture the caller's data or fit-time connection environment. Existing fitted
+  coding and predictions are preserved when serializing compact objects.
 
 ## Additional linear-model improvements
 

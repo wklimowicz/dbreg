@@ -104,8 +104,8 @@
 #' @param fe_max_iter Positive maximum number of fixed-effect projection iterations.
 #' @param diagnostics Run an additional input scan for per-variable missingness
 #'   and dropped-row counts? Default is `FALSE`. Counts may overlap across roles.
-#' @param ... Additional arguments. Currently ignored, except to handle
-#'   superseded arguments for backwards compatibility.
+#' @param ... Only supported legacy aliases are accepted for backwards
+#'   compatibility. Other arguments produce an error.
 #'
 #' @return A list of class "dbreg" containing various slots, including a table
 #' of coefficients (which the associated `print` method will display).
@@ -383,6 +383,7 @@ dbreg = function(
 
   # superseded args handled through ...
   dots = list(...)
+  check_unused_args(dots, allowed = c("family", "query_only"))
   if (length(dots)) {
     if ("family" %in% names(dots)) {
       stop("Use `dbglm()` for a GLM family; `dbreg()` fits OLS.", call. = FALSE)

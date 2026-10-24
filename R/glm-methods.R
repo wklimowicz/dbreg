@@ -1,6 +1,7 @@
 #' Methods for database binomial and Poisson GLMs
 #' @param object,x A `dbglm` model.
-#' @param ... Additional method arguments. New-row prediction with absorbed effects is not supported.
+#' @param ... Additional method arguments are not supported and produce an error.
+#'   New-row prediction with absorbed effects is not supported.
 #' @name dbglm-methods
 #' @importFrom stats logLik nobs df.residual predict
 NULL
@@ -13,6 +14,7 @@ NULL
 #'   `"response"` returns the response mean.
 #' @export
 logLik.dbglm = function(object, type = c("fixest", "weighted"), ...) {
+  check_unused_args(list(...))
   type = match.arg(type)
   value = if (type == "weighted" && !is.null(object[["weighted_loglik"]])) object[["weighted_loglik"]] else object[["loglik"]]
   structure(value, class = "logLik", df = if (isFALSE(object[["finite_mle"]])) NA_integer_ else object[["n_params_model"]],
@@ -30,8 +32,12 @@ df.residual.dbglm = function(object, ...) object[["df_residual"]]
 #' @rdname dbglm-methods
 #' @param parm Coefficient names or positions, defaulting to all coefficients.
 #' @param level Confidence level.
+#' @param fe Must be `FALSE` for GLM confidence intervals. This argument is
+#'   accepted for shared tidying; absorbed-effect intervals are not supported.
 #' @export
-confint.dbglm = function(object, parm, level = 0.95, ...) {
+confint.dbglm = function(object, parm, level = 0.95, fe = FALSE, ...) {
+  check_unused_args(list(...))
+  if (!identical(fe, FALSE)) stop("Absorbed-effect confidence intervals are not supported; use `fe = FALSE`.", call. = FALSE)
   if (!is.numeric(level) || length(level) != 1 || !is.finite(level) || level <= 0 || level >= 1) {
     stop("`level` must lie strictly between zero and one.", call. = FALSE)
   }
@@ -49,6 +55,7 @@ confint.dbglm = function(object, parm, level = 0.95, ...) {
 #' @param newdata Data frame containing regressors and any fitted offset column.
 #' @export
 predict.dbglm = function(object, newdata, type = c("link", "response"), ...) {
+  check_unused_args(list(...))
   type = match.arg(type)
   if (missing(newdata)) stop("`newdata` is required; dbglm does not retain input rows.", call. = FALSE)
   if (length(object[["fe"]])) stop("New-row prediction for absorbed GLMs is not implemented.", call. = FALSE)

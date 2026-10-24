@@ -37,7 +37,8 @@ dbglm_formula = function(fml) {
 }
 
 # Recursion operates on a snapshot and never rediscovers keys.
-dbglm_prune = function(conn, table, fe, y, mode, create, drop, family = "binomial") {
+dbglm_prune = function(conn, table, fe, y, mode, create, drop, family = "binomial",
+  flags = c("__dbglm_single", "__dbglm_infinite")) {
   rounds = 0L
   counts = c(singleton = 0, infinite_coef = 0)
   if (!length(fe) || mode == "none") return(list(table = table, rounds = rounds, counts = counts))
@@ -52,19 +53,19 @@ dbglm_prune = function(conn, table, fe, y, mode, create, drop, family = "binomia
       singleton = c(singleton, paste0(s, ".n = 1"))
       infinite = c(infinite, if (family == "poisson") paste0(s, ".hi = 0") else paste0(s, ".lo = ", s, ".hi"))
     }
-    flags = paste0("(SELECT __dbglm_t.*, (", paste(singleton, collapse = " OR "), ") AS __dbglm_single, (",
-      paste(infinite, collapse = " OR "), ") AS __dbglm_infinite FROM ", table, " __dbglm_t",
+    flagged = paste0("(SELECT __dbglm_t.*, (", paste(singleton, collapse = " OR "), ") AS ", flags[[1L]], ", (",
+      paste(infinite, collapse = " OR "), ") AS ", flags[[2L]], " FROM ", table, " __dbglm_t",
       paste(joins, collapse = ""), ")")
-    condition = switch(mode, perfect_fit = "(__dbglm_single OR __dbglm_infinite)",
-      singletons = "__dbglm_single", infinite_coef = "__dbglm_infinite")
+    condition = switch(mode, perfect_fit = paste0("(", flags[[1L]], " OR ", flags[[2L]], ")"),
+      singletons = flags[[1L]], infinite_coef = flags[[2L]])
     info = dbglm_get_query(conn, paste0("SELECT COUNT(*) FILTER (WHERE ", condition, ") AS removed, ",
-      "COUNT(*) FILTER (WHERE ", condition, " AND __dbglm_single) AS single FROM ", flags, " __dbglm_f"))
+      "COUNT(*) FILTER (WHERE ", condition, " AND ", flags[[1L]], ") AS single FROM ", flagged, " __dbglm_f"))
     if (info[["removed"]] == 0) break
     counts = counts + c(singleton = as.numeric(info[["single"]]), infinite_coef = as.numeric(info[["removed"]] - info[["single"]]))
     # Each round refers to its input once per FE. Inlining successive rounds
     # on Databricks grows the plan exponentially, even on a tiny sample.
     # Materialize only after a removal; the common no-pruning case adds no write.
-    next_table = create(paste0("SELECT * EXCLUDE (__dbglm_single,__dbglm_infinite) FROM ", flags, " __dbglm_f WHERE NOT ", condition), materialize = TRUE)
+    next_table = create(paste0("SELECT * EXCLUDE (", paste(flags, collapse = ","), ") FROM ", flagged, " __dbglm_f WHERE NOT ", condition), materialize = TRUE)
     drop(table)
     table = next_table
     rounds = rounds + 1L

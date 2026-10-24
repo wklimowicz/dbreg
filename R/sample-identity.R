@@ -71,7 +71,7 @@ export_retained_sample = function(conn, table, keys, from_statement, public_name
 prepare_linear_sample = function(inputs, from_statement, variables) {
   keys = inputs[["row_id"]]
   table = inputs[["sample_table"]]
-  full = identical(inputs[["retain"]], "all")
+  full = retain_sample(inputs[["retain"]])
   prediction = retain_prediction(inputs[["retain"]]) && length(inputs[["fe_labels"]]) > 0L
   if (is.null(keys) && is.null(table) && !prediction && !full) return(from_statement)
   conn = inputs[["conn"]]

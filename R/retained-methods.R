@@ -1,6 +1,6 @@
 retained_inference = function(object) {
   state = object[["fitted_state"]][["inference"]]
-  if (is.null(state)) stop("This operation requires fitting with retain='all'.", call. = FALSE)
+  if (is.null(state)) stop("This operation requires fitting with retain='all' or retain='inference'.", call. = FALSE)
   if (!identical(state[["version"]], 1L)) stop("Unsupported retained-inference version.", call. = FALSE)
   fitted_resource_connection(object[["resource_state"]])
   state
@@ -69,6 +69,7 @@ summary.dbreg = function(object, vcov = NULL, cluster = NULL, ssc = NULL, vcov_f
     object[["all_coefficients"]] = coef.dbreg(object, fe = TRUE)
     object[["coeftable"]] = inference_coeftable(object, V)
     object[["vcov"]] = V
+    object[["fitted_state"]][["inference"]][["default_ssc"]] = attr(V,"ssc")
     object[["postfit_covariance"]] = TRUE
     object[["vcov_type"]] = attr(V, "type")
   }

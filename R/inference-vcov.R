@@ -1,4 +1,5 @@
 inference_ssc = function(ssc) {
+  if (!is.null(ssc) && !is.list(ssc)) stop("Invalid ssc list.", call. = FALSE)
   numeric_df = !is.null(ssc) && is.numeric(ssc[["t.df"]])
   if (numeric_df) {
     df = ssc[["t.df"]]
@@ -95,13 +96,13 @@ inference_repair_vcov = function(V, fix = TRUE) {
 
 retained_covariance = function(object, vcov = "iid", cluster = NULL, ssc = NULL, vcov_fix = TRUE) {
   state = object[["fitted_state"]][["inference"]]
-  if (is.null(state)) stop("Post-fit covariance requires fitting with retain='all'.", call. = FALSE)
+  if (is.null(state)) stop("Post-fit covariance requires fitting with retain='all' or retain='inference'.", call. = FALSE)
   if (!identical(state[["version"]], 1L)) stop("Unsupported retained-inference version.", call. = FALSE)
   if (!is.logical(vcov_fix) || length(vcov_fix) != 1L || is.na(vcov_fix)) stop("vcov_fix must be TRUE or FALSE.", call. = FALSE)
   conn = fitted_resource_connection(object[["resource_state"]])
   request = inference_vcov_request(object, if (is.null(cluster)) vcov else NULL, cluster)
   clusters = request[["clusters"]]
-  if (length(clusters) > 2L || (inherits(object, "dbglm") && length(clusters) > 1L)) {
+  if (length(clusters) > 2L || (inherits(object, "dbglm") && !isTRUE(object[["linear_model"]]) && length(clusters) > 1L)) {
     stop("Supported clustering is one-/two-way OLS or one-way GLM.", call. = FALSE)
   }
   if (is.null(ssc)) ssc = state[["default_ssc"]]
@@ -124,7 +125,7 @@ retained_covariance = function(object, vcov = "iid", cluster = NULL, ssc = NULL,
   bread = state[["bread"]]
   G = numeric()
   if (request[["kind"]] == "iid") {
-    if (state[["kind"]] == "ols") V = bread*state[["rss"]]/(if (ssc[["K.adj"]]) n-K else n-1) else if (state[["kind"]] == "gaussian")
+    if (state[["kind"]] == "ols") V = bread*(state[["rss"]]/state[["weight_scale"]])/(if (ssc[["K.adj"]]) n-K else n-1) else if (state[["kind"]] == "gaussian")
       V = bread*state[["dispersion_scaled"]]*(if (ssc[["K.adj"]]) (n-1)/(n-K) else 1) else
       V = bread/state[["weight_scale"]]*(if (ssc[["K.adj"]]) (n-1)/(n-K) else 1)
   } else if (request[["kind"]] == "hc1") {

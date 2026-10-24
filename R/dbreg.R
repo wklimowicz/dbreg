@@ -44,6 +44,12 @@
 #' @param offset Optional numeric column added to the linear predictor with
 #'   coefficient one. Estimation uses outcome minus offset. Supported on DuckDB
 #'   and native Databricks; newdata predictions require the offset column.
+#' @param subset Optional logical column name or restricted one-sided predicate
+#'   formula, evaluated before missing-value/weight filtering. Supports column
+#'   comparisons, arithmetic, boolean operators, `is.na()` and literal `%in%`.
+#'   Supports DuckDB/native Databricks; positional vectors belong in adapters.
+#' @param fixef_rm Fixed-effect sample policy: `"none"` (native default) or
+#'   recursive `"singletons"`, after other sample filters.
 #' @param vcov Character string or formula denoting the desired type of variance-
 #' covariance correction / standard errors. Options are `"iid"` (default),
 #' `"hc1"` (heteroskedasticity-consistent), or a one-sided formula like
@@ -131,6 +137,9 @@
 #'   collected into R for SQL inputs. R inputs retain their original positions;
 #'   SQL inputs use `row_id`, or snapshot-local generated keys when it is absent.
 #'   Full state needs its live owning session and is released by [close()].
+#'   `"inference"` saves the same row/score state without recovering learned FE
+#'   prediction dictionaries. Default fitted-sample prediction and inference are
+#'   available; learned-effect newdata prediction needs `"prediction"` or `"all"`.
 #' @param fe_tol Positive per-fit tolerance for the fixed-effect projection.
 #' @param fe_max_iter Positive maximum number of fixed-effect projection iterations.
 #' @param diagnostics Run an additional input scan for per-variable missingness
@@ -403,13 +412,17 @@ dbreg = function(
   factor_refs = NULL,
   row_id = NULL,
   sample_table = NULL,
-  retain = c("none", "prediction", "all"),
+  retain = c("none", "prediction", "inference", "all"),
   offset = NULL,
+  subset = NULL,
+  fixef_rm = c("none", "singletons"),
   ...
 ) {
 
   verbose = isTRUE(verbose)
   validate_linear_offset(offset)
+  subset_variables(subset)
+  fixef_rm = match.arg(fixef_rm)
   ssc = match.arg(ssc)
   vcov_parsed = parse_vcov_args(vcov, cluster)
   vcov_type_req = vcov_parsed[["vcov_type"]]
@@ -434,7 +447,7 @@ dbreg = function(
     }
   }
 
-  if (retain_prediction(retain) && (isTRUE(sql_only) || isTRUE(data_only))) {
+  if ((retain_prediction(retain) || retain_sample(retain)) && (isTRUE(sql_only) || isTRUE(data_only))) {
     stop("Prediction retention cannot be combined with sql_only/data_only.", call. = FALSE)
   }
   validate_row_id_arg(row_id)
@@ -448,7 +461,7 @@ dbreg = function(
       stop("`sample_table` cannot be combined with `sql_only` or `data_only`.", call. = FALSE)
     }
   }
-  sample_resources = if (!is.null(sample_table) || retain_prediction(retain)) dbglm_resources() else NULL
+  sample_resources = if (!is.null(sample_table) || retain_prediction(retain) || retain_sample(retain) || fixef_rm != "none") dbglm_resources() else NULL
   retained_data = prepare_retained_data(data, table, retain)
   data = retained_data[["data"]]
 
@@ -463,7 +476,7 @@ dbreg = function(
       "fml", "conn", "table", "data", "path", "weights", "vcov_type_req",
       "cluster_var", "ssc", "strategy", "sql_only", "data_only", "compress_ratio",
       "compress_nmax", "drop_missings", "verbose", "fe_tol", "fe_max_iter", "diagnostics", "factor_refs",
-      "row_id", "sample_table", "sample_resources", "retain", "offset"
+      "row_id", "sample_table", "sample_resources", "retain", "offset", "subset", "fixef_rm"
     )
   )
   # Release any connection/registration we create, including on errors during
@@ -479,7 +492,7 @@ dbreg = function(
 
   # Choose strategy (mutates inputs[["is_balanced"]], inputs[["compression_ratio_est"]])
   chosen_strategy = choose_strategy(inputs)
-  if (retain_prediction(retain) && length(inputs[["fe"]]) && chosen_strategy == "mundlak") {
+  if ((retain_prediction(retain) || retain_sample(retain)) && length(inputs[["fe"]]) && chosen_strategy == "mundlak") {
     stop("Prediction retention for the Mundlak strategy is not implemented yet.", call. = FALSE)
   }
 
@@ -535,7 +548,7 @@ process_dbreg_inputs = function(inputs) {
   any_continuous = any_continuous_vars(data, fml_parsed[["xvars"]])
   weights_display = weights
 
-  source_vars = c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]])
+  source_vars = c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]]))
   from_statement = prepare_linear_sample(inputs, from_statement, source_vars)
 
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
@@ -588,6 +601,12 @@ process_dbreg_inputs = function(inputs) {
     list(outcome = yvar, regressor = source_xvars, fixed_effect = source_fes, weight = weights, cluster = cluster_var,
       offset = src[["to_safe"]](inputs[["offset"]])))
 
+  if (!is.null(inputs[["subset"]])) {
+    schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from_statement), 0, detect_backend(conn)[["name"]]))
+    predicate = sql_subset_predicate(conn, inputs[["subset"]], schema, src[["to_safe"]])
+    from_statement = filter_source_predicate(from_statement, predicate)
+  }
+
   if (!is.null(adjusted[["finite"]])) from_statement = paste0("FROM (SELECT * ", from_statement,
     ") dbreg_finite_offset WHERE ", adjusted[["finite"]])
 
@@ -597,6 +616,11 @@ process_dbreg_inputs = function(inputs) {
     weights = weights,
     drop_missings = drop_missings
   )
+  if (inputs[["fixef_rm"]] == "singletons" && length(fe)) {
+    pruning = linear_prune_source(inputs, from_statement, fe, yvar)
+    from_statement = paste("FROM", pruning[["table"]])
+    inputs[["pruning"]] = pruning
+  }
   is_balanced = NULL
 
   env2env(

@@ -103,6 +103,9 @@ read_compressed_frame = function(inputs, sql, from_statement = inputs[["from_sta
 # mapping comes from cells already collected for estimation, with no extra scan.
 finalize_linear_design = function(result, inputs) {
   result[["offset"]] = inputs[["offset"]]
+  result[["fixef_rm"]] = inputs[["fixef_rm"]]
+  result[["pruning_rounds"]] = if (is.null(inputs[["pruning"]])) 0L else inputs[["pruning"]][["rounds"]]
+  result[["exclusions"]] = if (is.null(inputs[["pruning"]])) c(singleton = 0, infinite_coef = 0) else inputs[["pruning"]][["counts"]]
   levels = inputs[["factor_levels"]]
   if (length(levels)) names(levels) = restore_names(names(levels), inputs[["source_map"]])
   result[["factor_levels"]] = levels

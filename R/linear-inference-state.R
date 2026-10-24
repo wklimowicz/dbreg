@@ -1,5 +1,5 @@
 retain_linear_score_frame = function(fit, frame, y, inputs) {
-  if (!identical(inputs[["retain"]], "all")) return(invisible(NULL))
+  if (!retain_sample(inputs[["retain"]])) return(invisible(NULL))
   conn = inputs[["conn"]]
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
   cols = frame[["cols"]]
@@ -37,7 +37,7 @@ retain_linear_score_frame = function(fit, frame, y, inputs) {
 }
 
 finalize_linear_inference = function(result, inputs) {
-  if (!identical(inputs[["retain"]], "all")) return(result)
+  if (!retain_sample(inputs[["retain"]])) return(result)
   if (is.null(inputs[["inference_state"]]) && identical(result[["strategy"]], "compress")) {
     reconstruct_compressed_score_frame(result, inputs)
   }

@@ -165,10 +165,10 @@ logLik.dbreg = function(object, ...) {
   check_unused_args(list(...))
   if (inherits(object, "dbivreg")) stop("OLS likelihood is not supported for IV models.", call. = FALSE)
   state = object[["fitted_state"]][["inference"]]
-  if (!is.null(object[["weights"]]) && is.null(state)) stop("Weighted OLS likelihood requires retain='all'.", call. = FALSE)
+  if (!is.null(object[["weights"]]) && is.null(state)) stop("Weighted OLS likelihood requires retain='all' or retain='inference'.", call. = FALSE)
   n = object[["nobs_orig"]]
   rss = if (!is.null(state)) state[["rss_unweighted"]] else attr(object[["vcov"]], "rss")
-  if (is.null(rss) || !is.finite(rss) || rss < 0) stop("Accurate OLS likelihood requires retain='all'.", call. = FALSE)
+  if (is.null(rss) || !is.finite(rss) || rss < 0) stop("Accurate OLS likelihood requires retain='all' or retain='inference'.", call. = FALSE)
   K = if (!is.null(state)) state[["K_model"]] else n-object[["df_residual"]]
   value = -n/2 - n/2*log(rss/n) - n/2*log(2*pi)
   structure(value, class = "logLik", df = K+1, nobs = n)

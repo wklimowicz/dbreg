@@ -3,6 +3,12 @@
 # Other backends retain their DBI literal representation and native value type.
 sql_value_literals = function(conn, values) {
   if (!length(values)) return(character())
+  # ODBC can quote logicals as 1/0, which Spark cannot use as booleans.
+  if (is.logical(values)) {
+    result = rep("NULL",length(values))
+    result[!is.na(values)] = ifelse(values[!is.na(values)],"TRUE","FALSE")
+    return(result)
+  }
   if (is.factor(values)) values = as.character(values)
   if (is.numeric(values) && !inherits(values, "integer64")) {
     valid = !is.na(values)

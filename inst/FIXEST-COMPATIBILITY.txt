@@ -36,7 +36,8 @@ Implementation sequence
    capture caller or strategy environments in compact results.
 4. Fitted link/response prediction with learned effects, including estimable
    zero-weight rows, without outcomes in newdata. Implemented for bounded GLM
-   state with retain="prediction"; native validation is in progress. Existing
+   state with retain="prediction"; 116 shared checks pass locally and natively.
+   Existing
    OLS conditional-population prediction remains unchanged.
 5. Two-way OLS cluster covariance and post-fit inference on the fitted sample.
    Not implemented. Include small-sample/FE-nesting policies and test df.
@@ -220,7 +221,7 @@ Evidence: _benchmarks/compat_performance_20261024. Keep prediction dictionaries
 separate from optional observation-sized inference state and reuse existing
 fit-owned relations when retention is requested; default native fits stay compact.
 
-Portable prediction slice (validation in progress): native dbglm now accepts
+Portable prediction slice (validated on both engines): native dbglm now accepts
 retain=c("none", "prediction"), defaulting to the existing compact behavior.
 Prediction retention reconstructs the learned predictor from bounded joint
 FE/regressor moments on both moment and SQL fitting paths, including varying

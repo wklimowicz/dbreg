@@ -1,0 +1,61 @@
+Portable GLM learned-effect prediction checkpoint, 2026-10-24
+
+Implementation: a22b0862a1c77284b406076cc1a10520214f90cd.
+code-revision.txt verifies all 116 R/test source files from local/full/native-final
+manifests against that commit. The revision in runtime metadata predates the
+commit; source hashes identify the uncommitted implementation that was executed.
+
+Completed validation:
+  Local learned-effect suite: 116 assertions, zero failures.
+  Full local suite: 3,773 assertions, zero failures (214.75 seconds).
+  Native Databricks learned-effect suite: 116 assertions, zero failures
+    (1,088.82 seconds; native-final/summary.csv).
+  R CMD check --no-manual --no-vignettes --no-tests, force suggests false:
+    zero errors/warnings; existing optional binsreg documentation NOTE.
+  Tests ran separately with pkgload::load_all().
+
+The initial native run (native/) passed 108 checks and failed eight analytic
+tiny-group-weight predictions. DECIMAL(38,18) rounded their score terms to zero.
+The corrected aggregate retains double sums when every term is small; normal
+terms retain fixed-point cancellation protection. The old run, an earlier local
+pass and a source archive are retained. Its 115 R/test source files match that
+archive. No mixed-source run is presented as the corrected native pass.
+
+Long-run tinytest display issue: its printed 18.1s actually represents about
+18.1 minutes. The runner records elapsed_seconds explicitly and is authoritative.
+Text evidence normalizes progress CRs and trailing padding only; RDS/CSV retain
+the machine-readable assertions and numerical results.
+
+Fixtures cover four families, moment/forced-SQL fits, varying slopes,
+composite/three-way/disconnected effects, zero fitting weights, outcome-free
+newdata, row-order/batch invariance, missing/unknown keys, joint regressor/FE
+estimability, BIGINT above 2^53 and adjacent double keys, serialization, source
+removal, bounded transfer failure and private-resource cleanup. Tiny group
+weights (1e-20 versus 1) have independent analytic one-/two-FE solutions.
+
+Million-row performance follow-up:
+  Same persisted fixture and two-thread settings as compat_performance_20261024.
+  Sequential default/prediction/default/prediction batches, each with two excluded
+  warm-ups per model and five measured repetitions. Sixty measured fits passed
+  coefficient/full covariance/sample/likelihood checks before comparisons.
+  Normal versus retain='prediction', pooled median seconds:
+    no-FE cloglog: 0.6885 -> 0.701 (1.02x; no FE state needed).
+    two-FE cloglog: 1.811 -> 2.071 (1.14x, about 0.26s added).
+  The two-FE state occupies 107,896 bytes (~105 KiB), independent of storing the
+  million training rows. Its maximum fitted-predictor recovery error is 2.34e-14.
+  Peak whole-process RSS: default 578044-582148 KB; prediction 666672-667976 KB
+  (roughly 15% higher). These are process peaks across warm-ups/model cases,
+  not per-fit R state size. Default batches also run OLS cases.
+
+Timing variation is material (two-FE retained fits 1.862-2.516s); native validation
+clients were concurrently doing small local reference computations and remote
+SQL. These are warmed local DuckDB observations, not native or disk-bound
+guarantees. Retention remains off by default. Reproduce via
+_benchmarks/check_fixest_compat_performance.R using default/prediction modes,
+then performance/summarize.R. Input preparation is described in the previous
+performance checkpoint. No full panel is collected into R; prediction checks
+fetch only 100 synthetic newdata rows outside the fit timer.
+
+Remaining scope: OLS recovery, owned database state beyond portable budgets,
+database prediction outputs, original-sample/default prediction, post-fit
+covariance/two-way clustering, compatibility adapters and broader release gates.

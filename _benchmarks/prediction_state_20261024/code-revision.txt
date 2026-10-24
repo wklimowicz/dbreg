@@ -1,0 +1,5 @@
+Implementation checkpoint: a22b0862a1c77284b406076cc1a10520214f90cd
+Native-final started before the checkpoint commit; its source manifest identifies the same code.
+full: 116/116 R/test source files match the implementation commit.
+native-final: 116/116 R/test source files match the implementation commit.
+local: 116/116 R/test source files match the implementation commit.

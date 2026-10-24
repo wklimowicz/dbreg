@@ -1,0 +1,3 @@
+"model","default_seconds","prediction_seconds","ratio","prediction_min_seconds","prediction_max_seconds","state_bytes","max_recovery_error"
+"glm",0.688499999999998,0.701,1.01815541031227,0.612,1.078,0,NA
+"glm_fe",1.811,2.071,1.14356709000552,1.862,2.516,107896,2.33146835171283e-14

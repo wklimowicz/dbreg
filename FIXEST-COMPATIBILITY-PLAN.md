@@ -45,8 +45,10 @@ varying slopes, composite/three-way/disconnected effects, joint-design
 estimability, exact keys, serialization and extreme group-specific weights.
 The first native run passed 108 checks and failed eight analytic tiny-weight
 checks, exposing a fixed-decimal score floor. That summation path is corrected;
-the native rerun is in progress. Evidence: `_benchmarks/prediction_state_20261024/`.
-Do not describe that pending native run as a pass.
+the completed native rerun passes **116 assertions with zero failures** in about
+18 minutes. The implementation is committed as **`a22b086`**; all 116 R/test source
+files in the local/native manifests match it. Evidence:
+`_benchmarks/prediction_state_20261024/`.
 
 A 60-fit warmed million-row follow-up verified coefficients, covariance and
 likelihood before timing comparisons. Portable prediction retention added about
@@ -58,7 +60,8 @@ prediction and post-fit inference remain unfinished.
 
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
-The next dependency is shared observation identity and fitted state. Use dbreg's
+The next dependencies are OLS learned-effect recovery and database-backed large
+state, followed by formula adapters and post-fit inference. Use dbreg's
 existing conventions; consult fixest for unresolved user-facing compatibility
 choices. Concrete API/lifetime decisions are recorded in
 `inst/FIXEST-COMPATIBILITY.txt`. The complete replacement remains unfinished.

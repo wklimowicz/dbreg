@@ -1,0 +1,26 @@
+ℹ Loading dbreg
+Starting native suite: test_prediction_state_live.R
+
+test_prediction_state_live.R..  116 tests 8 fails 17.3s
+----- FAILED[data]: test_prediction_state_live.R<1--12>
+ call| expect_equal(predict(fit, data.frame(g = 1:2, h = 1), type = "response"),
+ call| -->    c(0.2, 0.8), tolerance = 1e-07)
+ diff| Mean relative difference: 0.1140175
+ ----- FAILED[data]: test_prediction_state_live.R<1--12>
+ call| expect_equal(predict(fit, data.frame(g = 1:2, h = 1), type = "response"),
+ call| -->    c(0.2, 0.8), tolerance = 1e-07)
+ diff| Mean relative difference: 0.1140175
+ ----- FAILED[data]: test_prediction_state_live.R<1--12>
+ call| expect_equal(predict(fit, data.frame(g = 1:2, h = 1), type = "response"),
+ call| -->    c(0.2, 0.8), tolerance = 1e-07)
+ diff| Mean relative difference: 0.02084405
+ FAILED[data]: test_prediction_state_live.R<1--12> expect_equal(predict(fit, data.frame(g = 1:2, h = 1), type = "response"), ...
+ FAILED[data]: test_prediction_state_live.R<1--12> expect_equal(predict(fit, data.frame(g = 1:2, h = 1), type = "response"), ...
+ FAILED[data]: test_prediction_state_live.R<1--12> expect_equal(predict(fit, data.frame(g = 1:2, h = 1), type = "response"), ...
+ FAILED[data]: test_prediction_state_live.R<1--12> expect_equal(predict(fit, data.frame(g = 1:2, h = 1), type = "response"), ...
+
+Showing 7 out of 116 results: 8 fails, 108 passes (17.3s)
+                         suite assertions failures error elapsed_seconds
+1 test_prediction_state_live.R        116        8              1036.237
+Error: Native Databricks validation failed; see summary.csv.
+Execution halted

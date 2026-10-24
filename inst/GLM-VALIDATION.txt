@@ -242,8 +242,8 @@ ODBC's omission of session tables from existence metadata. Column mapping is
 set on newly created owned tables only; existence checks use native SHOW TABLES.
 No full native suite or large performance gate is claimed by this focused run.
 
-Portable learned-effect prediction checkpoint, 2026-10-24 (native run pending)
-----------------------------------------------------------------------------
+Portable learned-effect prediction checkpoint, 2026-10-24
+-------------------------------------------------------
 Full local suite: 3,773 assertions, zero failures. It includes 116 shared
 learned-effect assertions and four SQL portability checks for very small score
 sums. Package check: zero errors, zero warnings, the existing binsreg NOTE.
@@ -254,7 +254,10 @@ all analytic tiny-weight prediction checks. DECIMAL(38,18) rounded those group
 scores to zero. The corrected aggregate uses double summation when all terms
 are small; ordinary larger terms retain the fixed-point cancellation safeguard.
 The pre-fix source archive/results are retained for reproducibility. The corrected
-native run is in progress and is not yet a completed validation gate.
+native run passes all 116 assertions in 1,088.82 seconds (about 18 minutes).
+Use elapsed_seconds from the runner: tinytest's printed duration labels a
+minutes-valued difftime as seconds for longer runs. All 116 R/test source files
+in the local/native manifests match implementation commit a22b086.
 
 Other new coverage: cloglog/logit/probit/Poisson; moment and forced SQL fitting;
 varying, composite and three-way FEs; excluded zero-weight rows; exact BIGINT and

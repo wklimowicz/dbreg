@@ -265,3 +265,15 @@ closely spaced double keys; missing/unknown keys; disconnected and collinear
 non-estimability; serialization, source removal, bounded transfers and cleanup.
 This establishes bounded GLM newdata prediction only, not database-backed large
 state, OLS recovery, training-row/default predictions or post-fit covariance.
+
+Typed-key frame follow-up, 2026-10-24
+------------------------------------
+Prediction dictionaries now read typed keys captured in the same owned physical
+frame as the fitted design, allowing earlier release of the raw intermediate.
+This also avoids keeping an otherwise unnecessary raw table for no-FE retention.
+The 116 local prediction checks still pass. A shared three-assertion snapshot
+regression passes on DuckDB and native Databricks (74.79 seconds): it removes
+the synthetic caller source after IRLS but before dictionary recovery, then
+checks fitted predictions and cleanup. Evidence:
+_benchmarks/prediction_key_frame_20261024. The full local/native totals above
+describe their frozen checkpoint, not a rerun of every suite for this follow-up.

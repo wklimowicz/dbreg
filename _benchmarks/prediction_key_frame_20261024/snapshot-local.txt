@@ -1,0 +1,9 @@
+ℹ Loading dbreg
+
+test_prediction_snapshot.R....    0 tests
+test_prediction_snapshot.R....    0 tests
+test_prediction_snapshot.R....    3 tests OK 0.9s
+
+File                         Results fails passes
+  test_prediction_snapshot.R       3     0      3
+  Total                            3     0      3

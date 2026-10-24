@@ -1,0 +1,19 @@
+Typed prediction keys in the estimation frame, 2026-10-24
+
+The learned-effect implementation now stores required typed FE keys in its
+existing owned physical base frame, together with the dense IDs that supplied
+fitting. Dictionary recovery reads that frame, so it cannot accidentally rerank
+a changed caller source. The raw intermediate can be dropped earlier, including
+no-FE retain='prediction' calls. Retention remains off by default.
+
+Completed checks:
+  Existing local learned-effect suite: 116 assertions, zero failures.
+  Source-removal regression: three assertions on DuckDB and three on native
+    Databricks (74.79 seconds), zero failures on each engine.
+The new case drops its synthetic caller table between IRLS and state recovery;
+predictions must still match fixest, private tables must be gone, and the caller
+connection must remain valid. Source manifests identify the executed working tree.
+
+This focused follow-up does not claim a repeated full package/native gate or
+new performance measurements. The preceding a22b086/32df9b2 checkpoint and its
+performance evidence remain separately identified in prediction_state_20261024.

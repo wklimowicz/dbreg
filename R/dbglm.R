@@ -333,15 +333,17 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   public = c(if (has_intercept) "(Intercept)", spec[["columns"]][["name"]])
   x = c(if (has_intercept) "__dbglm_intercept", spec[["columns"]][["alias"]])
   if (!length(x) && !length(fe)) stop("No GLM design columns were specified.", call. = FALSE)
+  prediction_keys = if (retain == "prediction" && length(fe)) prediction_key_fields(conn, parsed[["fe_components"]]) else
+    list(fields = character(), columns = list())
   trend_fields = vapply(trend_sources, function(v) paste0("CAST(", quote_id(v), " AS DOUBLE) AS ", trend_aliases[[v]]), character(1))
-  fields = c("__dbglm_key", fe, trend_fields, sprintf("CAST((%s) AS DOUBLE) AS %s", quote_id(parsed[["yvar"]]), "__dbglm_y"),
+  fields = c("__dbglm_key", fe, prediction_keys[["fields"]], trend_fields, sprintf("CAST((%s) AS DOUBLE) AS %s", quote_id(parsed[["yvar"]]), "__dbglm_y"),
     sprintf("CAST((%s) AS DOUBLE)/(%s) AS __dbglm_a", if (is.null(weights)) "1.0" else quote_id(weights), dbglm_number(weight_scale)),
     sprintf("CAST((%s) AS DOUBLE) AS __dbglm_o", if (is.null(offset)) "0.0" else quote_id(offset)),
     if (has_intercept) "CAST(1.0 AS DOUBLE) AS __dbglm_intercept",
     sprintf("CAST((%s) AS DOUBLE) AS %s", spec[["columns"]][["sql"]], spec[["columns"]][["alias"]]),
     if (!is.null(covariance[["cluster_var"]])) paste(quote_id(covariance[["cluster_var"]]), "AS __dbglm_cluster"))
   base = create(paste("SELECT", paste(fields, collapse = ", "), from))
-  if (is.null(sample_table) && retain == "none") drop(retained)
+  if (is.null(sample_table)) drop(retained)
   base_terms = c(
     if (length(x)) paste0("SUM(CASE WHEN ", paste(paste0("NOT isfinite(", x, ")"), collapse = " OR "), " THEN 1 ELSE 0 END) AS nonfinite"),
     if (length(fe)) sprintf("COUNT(DISTINCT %s) AS fe_size_%d", fe, seq_along(fe)),
@@ -485,9 +487,10 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     projection_iterations = fit[["ap_cycles"]], projection_residual = fit[["ap_residual"]],
     projection_method = if (!is.null(fit[["projection_method"]])) fit[["projection_method"]] else if (length(fe)) "group" else "none", call = call)
   if (retain == "prediction" && length(fe)) {
-    result[["fitted_state"]] = dbglm_prediction_state(conn, fit[["working"]], retained,
+    result[["fitted_state"]] = dbglm_prediction_state(conn, fit[["working"]], base,
       fe, parsed[["fe_components"]], all_x, spec[["columns"]][["name"]],
-      design_center, trend_aliases, counts[["sizes"]], create, drop, n)
+      design_center, trend_aliases, counts[["sizes"]], create, drop, n,
+      dictionary_components = prediction_keys[["columns"]])
   }
   if (!is.null(sample_table)) {
     keys = if (length(row_id)) row_id else "__dbglm_key"

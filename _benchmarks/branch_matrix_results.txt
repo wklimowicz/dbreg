@@ -1,0 +1,151 @@
+Five-million-row branch performance comparison — 2026-10-24
+==========================================================
+
+This compares fixest with dbreg/dbglm on DuckDB and native Databricks SQL.
+The database engine versions are held fixed; "upstream", "PR80" and "here"
+refer to versions of the R package, not versions of DuckDB or Databricks.
+
+Sources were verified against the live remotes and frozen before benchmarking:
+  upstream main   9d1472b221d733910dde451df3c41ba625e07673
+  upstream PR80   8a21a9dab083423f7578a56dc6855fa49360e5ab
+  wojtek-dev      1e859dffc5a67a748f53dde6705a95d167b492a4
+  fixest          0.14.0
+Upstream and PR80 do not export dbglm, so their GLM cells are unsupported.
+No production package source was modified during this comparison.
+
+Both models use the same synthetic 5M teacher-shaped observations, 105,021
+exits (2.10042%), ten wage slopes, six correlated FEs and district clustering.
+FE levels: 2001/296/44/44/2/2. There are 296 district clusters.
+
+  wastage ~ log_outside_salary:factor(experience_group) +
+    log_teacher_salary:factor(experience_group) |
+    spine_band_year + district + Experience + AGE + SEX + FTPTWK
+
+The LM is a linear probability model. The GLM uses binomial("cloglog").
+Five experience groups define two sets of five wage coefficients. The LM
+driver creates the ten numeric interaction columns explicitly for EVERY
+engine: dbreg's LM formula validator rejects the factor() expression used
+by dbglm. All 50M interaction values are checked against the defining wage
+times group-indicator expressions before fitting the local reference.
+This is the same design matrix, not a narrower or approximate LM.
+
+The native inputs pass counts, distinct-ID range, wage-mean and 101 sampled
+row checks against the local input, including the explicit interactions.
+Only synthetic session-scoped temporary tables are created remotely.
+
+The important LM configuration caveat
+-------------------------------------
+The fast wojtek-dev LM results require:
+
+  options(dbreg.ap_moment_max_cells = 16e6)
+
+The default is 8e6 cells. This FE graph has 671,488 observed pair entries
+and 2,389 FE levels: 673,877 summary rows. The LM's 11 outcome/regressor
+columns plus four bookkeeping columns need 10,108,155 rectangular cells.
+The default cap admits only floor(8e6/15)=533,333 rows, so the bounded
+solver declines the task and dbreg falls back to iterative demeaning.
+The initial current-branch DuckDB run demonstrated this fallback; it was
+stopped during the slow iteration. Its elapsed time is not a fit result.
+The source applies the same cell limit to native Databricks.
+
+Increasing the cap retains bounded transfer and changes neither the estimator
+nor convergence tolerance. The two fast fits on each backend pass strict
+coefficient, covariance and observation-count checks. Their actual maximum
+absolute projected FE group means are <=1.50e-13 on DuckDB and 3.57e-11 on
+Databricks, below even dbreg's ordinary 1e-10 tolerance. The benchmark requests
+1e-7 consistently across branches. GLM uses its ordinary defaults and needs
+no transfer-limit override on this fixture.
+
+Completed fits
+---------------
+                                   LM seconds             GLM seconds
+fixest                             94.904                  327.998, 332.310
+DuckDB / wojtek-dev, LM cap 16M      6.965, 7.213            28.561, 26.139
+Databricks / wojtek-dev, LM cap 16M  55.955, 53.924          104.428, 98.214
+
+Medians (single run for the LM fixest entry):
+  fixest                  LM 94.904 s; GLM 330.154 s
+  DuckDB / wojtek-dev      LM  7.089 s; GLM  27.350 s
+  Databricks / wojtek-dev  LM 54.940 s; GLM 101.321 s
+
+The fixest GLM fits and independent GLM references are reused from the earlier
+validated ten-slope experiment on the same input, versions and thread settings.
+The database GLM fits are fresh runs on the exact current commit. The LM fits
+and strict LM reference are new. There is no claim of statistical precision
+from these small numbers of repetitions or of equal local/cloud hardware.
+
+Old-branch diagnostics
+----------------------
+The old iterative LM paths are capped at 30 sweeps. Native runs also have a
+600-second wall-clock diagnostic limit. Timings for unsuccessful diagnostics
+are separate from completed-fit times in branch_matrix_summary.csv. They must
+not be quoted as completed-model runtimes or used for completed-fit speedup
+ratios. No full convergence time is extrapolated from these partial runs.
+
+  Backend / version       Diagnostic elapsed   Last checked sweep   Max FE mean
+  DuckDB upstream             84.361 s                30              0.082275
+  Databricks upstream        604.6 s                  10              0.24095
+  Databricks PR80            617.9 s                  12              0.21481
+
+None produced a fitted model. The two native processes were interrupted at
+the 600-second limit; R/ODBC cancellation returned later, explaining the
+recorded durations above 600 seconds. Sweep counts are the last completed
+convergence checks, not counts of partially executed work. PR80 reached
+twelve checked sweeps versus upstream's ten, but this is not a completed-fit
+speedup estimate. Both remained far from the requested 1e-7 tolerance.
+
+Accuracy
+--------
+LM: all completed fits pass against an independent feols reference using
+fixef.tol=1e-10, fixef.iter=10000, fixef.rm="none" and full FE parameter counting.
+The timed feols fit uses its ordinary demeaning tolerance. All LM engines use
+the same full FE small-sample correction. The database LM maximum coefficient
+error is <2.4e-15 and maximum SE error <1.73e-12. Timed fixest's corresponding
+errors are 4.45e-9 and 1.88e-8; these pass the stated comparison tolerances.
+
+GLM: the four fresh database fits pass all 96 checks against strict fixest
+and the independent full-indicator sparse Fisher reference. These include
+the exact retained sample, all coefficients, full covariance, SEs, likelihood,
+model/covariance df, convergence and score/projection certificates.
+Default fixest agrees on sample, coefficients, likelihood and df, but fails
+the stringent elementwise SE/covariance gates: max SE difference about 1.48e-6,
+or 0.0019% relative. This previously documented discrepancy remains visible.
+The GLM comparison command therefore exits nonzero after saving all results;
+that is not a failure of the new database fits. Strict fixest passes.
+
+Timing boundaries
+------------------
+Timers include estimator preprocessing, FE projection, fitting and clustered
+covariance; dbglm sample-table export is included too. Connection, warehouse
+startup, synthetic generation, source loading/download, input verification
+and strict-reference construction are excluded. Databricks result reuse is
+disabled; other caches may be warm. Engines and references run sequentially.
+DuckDB and fixest use four threads; BLAS uses one; DuckDB memory limit is 4GB.
+Versions: R 4.6.0, DuckDB 1.5.2, fixest 0.14.0, ODBC 1.6.4.1 and Databricks
+SQL 2026.42.
+Per-run environment files contain R/package/native SQL versions and settings.
+This is one synthetic FE graph on one laptop/warehouse configuration.
+
+Evidence and reproduction
+--------------------------
+branch_matrix_lm.R is the new driver. teacher_cloglog_ten_slopes.R is the
+existing GLM driver. Raw LM results, the matrix summary and the refreshed GLM
+checks are stored alongside this report. Immutable source archives, raw logs,
+RDS fits/references, input checks and excluded formula/default-cap probes are
+under SCRATCH/branch-matrix-2026-10-24/.
+
+With INPUT pointing to the original synthetic teachers.parquet directory,
+OUT to a new output directory and HERE/UPSTREAM/PR80 to immutable archives,
+run from the current repository root, setting OPENBLAS_NUM_THREADS=1,
+OMP_NUM_THREADS=4, OMP_THREAD_LIMIT=4 and TZ=Europe/London:
+
+  Rscript _benchmarks/branch_matrix_lm.R HERE INPUT OUT local here SHA_HERE 2 100 16000000
+  Rscript _benchmarks/branch_matrix_lm.R UPSTREAM INPUT OUT duckdb upstream_duckdb SHA_UPSTREAM 1 30
+  Rscript _benchmarks/branch_matrix_lm.R HERE INPUT OUT databricks here_databricks_16m SHA_HERE 2 100 16000000
+  Rscript _benchmarks/branch_matrix_lm.R UPSTREAM INPUT OUT databricks upstream_databricks SHA_UPSTREAM 1 30
+  Rscript _benchmarks/branch_matrix_lm.R PR80 INPUT OUT databricks pr80_databricks SHA_PR80 1 30
+
+Enforce the native wall-clock diagnostic limit externally if reproducing the
+bounded old-branch runs. An interrupted diagnostic has no fitted-model timing.
+Follow teacher_cloglog_ten_results.txt for GLM preparation and reproduction.
+Do not run benchmarks concurrently or edit an executing R script.

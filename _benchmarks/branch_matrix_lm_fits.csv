@@ -1,0 +1,14 @@
+label,sha,engine,repetition,elapsed,max_iter,nobs,slopes,projection_iterations,coef_error,vcov_error,se_error,parity,status,error,source_log,timing_kind,max_cells,last_completed_sweep,last_max_abs_mean
+here,0.14.0,fixest,1,94.904,1000,5e+06,10,NA,4.44145092232118e-09,8.48460047013382e-11,1.87318749927511e-08,TRUE,converged,,default-cap-probe/run.log,completed_fit,,,
+here_duckdb_16m,1e859dffc5a67a748f53dde6705a95d167b492a4,duckdb,1,6.965,100,5e+06,10,1,2.11289319373975e-15,6.88530731741125e-15,1.722654787914e-12,TRUE,converged,,,completed_fit,1.6e+07,,
+here_duckdb_16m,1e859dffc5a67a748f53dde6705a95d167b492a4,duckdb,2,7.213,100,5e+06,10,1,2.36616282123236e-15,6.88528878856553e-15,1.72266064260573e-12,TRUE,converged,,,completed_fit,1.6e+07,,
+here_databricks_16m,1e859dffc5a67a748f53dde6705a95d167b492a4,databricks,1,55.955,100,5e+06,10,1,1.84227633148737e-15,7.21839455358953e-15,1.68662349711579e-12,TRUE,converged,,,completed_fit,1.6e+07,,
+here_databricks_16m,1e859dffc5a67a748f53dde6705a95d167b492a4,databricks,2,53.924,100,5e+06,10,1,1.84227633148737e-15,7.21839455358953e-15,1.68662349711579e-12,TRUE,converged,,,completed_fit,1.6e+07,,
+upstream_duckdb,9d1472b221d733910dde451df3c41ba625e07673,duckdb,1,84.361,30,NA,NA,NA,NA,NA,NA,FALSE,not_converged,"[dbreg] Alternating projections did not converge within 30 iterations (max abs mean = 8.2275e-02).
+
+Options:
+  - Increase tolerance: options(dbreg.ap_tol = 1e-7)
+  - Increase iterations: options(dbreg.ap_max_iter = 500)
+  - Use strategy = 'mundlak' (single-pass CRE estimator, no iteration needed)",upstream-duckdb.log,unsuccessful_diagnostic,8e+06,30,0.082275
+upstream_databricks,9d1472b221d733910dde451df3c41ba625e07673,databricks,1,604.6,30,NA,NA,NA,NA,NA,NA,FALSE,wall_limit,External 600-second diagnostic limit; R interrupt; no completed fit,upstream-databricks.log,unsuccessful_diagnostic,8000000,10,0.24095
+pr80_databricks,8a21a9dab083423f7578a56dc6855fa49360e5ab,databricks,1,617.9,30,NA,NA,NA,NA,NA,NA,FALSE,wall_limit,External 600-second diagnostic limit; R interrupt; no completed fit,pr80-databricks.log,unsuccessful_diagnostic,8000000,12,0.21481

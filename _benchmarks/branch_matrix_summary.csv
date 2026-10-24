@@ -1,0 +1,13 @@
+variant,model,rows,slopes,fes,sha,status,runs,completed_median_seconds,completed_min_seconds,completed_max_seconds,diagnostic_seconds,completed_sweeps,lm_transfer_limit_cells
+fixest,LM,5000000,10,6,0.14.0,completed,1,94.904,94.904,94.904,,,
+fixest,cloglog,5000000,10,6,0.14.0,completed_default_SE_covariance_gate_failed,2,330.154,327.998,332.31,,,
+DuckDB upstream,LM,5000000,10,6,9d1472b221d733910dde451df3c41ba625e07673,not_converged,1,,,,84.361,30,
+DuckDB upstream,cloglog,5000000,10,6,9d1472b221d733910dde451df3c41ba625e07673,unsupported,0,,,,,,
+DuckDB here,LM,5000000,10,6,1e859dffc5a67a748f53dde6705a95d167b492a4,completed,2,7.089,6.965,7.213,,,16000000
+DuckDB here,cloglog,5000000,10,6,1e859dffc5a67a748f53dde6705a95d167b492a4,completed,2,27.35,26.139,28.561,,,
+Databricks upstream,LM,5000000,10,6,9d1472b221d733910dde451df3c41ba625e07673,wall_limit,1,,,,604.6,10,
+Databricks upstream,cloglog,5000000,10,6,9d1472b221d733910dde451df3c41ba625e07673,unsupported,0,,,,,,
+Databricks PR80,LM,5000000,10,6,8a21a9dab083423f7578a56dc6855fa49360e5ab,wall_limit,1,,,,617.9,12,
+Databricks PR80,cloglog,5000000,10,6,8a21a9dab083423f7578a56dc6855fa49360e5ab,unsupported,0,,,,,,
+Databricks here,LM,5000000,10,6,1e859dffc5a67a748f53dde6705a95d167b492a4,completed,2,54.9395,53.924,55.955,,,16000000
+Databricks here,cloglog,5000000,10,6,1e859dffc5a67a748f53dde6705a95d167b492a4,completed,2,101.321,98.214,104.428,,,

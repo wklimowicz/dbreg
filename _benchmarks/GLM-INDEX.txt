@@ -86,5 +86,15 @@ arithmetic. The ten-slope audit exposed a DECIMAL-rounding discrepancy in the
 older 88-slope comparison; its report now flags that limitation. Historical
 timings/check files are retained rather than relabelled as corrected reruns.
 
+Cross-branch LM and cloglog matrix
+----------------------------------
+branch_matrix_results.txt and branch_matrix_summary.csv compare fixest,
+upstream dbreg, PR80 and wojtek-dev on the same 5M-row, ten-slope, six-FE
+design. branch_matrix_lm.R supplies the LM driver; the existing ten-slope
+driver supplies the refreshed database GLM fits. Failed/capped diagnostics
+are recorded separately from completed-fit times. The report identifies the
+16M-cell transfer setting needed to keep the wider LM on its bounded solver;
+the default 8M cap causes an iterative fallback on this FE graph.
+
 Keep old reports/results as historical evidence. Do not infer production
 behavior from prototype scripts or update old timings after code refactors.

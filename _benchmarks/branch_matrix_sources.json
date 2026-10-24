@@ -1,0 +1,17 @@
+{
+  "versions": {
+    "upstream": "9d1472b221d733910dde451df3c41ba625e07673",
+    "pr80": "8a21a9dab083423f7578a56dc6855fa49360e5ab",
+    "here": "1e859dffc5a67a748f53dde6705a95d167b492a4"
+  },
+  "lm_fixest_repetitions": 1,
+  "other_completed_fit_repetitions": 2,
+  "glm_fixest_timings_reused": true,
+  "native_diagnostic_wall_limit_seconds": 600,
+  "diagnostic_sweep_limit": 30,
+  "driver_sha256": {
+    "branch_matrix_lm.R": "f796ebe369b73da39c4fcd32adeccc6606ec8fadf31970653d6b18529d798d31",
+    "teacher_cloglog_ten_slopes.R": "1390cbb53623d5bd3c8557368ea6557d58c9229fbe6d8dd11ac729fb465d6d62",
+    "teacher_cloglog_data.R": "f7c844ade243dd9c6fabbcc052373b4426fd0b31b552a5a04b3867fd6893c3a6"
+  }
+}

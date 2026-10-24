@@ -1,0 +1,2 @@
+engine,status,old_teacher_mean,local_teacher_mean,mean_difference,reason
+databricks,interrupted_without_completed_fit,10.8150942154,10.8150939019531,3.1344690043511036e-07,Spark DECIMAL division; corrected with shared explicit DOUBLE operands; excluded from fit timings

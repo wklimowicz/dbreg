@@ -1,0 +1,23 @@
+ℹ Loading dbreg
+[FE edge test] glm disconnected
+[FE edge test] glm unequal_weights
+[FE edge test] glm redundant_columns
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+[FE edge test] glm rare_correlated
+[FE edge test] ols disconnected
+[FE edge test] ols unequal_weights
+[FE edge test] ols redundant_columns
+[FE edge test] ols rare_correlated
+test_fe_edges_live.R..........  124 tests OK 9.3s
+All ok, 124 results (9.3s)

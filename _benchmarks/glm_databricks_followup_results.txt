@@ -1,0 +1,114 @@
+Further Databricks GLM optimization — 2026-10-23
+
+This follows glm_databricks_integration_results.txt. It adds a raw-key
+pruning preflight; the estimator, weighted moments, inference and convergence
+tolerances are unchanged. The compact-result experiment was rejected.
+
+Complete-fit comparison
+
+Interleaved order: previous, current, current, previous.
+                              Runs (seconds)       Median
+Previous production path       96.062 / 93.234       94.648
+Current production path        85.082 / 87.191       86.137
+
+This saves 8.51 seconds per fit, or 8.99% of elapsed time in this comparison.
+The earlier 91.762-second baseline was measured in a different session;
+the interleaved comparison is the appropriate estimate of this change's
+incremental gain. Against the original 230.900-second implementation, the
+current measured median is about 2.68x faster. There are two repetitions
+per variant on one synthetic dataset, not a universal performance guarantee.
+
+All four fits have exactly the same reported coefficient, clustered SE,
+deviance, sample size, iteration count, final normalized score and halvings:
+  coefficient 0.830287650627359; clustered SE 0.0503263715373309;
+  N = 5,000,000; six iterations; no halvings; score 2.40309290361376e-10.
+Strict fixest absolute differences remain 3.12e-12 for the coefficient and
+2.18e-10 for its SE. There are no changes to numerical tolerances.
+
+The preflight reads 5M rows instead of the original pruning query's roughly
+35M logical rows. Total setup/cleanup drops from 28.317 / 26.728 seconds to
+18.549 / 21.081 seconds. Evaluation remains approximately 59 seconds.
+All 68 tagged fit queries finished successfully, with result reuse disabled.
+
+Why the preflight is exact
+
+The preflight runs on complete, positive-weight eligible observations, using
+the original FE key columns before rank dictionaries are constructed. One
+GROUPING SETS query determines whether any group meets the requested removal
+rule: singletons, constant-outcome binomial groups, or all-zero Poisson groups.
+If no group qualifies, the existing recursive pruner would remove no rows and
+perform no recursive round, so it can be skipped. If any group qualifies,
+the unchanged recursive pruner runs and determines all removals and counts.
+
+Compound FE keys use their separate SQL columns, never concatenated strings.
+Quoted/Unicode string keys, shared grouping columns, all pruning modes,
+positive constant Poisson outcomes and empty input are tested. More than
+30 distinct grouping columns conservatively keeps the previous path.
+Models with actual removals pay for one additional preflight query. DuckDB
+and the other backends keep their previous execution paths.
+
+Targeted query experiments
+
+Same exact synthetic sample as the previous report: 5M rows, six correlated
+FEs, 2.10042% exits, no pure FE groups. Warm warehouse, result reuse disabled.
+Repeated old pruning queries: 9.695 and 9.633 seconds.
+Raw-key preflight: 0.794 and 1.388 seconds.
+An earlier cold comparison was 17.347 versus 1.392 seconds; it is not used as
+the steady-state gain. Complete-fit interleaving is recorded separately.
+
+Result-batching experiment (not integrated)
+
+The prototype grouped FE summary rows into JSON arrays while carrying each
+key with its values, so array ordering was irrelevant. Queries took 9.501
+and 9.630 seconds versus 9.693 and 9.617 seconds for ordinary numeric rows.
+The fetched JSON failed to parse in both repetitions through this ODBC path;
+the underlying metadata/driver cause has not been established. These are
+failed experiments, not valid fit times or successful transfer reductions.
+No packed JSON-array transport was added to the production path.
+
+The existing global-scalar JSON summary is distinct: it is small, retained,
+and covered by the previously passing round-trip tests. Numeric FE moments
+still use the verified numeric result path.
+
+Validation
+
+R CMD check completed with Status: OK: no errors, warnings or notes.
+The check ran 2,124 assertions across 29 nonempty test files. The same five
+optional/environment-gated files remain skipped/empty as in the preceding
+report. All checked production R source files are byte-identical to the
+final working tree.
+
+Native testing exposed two test-fixture assumptions: default Delta physical
+column names cannot contain spaces, and the fixture's apostrophe literal
+did not select the intended row. The fixture now tests the quoted column
+through a query alias and selects its singleton by numeric row ID. Apart
+from ordinary build-generated DESCRIPTION metadata, this fixture is the
+only file changed after the package-check build. Its final 50-assertion
+test file passed independently both locally and on actual Databricks.
+These corrections did not change production code or benchmark results.
+
+glm_databricks_followup_check.log and
+glm_databricks_followup_test_counts.csv retain package-check evidence.
+glm_databricks_followup_pruning_checks.csv records both final 50-case runs.
+glm_databricks_followup_source.sha256 fingerprints the final source/tests.
+
+Reproduction and evidence
+
+  Rscript _benchmarks/glm_databricks_followup.R /tmp/teacher-cloglog-production /tmp/glm-followup-checked
+  Rscript _benchmarks/teacher_cloglog_pruning_benchmark.R /tmp/teacher-cloglog-5m /tmp/teacher-cloglog-pruning
+  DBREG_TEST_DATABRICKS=TRUE Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_glm_databricks_sample.R")'
+
+The full-fit benchmark alternates previous/current/current/previous. To run
+the previous path, its process substitutes a helper that returns TRUE without
+issuing a preflight query; this runs the same existing recursive-pruning code
+as the previous production implementation. Current fits use the actual
+unmodified package helper. The strict independent fixest oracle and exact
+sample-generation SQL are reused, with N/exits and accuracy gates checked.
+No package source file is modified by the benchmark script.
+
+glm_databricks_followup_experiments.csv records the successful and failed
+targeted experiments; glm_databricks_followup_queries.csv records their server
+metrics. teacher_cloglog_pruning_fits.csv and
+teacher_cloglog_pruning_queries.csv record complete fits and server timings.
+The preceding report documents the common environment,
+reference construction, dataset limitations and broad validation coverage.

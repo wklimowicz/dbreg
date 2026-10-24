@@ -1,0 +1,157 @@
+Bounded OLS/IV fixed-effect projection - 2026-10-23
+=================================================
+
+Problem and change
+------------------
+The previous ordinary linear FE path needed 484 row-wise projection sweeps on
+the 5M-row, six-FE teacher benchmark. DuckDB took 399.318 seconds; the native
+Databricks diagnostic stopped without convergence after 30 sweeps / 360.909
+seconds. Those historical measurements remain in teacher_fe_parity_results.csv.
+The Databricks diagnostic is NOT a completed-fit baseline.
+
+R/ap-moments.R now adapts the existing GLM bounded FE solver for ordinary OLS
+and IV. It ranks distinct FE keys in SQL, collects capped marginal/pairwise
+sufficient statistics, solves the nuisance system, and reconstructs projected
+rows in SQL. The largest FE block is eliminated analytically; the remaining
+Schur system reuses R/glm-projection-moments.R. That shared helper gained an
+optional row-key argument; its GLM default and fitting algorithm are unchanged.
+
+The adapter centers the columns before solving. It certifies the actual SQL
+result: all weighted FE group means meet the requested absolute tolerance,
+values are finite, weights are positive, and the original row count survives.
+OLS/IV then use their existing moment and score/covariance passes over the
+transformed rows, avoiding subtraction of nearly equal global cross-products.
+Original text and BIGINT keys never round-trip through R doubles. Only bounded
+summary data and FE coefficients cross the database boundary.
+
+The default dbreg.ap_solver="auto" enables this path for DuckDB and native
+Databricks when no older method option was explicitly selected. "moments"
+explicitly tries it; "iterative" bypasses it. Oversized or numerically rejected
+systems use the existing iterative projector. Existing explicit join/window/CG
+choices retain their behavior under auto. Default tolerances are unchanged.
+The user-facing controls and diagnostics are documented in ?dbreg.
+
+Resource limits cover FE-pair summary rows, FE-by-design entries, rectangular
+transfer cells, the dense remainder, cross entries and Databricks coefficient
+upload size. Expected numerical/size failures may fall back; unexpected SQL
+failures propagate. A resource owner cleans all intermediate tables on success
+and failure. The estimation frame owns only the final projected relation.
+
+New regression coverage
+-----------------------
+helper_ap_moments.R runs the same cases on DuckDB and native Databricks:
+  * Weighted OLS with 2, 3 and 6 FEs (including a redundant constant FE).
+  * Fractional weights, multiple regressors, IID, HC1, external/nested clusters.
+  * Text identifiers with punctuation and Unicode; BIGINT keys above 2^53.
+  * Absorbed IV, comparing coefficients, full covariance and sample size.
+  * Automatic dispatch, bounded-solver diagnostics and certification.
+  * Each memory-limit fallback, invalid controls and failed convergence cleanup.
+  * Certificates reject lost rows, NULL values and nonzero group means.
+Local tests additionally inject lookup overflow and unexpected database errors,
+and check the native-query requirement without altering namespace bindings.
+The older AP tests explicitly exercise their existing join/window/CG routes.
+No wall-clock thresholds are asserted in unit tests.
+
+The existing FE edge suite also covers disconnected components, highly unequal
+weights, redundant/absorbed columns and rare correlated outcomes, comparing
+both cloglog and linear fits with fixest. The full GLM suite guards the shared
+projector's original row-key behavior.
+
+Benchmark design
+----------------
+The frozen teacher_fe_parity_benchmark.R driver uses the same deterministic
+5M teacher rows and linear probability model as the historical baseline:
+
+  wastage ~ log_outside_salary |
+    spine_band_year + district + Experience + AGE + SEX + FTPTWK
+
+Cluster: district; full FE parameter counting. Local engines use four threads.
+The independent feols reference uses fixef.tol=1e-10 and fixef.iter=10000.
+Timed feols uses its default demeaning tolerance. dbreg uses AP tolerance 1e-7
+and a 100-step cap, and independently certifies the actual projected rows.
+All completed fits must match reference coefficients, covariance and nobs.
+
+Input generation/loading, reference fitting and warehouse startup are excluded.
+Databricks result reuse is disabled. Timings run separately from tests and
+other benchmarks. These are a few repetitions on one synthetic design and one
+warehouse; high-dimensional systems outside the bounds may still require AP.
+The present optimization concerns ordinary linear FE and IV, not a new cloglog
+performance claim. Prior GLM benchmark reports remain unchanged.
+
+Validation note: native table inventory
+---------------------------------------
+The first native run passed every numerical comparison but failed 15 cleanup
+assertions because DBI::dbListTables() omitted the session-scoped input tables.
+A separate native probe confirmed that SHOW TABLES includes those tables and
+that DROP TEMPORARY TABLE removes them. The shared helper now uses SHOW TABLES
+on native Databricks and dbListTables on DuckDB. This checks actual temporary
+resources rather than comparing only permanent catalog tables.
+Databricks documents the temporary-table field in SHOW TABLES:
+https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-aux-show-tables
+
+Final validation
+----------------
+Full R CMD build/check (--no-manual --no-vignettes): Status OK, zero errors,
+warnings or notes. 2,369 assertions across 32 nonempty files; seven optional
+or native-gated files were empty in the local check. Optional binsreg was not
+installed. Source, man pages and test files in the checked build match the
+working tree. No new dependency was added for this optimization.
+
+Final native Databricks runs, all on the final source:
+  test_ap_moments_live.R         96 assertions passed
+  test_fe_edges_live.R          124 assertions passed
+  test_glm_databricks_live.R     209 assertions passed
+  Total                        429 assertions passed
+
+The native runs were concurrent in separate sessions; their logged durations
+are not performance benchmarks. All native and local tests finished before
+the final performance rerun. The test helper's original inventory mistake was
+corrected without weakening the cleanup requirements.
+
+Final completed-fit measurements (seconds)
+------------------------------------------
+Engine                 Repetition 1   Repetition 2    Median
+fixest::feols                10.118         10.116    10.117
+dbreg / DuckDB                2.421          3.061     2.741
+dbreg / native Databricks    42.514         42.584    42.549
+
+DuckDB's final median is about 146 times faster than the earlier 399.318-second
+single completed fit. This ratio describes this fixture only. Databricks now
+completes; its earlier 360.909-second diagnostic did not, so no completed-fit
+speedup ratio is claimed there. Initial runs before the additional certificate
+checks also completed (DuckDB 2.376/2.979; Databricks 48.181/43.691 seconds).
+The table above is the final production-code rerun, not a selected best run.
+
+Every final dbreg fit used one solve/refinement step and retained 5M rows.
+Actual maximum absolute FE group mean was <=1.85e-15 on DuckDB and 6.07e-14 on
+Databricks, also below the ordinary default tolerance of 1e-10. Relative to
+the independent strict feols reference, maximum errors across all dbreg fits:
+  coefficient absolute error        3.17e-15
+  standard-error absolute error     5.20e-13
+  covariance absolute error         1.06e-15
+The timed default-tolerance feols fit differs from that stricter reference by
+2.64e-9 in its coefficient and 1.29e-8 in its SE; these also satisfy the
+benchmark's stated parity thresholds. Original and current fits use the same
+model, covariance convention and input. No approximation to the FE estimand
+or tolerance relaxation accounts for the speedup.
+
+Evidence and reproduction
+-------------------------
+fe_moments_check.log, fe_moments_test_counts.csv
+fe_moments_validation.csv, fe_moments_native_{ap,edges,glm}.log
+fe_moments_source.sha256
+teacher_fe_moments_results.csv, teacher_fe_moments_reference.csv
+teacher_fe_moments_{local,remote}.log
+teacher_fe_moments_{local,remote}_environment.txt
+
+  Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_ap_moments.R")'
+  DBREG_TEST_DATABRICKS=TRUE Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_ap_moments_live.R")'
+  Rscript _benchmarks/teacher_fe_parity_benchmark.R /tmp/teacher-cloglog-5m /tmp/teacher-fe-moments-final local 2 100
+  Rscript _benchmarks/teacher_fe_parity_benchmark.R /tmp/teacher-cloglog-5m /tmp/teacher-fe-moments-final remote 2 100
+
+The input folder must contain teachers.parquet, data_generation.sql and
+data_summary.csv from the deterministic original teacher benchmark. Run the
+local benchmark first to create its independent reference; run remote second.
+Keep benchmarks separate from tests and other workloads. Do not edit the
+executing script. Native credentials and driver follow the existing setup;
+all new database objects are synthetic session-scoped temporary tables.

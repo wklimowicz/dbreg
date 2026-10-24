@@ -1,0 +1,3 @@
+"file","backend","assertions","passed"
+"test_glm_databricks_live.R","native Databricks",209,209
+"test_glm_databricks_sample.R","native Databricks",50,50

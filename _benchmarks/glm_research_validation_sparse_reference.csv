@@ -1,0 +1,2 @@
+"engine","nobs","exits","slopes","model_df","covariance_df","score","slope_step","elapsed"
+"independent full-indicator sparse Fisher scoring",5000000,105021,88,2472,2177,5.52300537080002e-10,3.54906367503998e-11,146.788

@@ -1,0 +1,149 @@
+Additional Databricks GLM experiments — 2026-10-23
+
+These are experiments, not production changes. All R source and package tests
+still match glm_databricks_followup_source.sha256. Benchmark processes install
+and restore their own temporary function overrides where needed.
+
+Fixed-predictor SQL experiments
+
+Same 5M-row synthetic teacher sample and saved working predictor. Result reuse
+disabled. Order: control / two branches / packed / materialized, then reverse.
+All successful variants were compared with every numeric moment and the global
+summary; compensated/decimal score and deviance sums were retained.
+
+Variant                         Runs, incl. decoding (s)       Median (s)
+Production three branches        6.478 /  6.283                  6.381
+Two aggregation branches         6.558 /  6.345                  6.452
+JSON result batches             14.130 / 18.099                 16.115
+Materialized working state      12.855 / 13.847                 13.351
+
+Two branches combine the global summary with FE marginals. They reduce scans
+from 15M to 10M logical rows, but have no measured elapsed-time advantage.
+They compute more aggregates for each marginal group. Not retained.
+
+JSON batching now round-trips correctly. It reduces fetched rows from 673,878
+to 13,801, but decoding/reconstructing the results adds 7.56 / 7.46 seconds.
+Those times exclude the subsequent independent comparison/sort used by this
+benchmark. Numeric pair keys travel with their weights; unordered collect_list
+does not scramble their correspondence. This is a rejected transport design.
+
+Materialization writes the working rows once, reads them for aggregation and
+drops the temporary table. The table write/read/drop cost exceeds saved
+recomputation. Small floating aggregation differences (max 4.8e-9 absolute)
+pass the 1e-12 relative moment comparison; neither iteration tolerance nor the
+statistical estimator was changed by these SQL experiments. Not retained.
+
+Transport diagnosis
+
+Installed R odbc is 1.6.4.1. A numeric DefaultStringColumnLength=1000000 was
+serialized as 1e+06 and long strings were truncated to 1,023 bytes. Passing
+the length as a character string preserved tested strings through 100,000
+bytes. The prior failed JSON experiment used a large numeric length argument.
+This reproduces the formatting/truncation mechanism; the corrected JSON
+experiment above no longer has that failure.
+
+Binary transport is also unsuitable with this installed stack: returned
+binary lengths were 1,024 for 4,096 input bytes, 608 for 60,000 bytes and 672
+for 100,000 bytes. No binary transfer path was added. Upstream release notes
+document fixes for numeric connection formatting and Databricks binary
+truncation: [odbc changelog](https://odbc.r-dbi.org/news/index.html).
+No installed R package or user connection configuration was changed.
+
+Newton/Fisher prototype
+
+Full 5M-row Databricks fits, order control / hybrid / hybrid / control:
+                                  Runs (s)           Median (s)
+Production Fisher scoring          82.479 / 84.325       83.402
+Adaptive Newton/Fisher prototype   73.670 / 75.005       74.338
+
+The prototype saves 9.06 seconds, or 10.87%, in this interleaved comparison.
+Both prototype fits converge in five iterations with no step halvings;
+both controls need six. Setup/covariance costs are similar. Evaluation falls
+from 57.962 / 58.694 seconds to 49.327 / 50.859 seconds, with 90M rather than
+105M logical rows read. All 66 fit statements finished without result reuse.
+
+Both prototype fits have coefficient 0.830287650633668, clustered SE
+0.050326371537329, final score 2.892967e-11 and N=5,000,000. Absolute strict
+fixest errors are 3.19e-12 for the coefficient and 2.18e-10 for its SE.
+These are prototype results, not a new production default or universal gain.
+The earlier 86.137-second production median came from another session; use
+the interleaved 83.402-second control to estimate this incremental change.
+
+Cloglog is noncanonical, so Fisher scoring and observed-curvature Newton
+directions differ. The prototype uses positive observed curvature for early
+WLS directions, then switches permanently to the existing Fisher working
+weights when the normalized score falls below sqrt(score_tol). An observed
+state cannot terminate the fit. Final convergence certification, projection,
+model information and covariance therefore use the original Fisher path.
+The line-search acceptance conditions and all numerical tolerances are
+unchanged. The independent fixest oracle never starts from dbglm estimates.
+
+This is a benchmark-only solver prototype. It is not a public control option
+and has not replaced the production solver. A production implementation needs
+an explicit curvature/step interface, Fisher recovery for difficult trial
+steps and broader native regression coverage before enabling it by default.
+
+Six smaller designs passed both coefficient and full clustered covariance
+comparisons with strict fixest, matching sample sizes, monotone deviance
+and the final score certificate. Controls also passed. Iterations were:
+  rare exits:              6 -> 5
+  very rare, weighted:    13 -> 6 (one step halving; 1,758 retained rows)
+  common, weighted:        8 -> 5
+  two FEs:                 8 -> 4
+  regressor shifted 1e6:   7 -> 5
+  varying slopes:          8 -> 6
+These are 4,500-row local screens, not warehouse scalability measurements.
+
+Sixty independently computed 90-digit finite-difference log-likelihood
+curvatures check both outcomes, weights 1/3 and eta from -34 to 3. All SQL
+weights are positive and finite. Maximum relative error is 5.4e-9 near the
+small-rate series cutoff; this is direction curvature, not final inference.
+Improving that transition is appropriate before production integration.
+
+Native-query connection flags
+
+The installed odbc helper sets UseNativeQuery but not the additional native
+parameterization flags set by newer upstream code. A separate experiment
+compares adding EnableNativeParameterizedQuery=1 and
+PopulateParametersForNativeQuery=1. Each connection owns its own identical
+synthetic temporary data; query result reuse is disabled.
+
+Control query times: 7.237 / 6.792 seconds, median 7.015.
+With flags:          7.013 / 6.619 seconds, median 6.816.
+All numerical result comparisons pass. The roughly 0.20-second (2.8%)
+difference is small relative to run variation, with only two repetitions per
+variant. It is not a demonstrated substantial/full-fit gain and does not
+justify changing defaults on this evidence alone.
+
+The flag selection comes from the upstream
+[odbc Databricks helper](https://github.com/r-dbi/odbc/blob/main/R/driver-databricks.R).
+No package upgrade was installed to obtain this result.
+
+Evidence files
+
+glm_databricks_transport_probe.csv     Actual text/binary lengths received
+glm_databricks_more_sql.csv           Fixed-predictor timings and checks
+glm_databricks_more_sql_queries.csv   Corresponding server metrics
+glm_cloglog_newton_screen.csv         Fixed-switch local 5M screening
+glm_cloglog_newton_stress.csv         Six smaller designs, both methods
+glm_cloglog_newton_curvature.csv      Independent derivative comparisons
+teacher_cloglog_newton_fits.csv       Four complete native warehouse fits
+teacher_cloglog_newton_queries.csv    Corresponding server metrics
+glm_databricks_native_flags.csv       Connection-flag comparison
+glm_databricks_native_flags_queries.csv
+                                     Corresponding server metrics
+
+Reproduction
+
+  Rscript _benchmarks/glm_databricks_transport_probe.R /tmp/glm-transport-probe
+  Rscript _benchmarks/glm_databricks_more_sql.R /tmp/teacher-cloglog-production /tmp/glm-more-sql-fixed
+  Rscript _benchmarks/glm_cloglog_newton_stress.R /tmp/glm-newton-stress
+  python _benchmarks/glm_cloglog_curvature_reference.py /tmp/glm-newton-curvature.csv
+  Rscript _benchmarks/glm_cloglog_newton_curvature.R /tmp/glm-newton-curvature.csv /tmp/glm-newton-curvature-checked.csv
+  Rscript _benchmarks/teacher_cloglog_newton_benchmark.R /tmp/teacher-cloglog-5m /tmp/teacher-cloglog-newton
+  Rscript _benchmarks/glm_databricks_native_flags.R /tmp/teacher-cloglog-production /tmp/glm-native-flags
+
+The original teacher_cloglog_results.txt explains sample/oracle generation.
+The target SQL experiments intentionally use the saved first-production
+query files; generated temporary names are recreated within fresh sessions.
+No confidential teacher data or persistent warehouse tables are used.

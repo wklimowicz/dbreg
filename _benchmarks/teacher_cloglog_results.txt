@@ -1,0 +1,287 @@
+5M-row synthetic teacher-shaped cloglog benchmark
+2026-10-23
+
+Historical prototype investigation. The subsequent production integration,
+additional correctness tests and package benchmarks are documented in
+glm_databricks_integration_results.txt. Times below retain their original
+meaning and are not relabelled as production measurements.
+
+Databricks is not yet as fast as it can sensibly get. On this sample the
+best tested prototype reduces median complete-fit time from 230.900 s to
+84.220 s: 2.742x faster, or 63.5% less time, with unchanged tolerances and
+agreement with a strict independent fixest reference. DuckDB is already
+fast at 13.412 s; default fixest takes 82.571 s. Further Databricks gains
+are possible targets, not measured promises of a particular runtime.
+
+This benchmarks the current working checkout, including the pre-existing GLM
+changes, rather than a released version. Base HEAD:
+0424a68b4820b9a592e658bb9043145bfe2bbc53 (dirty working tree).
+At this stage the optimizations were isolated benchmark prototypes and
+package R/ files had not yet been changed by this performance investigation.
+
+Data and estimand
+
+  wastage ~ log_outside_salary |
+    spine_band_year + district + Experience + AGE + SEX + FTPTWK
+  family = binomial("cloglog"), vcov = ~district
+
+5,000,000 synthetic rows, 105,021 exits (2.10042%). Six FE dimensions with
+2,001 / 296 / 44 / 44 / 2 / 2 levels, matching the active cardinalities
+documented for the teacher specification in WIP.md. No pure-outcome FE groups
+were found, so all engines retain all rows. fixest uses fixef.rm="none".
+
+The generator includes 23 years, unequal district sizes, experience-related
+pay bands, age/experience dependence, sex-related part-time work, regional
+sorting and an external salary variable defined at district/year/age/sex
+cell level. Age/experience correlation = 0.95089; pay-band/experience
+correlation = 0.97804. Female share = 72.22%; part-time share = 26.78%, with
+31.70% among women and 13.99% among men. True exit probabilities range from
+0.84% to 7.28%. The cloglog DGP has exactly the fitted additive FE structure
+and a true salary coefficient of 0.8.
+
+These are teacher-year-shaped synthetic observations, not a calibrated
+longitudinal teacher panel or a recreation of the confidential risk set.
+In particular, the synthetic FE graph has 671,488 observed pair edges,
+versus the 305,235 reported for the real data in WIP.md. Therefore these
+times must not be substituted for an actual teacher-data benchmark.
+
+Data are generated deterministically on Databricks using independently
+salted xxhash64 innovations. The same downloaded doubles feed DuckDB and
+fixest. Follow-up Databricks runs regenerate the identical SQL and verify
+row/exit counts. The exact sample is retained as Parquet under
+/tmp/teacher-cloglog-5m/teachers.parquet; it is not added to the repository.
+
+Completed baseline and first optimization
+
+Engine / variant                       Runs (seconds)      Median   IRLS
+DuckDB dbglm, verified 4 workers         14.109, 12.714       13.412   7, 6
+fixest feglm, default tolerances        84.752, 80.389       82.571   7, 7
+Databricks dbglm, current SQL           241.735, 220.065     230.900   8, 8
+Databricks, grouped + packed globals    144.203, 136.524     140.364   8, 8
+Databricks, best combined prototype      85.391,  83.048      84.220   6, 6
+fixest strict independent reference     214.078             214.078   8
+
+The first Databricks prototype is 1.645x faster (39.2% less elapsed time).
+It produces identical slope, clustered SE, deviance and reported final
+score to current Databricks SQL in these runs. The current moments solver
+is already very efficient on DuckDB: about 6.2x faster than default fixest
+for this sample, with the caveat that the algorithms' default convergence
+criteria are different.
+
+Accuracy
+
+Strict fixest reference: beta = 0.830287650630477,
+district-clustered SE = 0.0503263713195253,
+deviance = 1005945.36323747, N = 5,000,000.
+Strict settings: glm.tol=1e-12, fixef.tol=1e-9, glm.iter=100,
+fixef.iter=10000, nthreads=4.
+
+For current/packed Databricks and verified-four-worker DuckDB, maximum
+absolute discrepancy from this reference is below 5e-10 in the slope and
+3e-10 in the SE. Default fixest differs by 6.73e-9 in the slope and
+3.35e-7 in the SE. These are numerically negligible here. All successful
+dbglm fits use unchanged default tolerances (glm_tol=score_tol=1e-8,
+fe_tol=1e-10), the moments path and zero step halvings.
+
+Why Databricks is slower
+
+The current code already uses parameter-space IRLS and the bounded moments
+solver. It does not repeatedly write an N-row working table during IRLS.
+Older WIP.md descriptions of window-AP fallback and many-minute estimates
+describe a different implementation and are not this benchmark's results.
+
+The current fused query contains 22 UNION ALL branches: one global row,
+six FE marginals and 15 FE pairs. DuckDB materializes their shared source;
+Databricks inlines it. Query history shows 110M source rows read per
+evaluation, even though the table has only 5M rows. Repeated planning of
+the working-data expression and coefficient lookup joins is expensive.
+
+The packed prototype uses two branches: global + marginal GROUPING SETS,
+and weight-only pair GROUPING SETS. It puts the single global result into
+a JSON payload, avoiding numerous all-NULL scalar columns on pair rows.
+The pair values remain numeric; R unpacks the globals to the old interface.
+It still makes the same number of SQL calls as the original fit.
+
+Evaluation-query totals per fit (initial evaluation + eight iterations):
+
+Variant/run       Client elapsed   Compilation  Execution  Result fetch
+Current 1             193.160 s       108.831 s   46.138 s    34.593 s
+Current 2             187.785 s       108.024 s   42.058 s    34.555 s
+Packed 1              108.322 s        15.873 s   56.833 s    30.524 s
+Packed 2              103.209 s        14.582 s   56.832 s    25.970 s
+
+Logical rows read across evaluations fall from about 990M to 90M.
+Server metrics are separate counters, not an additive decomposition of
+client elapsed. Cached reads are still counted. These are not physical
+disk bytes or the number of rows sent to R.
+
+Each evaluation returns 673,878 rows (671,488 pairs + 2,389 levels + one
+global row). R object size immediately after fetch drops from 83.56 MB to
+40.44 MB with packing; this is not a measured wire-byte count, and the
+adapter subsequently recreates the wide R schema. Execution is actually
+slower in the two-branch prototype: global diagnostics are unnecessarily
+computed for all six marginals. That motivates the separate three-branch
+experiment described below.
+
+Follow-up experiments on the same data
+
+Variant                                       Runs (seconds)     IRLS
+Packed, centered salary                       112.896             6
+Packed + coefficient arrays, centered         103.485             6
+Three branches + arrays, centered             85.391, 83.048       6, 6
+
+Centering uses centered_salary = log_outside_salary - 10.8. Because the
+constant is absorbed by the FEs, this is the same model and slope estimand.
+All three successful variants return beta=0.830287650628682,
+SE=0.050326371537364, final score=2.3819830881e-10, the same deviance
+as the oracle, zero halvings and N=5M. The coefficient differs from the
+strict reference by 1.80e-12 and the SE by 2.18e-10.
+
+The array predictor uses FE ranks to index small constant coefficient
+arrays, avoiding six coefficient broadcast joins in each working-data
+expression. The final three-branch query separates global diagnostics,
+FE marginal GROUPING SETS and weight-only pair GROUPING SETS.
+
+For the best two fits, evaluation totals are 53.041 / 52.689 s. Server
+compilation totals are 4.502 / 4.069 s; execution 24.857 / 25.036 s;
+result fetch 21.834 / 20.876 s. There are seven evaluations per fit,
+reading 105M logical rows altogether. Three branches read more rows per
+evaluation than two, but substantially reduce aggregate computation.
+Setup/cleanup still costs 25.289 / 23.551 s, and covariance 3.932 / 3.728 s.
+The remaining gap to DuckDB is therefore largely SQL setup/execution and
+remote result transport, rather than the small local FE solver.
+
+The intermediate centering and array comparisons each have only one
+successful run, so their individual savings are indicative ablations.
+The full combined prototype and baseline each have two successful runs.
+Variant runs are sequential, not randomized hardware-controlled trials.
+
+Unsuccessful experiment retained: arrays plus two-branch packing with
+the original uncentered salary was interrupted after 215.5 s and 17
+completed iterations. Deviance was flat and printed raw scores were small,
+but the final profiled convergence check was not satisfied at that point.
+This is consistent with cancellation in uncentered profiled moments; the
+centered equivalent converges cleanly. The final profiled score was not
+separately instrumented in that interrupted run. It is not counted as a
+completed timing or claimed as a speedup. Arrays should not be integrated
+alone without conditioning and convergence regression coverage.
+
+Environment and timing boundaries
+
+Databricks SQL 2026.42, 2X-Small PRO serverless warehouse, Photon enabled,
+one cluster. R 4.6.0 / Fedora Linux 44; DuckDB 1.5.2; fixest 0.14.0;
+odbc 1.6.4.1; DBI 1.3.0. Local machine: Ryzen 7 PRO 6850U, 8 cores /
+16 hardware threads, approximately 30 GiB RAM. Four DuckDB workers and
+four fixest workers; shared OpenBLAS was not separately thread-capped.
+This is not a comparison on identical hardware or of matched cloud cost.
+
+Fit times include each estimator's input processing, FE setup, solving and
+cluster covariance. They exclude connections, warehouse startup, source
+generation, source download/load, external data diagnostics and the
+independent oracle fit. Result reuse is disabled on Databricks; data and
+other caches can be warm. Current/packed run order was reversed for the
+second repetition. Two repetitions on one synthetic sample do not provide
+a general capacity or statistical performance study.
+
+Generation took 5.765 s, downloading the identical data took 37.887 s,
+and loading the in-memory data into DuckDB took 0.759 s. The separate
+verified-worker rerun loaded local Parquet in 0.216 s. The 13.4 s DuckDB
+headline is therefore a fit time with data already local.
+
+Configuration correction: the initial DuckDB runs were 10.943 / 11.650 s,
+but their configuration was passed to dbConnect() and silently ignored by
+this driver. Recreating that connection reports 16 workers / 24 GiB.
+These runs remain in the raw CSV as initial_default_config and are not
+the headline comparison. DuckDB was rerun with config passed to duckdb(),
+and runtime settings were asserted: 4 workers / 3.7 GiB (requested 4 GB).
+The main benchmark script has also been corrected for reproduction.
+
+References for metric/config semantics:
+https://docs.databricks.com/api/query-history/v1/list-queries
+https://r.duckdb.org/reference/duckdb.html
+
+Implementation priorities
+
+1. Dispatch to Databricks-specific grouped aggregation. Keep the efficient
+   DuckDB materialized-source path. Separate global, FE-marginal and pair
+   aggregates so expensive global diagnostics and exact score sums are not
+   evaluated in all pair groups. Keep compact global transport. Numerical
+   certificates, sample pruning, clustered covariance and exact-sum
+   safeguards must remain intact.
+
+2. Center continuous regressors internally when an intercept/FE space
+   absorbs their constant part, then map predictions and parameter
+   representations back correctly. Here subtracting 10.8 from salary is
+   an equivalent specification and saves two IRLS iterations. This also
+   improves the conditioning of differences such as X'WX minus its FE
+   projection. Log the final profiled score on unsuccessful convergence
+   checks so repeated low-raw-score iterations are diagnosable.
+
+3. For small dense FE dictionaries, replace repeated broadcast joins of
+   coefficient lookup tables with indexed constant arrays. The prototype
+   checks positive integer ranks, density and size and retains the old
+   join path otherwise. Production integration needs conservative SQL-size
+   limits and coverage for missing/sparse ranks, varying slopes, predictions,
+   all supported links, covariance types and fallback cases. The current
+   experiment validates this workload, not every package input.
+
+4. Then investigate setup reuse and result handling. FE setup/pruning/
+   dictionary work still costs tens of seconds. Each iteration transfers
+   roughly 674k moment rows. Fixed graph topology could potentially be
+   cached and sparse payloads could be made narrower. Neither additional
+   gain has been measured here. The fused evaluator currently checks its
+   edge cap after fetching the full result (R/wls-state.R): enforce a
+   bounded fetch with a correct overflow/fallback path before expanding
+   this optimization to larger FE graphs.
+
+The local linear algebra is already a sensible design: it eliminates the
+2,001-level FE block and factors a remaining 388-level Schur block before
+rank reduction. Replacing that solver is not the first performance target.
+Exact cell compression is also not especially promising on this sample:
+4,453,761 distinct regressor/FE cells leave only 10.9% of rows removable.
+Compression would additionally need correct original counts, pruning and
+cluster covariance; naive frequency weights alone are insufficient.
+
+Validation and artifacts
+
+The main variants are checked against the independent strict fixest fit,
+including slope, district-clustered SE, N and deviance. Earlier portability
+checks of grouped/hybrid generators passed 176 assertions each, plus a
+packed-double round-trip check (check_glm_databricks_moments.R). The array
+prototype has a live Databricks eta/mu/score check at tolerance 1e-13,
+including a missing rank and an excessively sparse-rank fallback. Its small
+EXPLAIN uses constant input and is not evidence about a full Photon plan.
+R scripts parse successfully; these experiments do not constitute a full
+production integration test suite.
+
+teacher_cloglog_data.R              Deterministic synthetic generator
+teacher_cloglog_benchmark.R         Main three-engine benchmark and oracle
+teacher_cloglog_local_benchmark.R   Exact-sample verified-worker rerun
+teacher_cloglog_array_benchmark.R   Centering/array/three-branch experiments
+teacher_cloglog_arrays.R            Predictor and three-branch prototypes
+glm_databricks_moments.R            Grouped queries and global packing
+teacher_cloglog_profile.R           Client SQL instrumentation
+glm_databricks_history.R            Tagged server query metrics
+teacher_cloglog_collect.R           Consolidation into repository CSVs
+teacher_cloglog_fits.csv            Individual completed fit results
+teacher_cloglog_summary.csv         Aggregated times and numerical errors
+teacher_cloglog_queries.csv         Sanitized per-query server/client metrics
+teacher_cloglog_unsuccessful.csv    Interrupted uncentered array experiment
+teacher_cloglog_environment.txt     Versions, tolerances and settings correction
+teacher_cloglog_{data_summary,fe_sizes,fe_pairs,cells,pure_groups,preparation}.csv
+                                   Sample and preparation diagnostics
+
+Reproduction from the package root, with existing Databricks credentials:
+
+  Rscript _benchmarks/teacher_cloglog_benchmark.R /tmp/teacher-cloglog-5m 5000000 2
+  Rscript _benchmarks/glm_databricks_history.R /tmp/teacher-cloglog-5m
+  Rscript _benchmarks/teacher_cloglog_local_benchmark.R /tmp/teacher-cloglog-5m /tmp/teacher-cloglog-local 2
+  Rscript _benchmarks/teacher_cloglog_array_benchmark.R /tmp/teacher-cloglog-5m /tmp/teacher-cloglog-centered-v2 2
+  Rscript _benchmarks/glm_databricks_history.R /tmp/teacher-cloglog-centered-v2
+  Rscript _benchmarks/teacher_cloglog_collect.R /tmp/teacher-cloglog-5m /tmp/teacher-cloglog-local /tmp/teacher-cloglog-centered-v2
+
+Collect server history within three hours of a run. For the archived run,
+collector's optional fourth directory includes the interrupted experiment's
+query metrics. The main script now verifies four DuckDB workers itself;
+the separate local rerun is retained to make the original correction clear.
+Only session-scoped synthetic remote tables are created.

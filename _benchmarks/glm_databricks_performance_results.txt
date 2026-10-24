@@ -1,0 +1,161 @@
+Databricks cloglog performance review — 2026-10-23
+
+Finding: there is a measured, practical 2x improvement left in the SQL path.
+The best tested prototype reduced a 1,000,000-row, six-FE fit from 199.846 s
+to 91.502 s (2.18x). The simpler aggregation change alone took 99.308 s.
+These are full fits, including setup, clustered covariance and cleanup.
+This review adds benchmark prototypes and evidence; it does not change R/.
+
+Measured workloads and results
+
+All fits use binary y ~ x + z | fixed effects, binomial("cloglog"), clustered
+by the second FE, and unchanged default dbglm controls. The larger workload
+has 2,001/296/44/44/2/2 FE levels (2,389 total), matching the dimensions in
+the teacher application notes, but it is synthetic and has a different
+incidence rate and FE connectivity. It is NOT a benchmark of the real
+4.59-million-row teacher panel. It returns 618,774 moment rows per evaluation.
+
+Rows       FEs    Query shape                         Full fit, seconds
+100,000      4    Current UNION ALL                    40.815, 30.599
+100,000      4    One GROUPING SETS                    22.067, 19.840
+1,000,000    6    Current UNION ALL                    199.846
+1,000,000    6    One GROUPING SETS                    115.090
+1,000,000    6    Two narrow GROUPING SETS branches      99.308
+1,000,000    6    Two branches + compact global row     91.502
+
+The smaller workload has 100/20/5/3 FE levels. Runs alternate UNION/grouping/
+grouping/UNION. For the large workload, the variants were tested once each
+in the order shown. Do not interpret these as confidence intervals or a
+universal speedup. Every completed fit is included in the accompanying CSV.
+An early hybrid prototype had a SQL syntax error; it is recorded as a failed
+run, fixed, and excluded from performance comparisons.
+
+All large fits converged in eight iterations with zero step halvings and
+maximum scaled score 1.13e-9. Coefficients, standard errors and the entire
+deviance history were bit-for-bit equal between all four query variants.
+Against fixest::feglm(glm.tol=1e-12, fixef.rm="none"), maximum coefficient
+and SE differences were 2.44e-8 and 5.09e-10. Small fits took seven iterations;
+their corresponding reference differences were 8.70e-9 and 1.30e-9.
+No convergence tolerances, DECIMAL score sums, estimator or inference rules
+were changed.
+
+Why it is slow, and the first change to make
+
+R/glm-projection-moments.R:111-128 builds one branch for the global summary,
+one per FE and one per FE pair. On Databricks the source CTE is not
+materialized. The observed plan work therefore includes 22 source scans
+per six-FE evaluation, despite sending only one SQL statement. Nine
+evaluations (initial state plus eight steps) read 198,000,048 rows in the
+server metrics; the single-grouping version reads 9,000,048. The extra 48
+rows are tiny lookup inputs. Both full fits still issue 18 timed statements.
+The improvement is less compilation and repeated execution, not fewer
+R-to-database round trips.
+
+Across all nine IRLS evaluations, server metrics in seconds were:
+
+Shape             Client elapsed    Compile     Execute     Result fetch
+Current UNION        172.865          113.830      26.330       29.986
+One grouping          89.300            8.857      48.429       28.759
+Two branches          74.150           16.107      20.807       32.764
+Compact two           65.373           16.022      20.025       25.402
+
+These fields have different timing boundaries and need not sum exactly.
+This is measured compilation overhead, not an inference that all elapsed
+time is network latency.
+
+Use GROUPING SETS for (global + FE marginals), and a second GROUPING SETS
+branch for pair weights only; UNION the two compatible results. It retains
+the current bounded FE solver and result semantics. A single wide grouping
+is simpler and improves the small model, but nearly doubles execution work
+on the larger model because every pair carries the wider aggregate state.
+Keep DuckDB's existing strategy: these results concern Databricks.
+
+Second change: narrow the result schema
+
+The current fused query repeats global-summary columns as NULL on almost
+619k FE/pair rows. Its returned R data frame occupies 106.4 MB. The compact
+prototype returns the global summary as one JSON value, reducing the fetched
+data frame to about 42 MB and saving another 7.8 s per full fit in this run.
+The prototype reconstructs the old wide R interface for compatibility;
+a production version should consume the compact global row directly if
+reducing peak R memory is also a goal. JSON contains only global scalars;
+all FE/pair numeric moments continue to use native numeric columns.
+
+Remaining opportunities and limits
+
+* Setup/pruning/ranking still costs about 18 s in the large optimized fit.
+  R/dbglm.R:283-303 and R/glm-sample.R:48-77 inline the dictionary joins into
+  each pruning branch. Pruning on original keys before dense ranking, or a
+  carefully placed setup materialization, merits the next measured test.
+  Materializing every IRLS intermediate would restore expensive N-row writes.
+
+* R/wls-state.R:154 fetches the entire fused moment result before checking
+  max_edges at line 161. The separate dbglm_query_fe_moments path already
+  uses a SQL LIMIT. Bound the fused transfer before fetching, while retaining
+  complete global/FE diagnostics for fallback. This matters for larger FE
+  graphs and peak memory independently of the query-shape improvement.
+
+* FE lookup payloads are repeated once per FE in make_working() at
+  R/wls-state.R:222-238 and in the final projection. Per-FE payloads could
+  reduce SQL size/planning further. This candidate was inspected, not timed.
+
+* Parameter-space IRLS, no N-row writes during the moments IRLS loop,
+  Databricks moments selection and largest-FE Schur absorption are ALREADY
+  implemented. The six-FE solve uses the remaining 388-level block, not a
+  2,389-by-2,389 dense factorization. Local work outside measured database
+  calls is only about 4 s in the baseline. Reworking that solver is low priority.
+
+* Cell compression could help where exact covariate/offset/FE/cluster cells
+  repeat. Measure that ratio first. Preserve original sample counts, pruning
+  semantics and covariance calculations; simply replacing rows with larger
+  frequency weights is not sufficient for all inference types. These tests
+  have continuous covariates and do not establish a cell-compression gain.
+
+* Large FE graphs can still exceed the moments caps and fall back to iterative
+  projection. These results do not establish performance in that regime.
+  Server-side execution of the whole solver is a separate architecture and
+  was not benchmarked. The older WIP claims of an irreducible 1-1.5 s latency
+  floor, a necessary 5,230-square dense solve and a sub-5 s server-side fit
+  should not be treated as current measured conclusions.
+
+Recommendation: integrate the two-branch query first, with a Databricks-only
+dispatch and numerical/cap/fallback tests. The compact result is a smaller
+follow-up. There is clear room for roughly 2x on this representative workload;
+an order-of-magnitude gain or a universal optimum is not demonstrated.
+
+Environment and reproduction
+
+Databricks SQL 2026.42; 2X-Small PRO serverless warehouse, Photon enabled,
+one cluster. R 4.6.0; odbc 1.6.4.1; DBI 1.3.0; fixest 0.14.0. Queries use the
+native Databricks ODBC driver. Result reuse is disabled with
+SET use_cached_result=false; other caches may be warm. Startup, connection,
+synthetic data generation, reference download and oracle fitting are outside
+fit timings. Only session-scoped temporary remote objects are created.
+The synthetic rows are downloaded solely for the independent fixest oracle.
+
+From the package root:
+  Rscript _benchmarks/glm_databricks_performance.R /tmp/glm-small 100000 4 union,grouping,grouping,union
+  Rscript _benchmarks/glm_databricks_performance.R /tmp/glm-large 1000000 6 union,grouping,hybrid,packed
+  Rscript _benchmarks/glm_databricks_history.R /tmp/glm-large
+  Rscript _benchmarks/check_glm_databricks_moments.R
+
+Credentials: DATABRICKS_HOST, DATABRICKS_TOKEN, DATABRICKS_SQL_PATH;
+DATABRICKS_ODBC_DRIVER optionally overrides the driver path. No credentials
+or unrelated query text are saved in the results.
+
+Artifacts:
+  glm_databricks_moments.R: experimental SQL generators and compact adapter
+  glm_databricks_performance_fits.csv: all fit trials and numerical comparisons
+  glm_databricks_performance_queries.csv: client and sanitized server metrics
+
+Validation completed: 176 fixture assertions for each of grouped and hybrid
+SQL (352 total), all passing, plus the compact-decoder assertions and live
+cloglog comparisons above. The numerical fixture checks these against the existing
+Databricks fixture across supported families, weights, offsets and covariance
+types. Packed JSON is additionally checked for numeric decoding and by the
+live million-row cloglog fit. These prototypes are not a replacement for
+full release tests before changing production defaults.
+
+Primary references for SQL semantics and metric definitions:
+  https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-qry-select-groupby
+  https://docs.databricks.com/api/query-history/v1/list-queries

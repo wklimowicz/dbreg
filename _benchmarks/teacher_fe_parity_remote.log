@@ -1,0 +1,21 @@
+ℹ Loading dbreg
+START Databricks 1 2026-10-23 21:13:03.641838
+[dbreg] Using strategy: demean
+[dbreg] Using alternating projections for FE demeaning
+[AP] iter 3: max abs mean = 1.4807e-02
+[AP] iter 6: max abs mean = 1.0105e-02
+[AP] iter 9: max abs mean = 7.1231e-03
+[AP] iter 12: max abs mean = 5.1717e-03
+[AP] iter 15: max abs mean = 3.7825e-03
+[AP] iter 18: max abs mean = 2.7485e-03
+[AP] iter 21: max abs mean = 1.9665e-03
+[AP] iter 24: max abs mean = 1.3732e-03
+[AP] iter 27: max abs mean = 9.9542e-04
+[AP] iter 30: max abs mean = 7.6838e-04
+      engine repetition elapsed nobs coefficient se coef_error se_error
+1 Databricks          1 360.909   NA          NA NA         NA       NA
+  vcov_error projection_iterations        status max_iter
+1         NA                    NA not_converged       30
+                                                                                                                                                                                                                                                                                                           error
+1 [dbreg] Alternating projections did not converge within 30 iterations (max abs mean = 7.6838e-04).\n\nOptions:\n  - Increase tolerance: options(dbreg.ap_tol = 1e-7)\n  - Increase iterations: options(dbreg.ap_max_iter = 500)\n  - Use strategy = 'mundlak' (single-pass CRE estimator, no iteration needed)
+[1] 0

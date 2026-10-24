@@ -1,0 +1,52 @@
+ℹ Loading dbreg
+Native input matches local counts, wage means and all sampled row values
+START databricks repetition 1 at 2026-10-24 09:25:17.912429
+[dbglm] iteration 1: deviance=1007045.99, score=20
+[dbglm] iteration 2: deviance=1005945.78, score=1.73
+[dbglm] iteration 3: deviance=1005935.31, score=0.0199
+[dbglm] iteration 4: deviance=1005935.31, score=2.76e-05
+[dbglm] iteration 5: deviance=1005935.31, score=1.31e-07
+[dbglm] iteration 6: deviance=1005935.31, score=2.42e-10
+$engine
+[1] "databricks"
+
+$repetition
+[1] 1
+
+$elapsed
+[1] 134.041
+
+$iterations
+[1] 6
+
+$score
+[1] 9.130873e-09
+
+$projection
+[1] 1.851748e-15
+
+START databricks repetition 2 at 2026-10-24 09:27:42.546066
+[dbglm] iteration 1: deviance=1007045.99, score=20
+[dbglm] iteration 2: deviance=1005945.78, score=1.73
+[dbglm] iteration 3: deviance=1005935.31, score=0.0199
+[dbglm] iteration 4: deviance=1005935.31, score=2.76e-05
+[dbglm] iteration 5: deviance=1005935.31, score=1.31e-07
+[dbglm] iteration 6: deviance=1005935.31, score=2.44e-10
+$engine
+[1] "databricks"
+
+$repetition
+[1] 2
+
+$elapsed
+[1] 99.375
+
+$iterations
+[1] 6
+
+$score
+[1] 7.01257e-09
+
+$projection
+[1] 1.146621e-15
+

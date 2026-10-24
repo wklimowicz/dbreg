@@ -1,0 +1,12 @@
+"tag","run","phase","elapsed","sql_bytes","rows","result_bytes","status","compilation_time_ms","execution_time_ms","result_fetch_time_ms","total_time_ms","read_bytes","rows_read_count","read_cache_bytes","read_remote_bytes","write_remote_bytes","network_sent_bytes","result_from_cache","photon_total_time_ms","task_total_time_ms","spill_to_disk_bytes"
+"teacher_integrated_170901_Databricks_integrated_1_1","Databricks_integrated_1","setup_cleanup",0.357999999999999,214,0,2088,"FINISHED",156,26,5,188,0,0,0,0,0,0,FALSE,0,0,0
+"teacher_integrated_170901_Databricks_integrated_1_10","Databricks_integrated_1","evaluation",8.87399999999997,203156,673878,40435000,"FINISHED",617,4714,3302,5338,185232688,15000000,185232688,0,0,0,FALSE,9480,10123,0
+"teacher_integrated_170901_Databricks_integrated_1_12","Databricks_integrated_1","setup_cleanup",0.648000000000025,47,NA,56,"FINISHED",17,406,4,428,0,0,0,0,0,0,FALSE,0,0,0
+"teacher_integrated_170901_Databricks_integrated_1_2","Databricks_integrated_1","setup_cleanup",0.723000000000001,4880,1,2072,"FINISHED",230,390,7,626,63727528,5000000,2324751,61402777,0,0,FALSE,1382,1414,0
+"teacher_integrated_170901_Databricks_integrated_1_3","Databricks_integrated_1","setup_cleanup",8.46,75692,1,1328,"FINISHED",3869,3839,432,7715,828410024,35019112,828410024,0,0,0,FALSE,4018,4652,0
+"teacher_integrated_170901_Databricks_integrated_1_4","Databricks_integrated_1","setup_cleanup",0.715,10612,0,752,"FINISHED",551,27,3,584,0,0,0,0,0,0,FALSE,0,0,0
+"teacher_integrated_170901_Databricks_integrated_1_5","Databricks_integrated_1","setup_cleanup",6.144,10928,NA,56,"FINISHED",587,5229,220,5822,446066936,5019112,446066936,0,67202375,0,FALSE,2393,2783,0
+"teacher_integrated_170901_Databricks_integrated_1_6","Databricks_integrated_1","setup_cleanup",1.938,637,1,3672,"FINISHED",286,1499,3,1792,61822830,5000000,0,61822830,0,0,FALSE,1372,1377,0
+"teacher_integrated_170901_Databricks_integrated_1_7","Databricks_integrated_1","setup_cleanup",0.505000000000003,233,1,736,"FINISHED",205,132,4,344,40265700,5000000,40265700,0,0,0,FALSE,27,31,0
+"teacher_integrated_170901_Databricks_integrated_1_8","Databricks_integrated_1","setup_cleanup",307.623,3379,673877,24261264,"FINISHED",265,3141,304119,3413,83182187,10000000,83182187,0,0,0,FALSE,3401,4021,0
+"teacher_integrated_170901_Databricks_integrated_1_9","Databricks_integrated_1","evaluation",8.56399999999996,9467,673878,40435000,"FINISHED",1994,3431,2812,5456,163906141,15000000,163902694,3447,0,0,FALSE,5360,6182,0

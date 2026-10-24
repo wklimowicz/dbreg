@@ -1,0 +1,33 @@
+ℹ Loading dbreg
+          engine repetition reference  nobs coefficients elapsed iterations
+1     databricks          1    fixest 5e+06           10 134.041          6
+2     databricks          2    fixest 5e+06           10  99.375          6
+3         duckdb          1    fixest 5e+06           10  26.214          6
+4         duckdb          2    fixest 5e+06           10  26.353          6
+5         fixest          1    fixest 5e+06           10 327.998          7
+6         fixest          2    fixest 5e+06           10 332.310          7
+7     databricks          1    sparse 5e+06           10 134.041          6
+8     databricks          2    sparse 5e+06           10  99.375          6
+9         duckdb          1    sparse 5e+06           10  26.214          6
+10        duckdb          2    sparse 5e+06           10  26.353          6
+11        fixest          1    sparse 5e+06           10 327.998          7
+12        fixest          2    sparse 5e+06           10 332.310          7
+13 fixest_strict          0    sparse 5e+06           10 879.683          2
+     coef_error   vcov_error     se_error likelihood_error passed
+1  1.019208e-09 1.424655e-11 7.519296e-11      0.00000e+00   TRUE
+2  6.490711e-10 1.645624e-11 8.785754e-11      0.00000e+00   TRUE
+3  1.146389e-10 2.171296e-11 1.402735e-10      0.00000e+00   TRUE
+4  1.231085e-10 2.122269e-11 1.371062e-10      0.00000e+00   TRUE
+5  2.919409e-08 2.290381e-07 1.479654e-06      1.99955e-06  FALSE
+6  2.919409e-08 2.290381e-07 1.479654e-06      1.99955e-06  FALSE
+7  1.019351e-09 2.175368e-11 1.092360e-10      0.00000e+00   TRUE
+8  6.459431e-10 2.634760e-11 1.323044e-10      0.00000e+00   TRUE
+9  1.178364e-10 5.298541e-12 2.660659e-11      0.00000e+00   TRUE
+10 1.206449e-10 4.764630e-12 2.392556e-11      0.00000e+00   TRUE
+11 2.919722e-08 2.290194e-07 1.479534e-06      1.99955e-06  FALSE
+12 2.919722e-08 2.290194e-07 1.479534e-06      1.99955e-06  FALSE
+13 3.999773e-12 1.864865e-11 1.204770e-10      0.00000e+00   TRUE
+Error in compare_saved() : 
+  Some parity gates failed; inspect checks.csv and comparison.csv.
+Calls: run -> compare_saved
+Execution halted

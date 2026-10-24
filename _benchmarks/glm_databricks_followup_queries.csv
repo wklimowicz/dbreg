@@ -1,0 +1,10 @@
+"tag","run","phase","elapsed","sql_bytes","rows","result_bytes","status","compilation_time_ms","execution_time_ms","result_fetch_time_ms","total_time_ms","read_bytes","rows_read_count","read_cache_bytes","read_remote_bytes","write_remote_bytes","network_sent_bytes","result_from_cache","photon_total_time_ms","task_total_time_ms","spill_to_disk_bytes"
+"glm_followup_196550_moments_original_1_4","moments_original_1","setup_cleanup",9.684,203118,673878,40435000,"FINISHED",861,5389,3034,6257,185766848,15000000,524288,185242560,0,0,FALSE,11142,11952,0
+"glm_followup_196550_moments_original_2_8","moments_original_2","setup_cleanup",9.611,203118,673878,40435000,"FINISHED",902,5002,3313,5910,185232688,15000000,185232688,0,0,0,FALSE,9676,10427,0
+"glm_followup_196550_moments_packed_1_5","moments_packed_1","setup_cleanup",9.498,203296,3131,2276120,"FINISHED",723,4966,3607,5698,185232688,15000000,185232688,0,0,0,FALSE,10080,10803,0
+"glm_followup_196550_moments_packed_2_9","moments_packed_2","setup_cleanup",9.627,203296,3131,2276120,"FINISHED",826,4998,3407,5832,185232688,15000000,185232688,0,0,0,FALSE,9925,10619,0
+"glm_followup_196550_prune_original_1_2","prune_original_1","setup_cleanup",9.693,75692,1,1328,"FINISHED",4082,4688,433,8776,828410024,35019112,828410024,0,0,0,FALSE,4120,4749,0
+"glm_followup_196550_prune_original_2_6","prune_original_2","setup_cleanup",9.631,75692,1,1328,"FINISHED",3993,4968,436,8967,828410024,35019112,828410024,0,0,0,FALSE,4179,4815,0
+"glm_followup_196550_prune_preflight_1_3","prune_preflight_1","setup_cleanup",0.789999999999999,248,1,992,"FINISHED",246,369,3,621,23721306,5000000,23721306,0,0,0,FALSE,982,1021,0
+"glm_followup_196550_prune_preflight_2_7","prune_preflight_2","setup_cleanup",1.386,248,1,992,"FINISHED",503,671,15,1180,23721306,5000000,23721306,0,0,0,FALSE,894,926,0
+"glm_followup_196550_setup_1","setup","setup_cleanup",7.316,10928,NA,56,"FINISHED",694,5791,661,6492,446070658,5019112,381713436,64357222,67202375,0,FALSE,4759,5154,0

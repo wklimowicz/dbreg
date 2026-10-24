@@ -1,0 +1,31 @@
+ℹ Loading dbreg
+START fixest 1 2026-10-23 23:27:23.894519
+  engine repetition elapsed    nobs coefficient          se   coef_error
+1 fixest          1  10.118 5000000  0.01663066 0.001015537 2.639685e-09
+      se_error   vcov_error projection_iterations    status max_iter error
+1 1.287307e-08 2.614597e-11                    NA converged      100      
+START DuckDB 1 2026-10-23 23:27:34.334181
+[dbreg] Using strategy: demean
+[dbreg] Using fixed-effect projection for FE demeaning
+[dbreg] Bounded FE moments: 1 solve/refinement steps; certified max abs mean = 1.8417e-15
+[dbreg] Executing demean SQL
+
+  engine repetition elapsed  nobs coefficient          se   coef_error
+1 DuckDB          1   2.421 5e+06  0.01663066 0.001015524 5.481726e-16
+      se_error   vcov_error projection_iterations    status max_iter error
+1 5.197206e-13 1.055577e-15                     1 converged      100      
+START DuckDB 2 2026-10-23 23:27:37.086622
+[dbreg] Using strategy: demean
+[dbreg] Using fixed-effect projection for FE demeaning
+[dbreg] Bounded FE moments: 1 solve/refinement steps; certified max abs mean = 1.8065e-15
+[dbreg] Executing demean SQL
+
+  engine repetition elapsed  nobs coefficient          se   coef_error
+1 DuckDB          2   3.061 5e+06  0.01663066 0.001015524 6.591949e-16
+      se_error   vcov_error projection_iterations    status max_iter error
+1 5.197446e-13 1.055626e-15                     1 converged      100      
+START fixest 2 2026-10-23 23:27:40.480979
+  engine repetition elapsed    nobs coefficient          se   coef_error
+1 fixest          2  10.116 5000000  0.01663066 0.001015537 2.639685e-09
+      se_error   vcov_error projection_iterations    status max_iter error
+1 1.287307e-08 2.614597e-11                    NA converged      100      

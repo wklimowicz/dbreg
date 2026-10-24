@@ -1,0 +1,2 @@
+engine,rows,slopes,fixed_effects,status,exit_code,last_observed_elapsed,last_observed_cpu,last_observed_rss_kib,reason
+duckdb,5000000,88,6,terminated_without_fit,143,06:46,00:13:26,18896456,SIGTERM; log contains no diagnostic establishing cause; no completed timing or parity result

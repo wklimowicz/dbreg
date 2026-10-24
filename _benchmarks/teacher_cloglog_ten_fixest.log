@@ -1,0 +1,67 @@
+ℹ Loading dbreg
+START fixest repetition 1 at 2026-10-24 09:11:47.688486
+Iteration: 01 -- Deviance = 1,534,387.7 -- Evol. = -8352008
+Iteration: 02 -- Deviance = 1,098,764.8 -- Evol. = -435622.9
+Iteration: 03 -- Deviance = 1,014,312.7 -- Evol. = -84452.1
+Iteration: 04 -- Deviance = 1,006,128.9 -- Evol. = -8183.826
+Iteration: 05 -- Deviance = 1,005,935.7 -- Evol. = -193.2211
+Iteration: 06 -- Deviance = 1,005,935.3 -- Evol. = -0.3430964
+Iteration: 07 -- Deviance = 1,005,935.3 -- Evol. = -1.003826e-05
+Null model:
+Iteration: 01 -- Deviance = 1,537,865.5 -- Evol. = -8348530
+Iteration: 02 -- Deviance = 1,105,811.9 -- Evol. = -432053.6
+Iteration: 03 -- Deviance = 1,025,575.3 -- Evol. = -80236.53
+Iteration: 04 -- Deviance = 1,019,287.2 -- Evol. = -6288.153
+Iteration: 05 -- Deviance = 1,019,219.7 -- Evol. = -67.52286
+Iteration: 06 -- Deviance = 1,019,219.7 -- Evol. = -0.01005388
+$engine
+[1] "fixest"
+
+$repetition
+[1] 1
+
+$elapsed
+[1] 327.998
+
+$iterations
+[1] 7
+
+$score
+[1] NA
+
+$projection
+[1] NA
+
+START fixest repetition 2 at 2026-10-24 09:17:18.22788
+Iteration: 01 -- Deviance = 1,534,387.7 -- Evol. = -8352008
+Iteration: 02 -- Deviance = 1,098,764.8 -- Evol. = -435622.9
+Iteration: 03 -- Deviance = 1,014,312.7 -- Evol. = -84452.1
+Iteration: 04 -- Deviance = 1,006,128.9 -- Evol. = -8183.826
+Iteration: 05 -- Deviance = 1,005,935.7 -- Evol. = -193.2211
+Iteration: 06 -- Deviance = 1,005,935.3 -- Evol. = -0.3430964
+Iteration: 07 -- Deviance = 1,005,935.3 -- Evol. = -1.003826e-05
+Null model:
+Iteration: 01 -- Deviance = 1,537,865.5 -- Evol. = -8348530
+Iteration: 02 -- Deviance = 1,105,811.9 -- Evol. = -432053.6
+Iteration: 03 -- Deviance = 1,025,575.3 -- Evol. = -80236.53
+Iteration: 04 -- Deviance = 1,019,287.2 -- Evol. = -6288.153
+Iteration: 05 -- Deviance = 1,019,219.7 -- Evol. = -67.52286
+Iteration: 06 -- Deviance = 1,019,219.7 -- Evol. = -0.01005388
+$engine
+[1] "fixest"
+
+$repetition
+[1] 2
+
+$elapsed
+[1] 332.31
+
+$iterations
+[1] 7
+
+$score
+[1] NA
+
+$projection
+[1] NA
+

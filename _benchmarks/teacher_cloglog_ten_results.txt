@@ -1,0 +1,151 @@
+Five-million-row, ten-slope synthetic cloglog benchmark — 2026-10-24
+==================================================================
+
+Status: all six timed fits, the sparse reference and the strict fixest reference
+are complete. Both database engines pass against both references. The default
+fixest covariance/SE discrepancies are quantified below; they are not strict
+parity passes.
+
+Completed default-fit times
+----------------------------
+Engine                       Run 1       Run 2       Median
+DuckDB + dbglm                26.214 s    26.353 s     26.284 s
+Databricks + dbglm           134.041 s    99.375 s    116.708 s
+fixest::feglm                327.998 s   332.310 s    330.154 s
+
+On this design, DuckDB is 12.56x faster than default fixest, and Databricks is
+2.83x faster. Databricks takes 4.44x as long as DuckDB with data already local.
+These are two-run medians on different local/cloud hardware, not a general
+speed guarantee. The wider Databricks timing range is reported rather than
+using its faster run as the headline. No estimator/tolerance was changed.
+
+Model and data
+---------------
+  wastage ~ log_outside_salary:factor(experience_group) +
+    log_teacher_salary:factor(experience_group) |
+    spine_band_year + district + Experience + AGE + SEX + FTPTWK
+  family = binomial("cloglog"), vcov = ~district
+
+Two wage effects are estimated separately in five experience groups: 0-4,
+5-9, 10-19, 20-29 and 30-43. The original single-year Experience FE remains.
+There are ten slope coefficients, six correlated FEs with 2001/296/44/44/2/2
+levels, and 296 district clusters. All fits retain exactly IDs 0..4,999,999.
+There are 105,021 exits (2.10042%). Model df=2394; covariance df=2099.
+
+This uses the original deterministic synthetic teacher generator and adds the
+same synthetic teacher-wage innovation used by the wider experiment. The DGP
+still has a constant outside-wage effect of 0.8 and a zero teacher-wage effect;
+the ten-slope specification contains that DGP. No real data are used. This is
+a realistic-sized design, not a calibrated empirical teacher-panel model.
+
+Input checks compare row/exit counts, all unique IDs, group counts, wage means
+and every field in 101 deterministic sampled rows before native timing begins.
+The original generator SQL matches the SQL stored with the local Parquet input.
+
+Accuracy
+---------
+The independent full-indicator sparse Fisher reference uses the raw Bernoulli
+likelihood, all nuisance indicators and a full district-cluster sandwich. It
+does not call dbglm's SQL/projection implementation. It converged in six steps:
+normalized score 3.967653e-10; maximum slope step 5.407088e-12. Its initialization
+uses the known synthetic generating probabilities. Its 71.127-second duration
+is validation work, not a comparable default-estimator performance result.
+
+All 12 checks passed for each of the four database fits: coefficient names,
+nobs, exact sample IDs, coefficients, full covariance, SEs, likelihood, both
+degrees-of-freedom counts, score/projection certificates and convergence.
+Across the two Databricks runs, maximum absolute coefficient error was
+1.019351e-9, covariance error 2.634760e-11 and SE error 1.323044e-10. DuckDB's
+corresponding maxima were 1.206449e-10, 5.298541e-12 and 2.660659e-11.
+
+Default fixest agrees on coefficients (maximum error 2.919722e-8), sample,
+likelihood and df. Its maximum covariance error is 2.290194e-7; maximum SE error
+is 1.479534e-6, about 0.0019% relative. Both default runs fail the stringent
+elementwise covariance and SE gates used here. This is recorded as a failure
+of those gates, not hidden by relaxing them. The database fits pass those same
+gates against the independent reference.
+
+The strict fixest reference also completed. It uses glm.tol=3e-13,
+fixef.tol=1e-10, independently centered wages and generating-probability
+initialization, followed by two refinements from fixest's OWN fitted predictor.
+The final refinement changed coefficients by 1.587e-13 and covariance entries
+by 8.684e-12. It agrees with the sparse reference to 3.999773e-12 in coefficients,
+1.864865e-11 in covariance and 1.204770e-10 in SEs, passing all ten shared checks.
+
+All four database fits also pass all 12 checks against strict fixest. Maximum
+coefficient error is 1.019208e-9 and maximum SE error is 1.402735e-10. Tightening
+fixest thus closes the small default-fit covariance discrepancy. Total strict
+reference construction took 879.683 seconds for the initial fit plus TWO
+additional refinement fits; this is not a single-fit performance comparison.
+
+The strict reference was saved and passed its internal convergence/stability
+checks before its R process reported a trailing parse error. The benchmark
+script had been edited during that run, changing the unread file tail. This was
+a harness error after result creation, not an estimator failure. The saved RDS
+was independently checked, and the final frozen script reran all comparisons.
+The final validation audit confirms the expected passes and explicitly retained
+default-fixest failures. The raw reference log preserves the process error.
+
+Timing boundaries and environment
+----------------------------------
+Engines ran sequentially, in this order: two DuckDB fits, two default fixest
+fits, two Databricks fits. Reference work followed the timed fits. Local engines
+use four threads; OPENBLAS_NUM_THREADS=1 and OMP_THREAD_LIMIT=4. DuckDB's requested
+memory limit is 4GB; temporary spill storage is on disk. R 4.6.0, DuckDB 1.5.2,
+fixest 0.14.0 and ODBC 1.6.4.1 were used. Per-mode environment files record the
+native SQL version and session details.
+
+Timers include each estimator's preprocessing, FE work, iterations and clustered
+covariance. dbglm's retained-sample table export is included. Timers exclude
+connections, warehouse startup, synthetic generation, source loading/download,
+sample-validation downloads and independent references. Databricks result reuse
+is disabled; other caches may be warm. Default convergence settings differ
+between fixest and dbglm; the independent checks quantify their numerical effect.
+
+Fixture correction and historical scope
+----------------------------------------
+An initial Databricks attempt was stopped before a completed fit because the
+new wage column's mean differed from DuckDB by 3.13e-7. Spark DECIMAL division
+rounded terms that DuckDB evaluated as DOUBLE. The shared
+teacher_cloglog_salary_sql() helper now explicitly casts operands to DOUBLE.
+A full local five-million-row check found zero changed values, so the earlier
+local fits remain valid. The restarted native runs passed the input checks.
+The interrupted attempt contributes no timing or parity pass.
+
+The same fixture defect existed in the older 88-slope comparison. Its report
+now records that caveat: the old fit timing remains a completed fit, but its
+numeric reference comparison must not be called identical-input parity. The
+corrected 88-slope fixture has not been rerun. The one-slope benchmark and the
+routine package/native fixtures did not use this extra SQL wage expression.
+
+Production R code and package tests are unchanged from the prior clean package
+check (2,645 assertions, zero errors/warnings/notes). This follow-up adds benchmark
+code/evidence and corrects the benchmark fixture; it adds no performance changes.
+
+Reproduction
+-------------
+Run from the package root with Databricks credentials and the package's development
+dependencies available. Use directories on disk for INPUT and OUT. To prepare
+the original synthetic input if needed:
+
+  Rscript _benchmarks/teacher_cloglog_wide_validation.R INPUT PREPARE_OUT prepare
+
+Set OPENBLAS_NUM_THREADS=1, OMP_NUM_THREADS=4, OMP_THREAD_LIMIT=4 and TZ=Europe/London.
+Then run these commands sequentially:
+
+  Rscript _benchmarks/teacher_cloglog_ten_slopes.R INPUT OUT duckdb 2
+  Rscript _benchmarks/teacher_cloglog_ten_slopes.R INPUT OUT fixest 2
+  Rscript _benchmarks/teacher_cloglog_ten_slopes.R INPUT OUT databricks 2
+  Rscript _benchmarks/teacher_cloglog_ten_slopes.R INPUT OUT sparse 1
+  Rscript _benchmarks/teacher_cloglog_ten_slopes.R INPUT OUT reference 1
+  Rscript _benchmarks/teacher_cloglog_ten_slopes.R INPUT OUT compare
+
+The reference mode is separate, stricter validation work. Comparison saves all
+results before returning an error if any strict parity gate fails, including
+the documented default-fixest covariance/SE discrepancies. Inspect the engine
+and reference columns; a failed reference gate is not an incomplete timed fit.
+
+Evidence: teacher_cloglog_ten_{fits,comparison,checks,default_fixest_comparison,
+input,double_cast_local_equivalence,discarded_fixture,reference_status}.csv;
+matching per-mode environment/log files; teacher_cloglog_ten_validation.log;
+teacher_cloglog_ten_source.sha256. Large fit/sample RDS files stay under SCRATCH.

@@ -1,0 +1,2 @@
+engine,variant,status,elapsed_until_stop_seconds,last_completed_iteration,reason
+Databricks,arrays_packed,interrupted,215.5,17,"Flat deviance and small printed raw score, but final convergence certificate not satisfied; stopped rather than loosening tolerances. Not a completed fit timing."

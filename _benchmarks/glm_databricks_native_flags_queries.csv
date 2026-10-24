@@ -1,0 +1,7 @@
+"tag","run","phase","elapsed","sql_bytes","rows","result_bytes","status","compilation_time_ms","execution_time_ms","result_fetch_time_ms","total_time_ms","read_bytes","rows_read_count","read_cache_bytes","read_remote_bytes","write_remote_bytes","network_sent_bytes","result_from_cache","photon_total_time_ms","task_total_time_ms","spill_to_disk_bytes"
+"glm_native_flags_211675_control_1_3","control_1","setup_cleanup",7.226,203118,673878,40435000,"FINISHED",606,2986,3071,3601,191771185,15000000,104141987,87629198,0,0,FALSE,17924,18216,0
+"glm_native_flags_211675_control_2_6","control_2","setup_cleanup",6.785,203118,673878,40435000,"FINISHED",586,2447,3476,3041,190950850,15000000,190950850,0,0,0,FALSE,15222,15547,0
+"glm_native_flags_211675_control_setup_1","control_setup","setup_cleanup",4.176,10928,NA,56,"FINISHED",547,3475,3,4027,446858461,5019112,358603873,88254588,67303733,0,FALSE,6914,7484,0
+"glm_native_flags_211675_native_flags_1_4","native_flags_1","setup_cleanup",6.848,203118,673878,40435000,"FINISHED",612,2702,3310,3322,191707686,15000000,111874327,79833359,0,0,FALSE,16737,17101,0
+"glm_native_flags_211675_native_flags_2_5","native_flags_2","setup_cleanup",6.612,203118,673878,40435000,"FINISHED",602,2542,3242,3172,190950850,15000000,190950850,0,0,0,FALSE,14606,14963,0
+"glm_native_flags_211675_native_flags_setup_2","native_flags_setup","setup_cleanup",4.259,10928,NA,56,"FINISHED",544,3508,5,4057,446070592,5019112,382343088,63727504,67303733,0,FALSE,6769,7332,0

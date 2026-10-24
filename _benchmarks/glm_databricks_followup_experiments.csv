@@ -1,0 +1,15 @@
+"variant","repetition","query_seconds","decode_and_check_seconds","rows","result_bytes","status"
+"prune_original",1,9.695,0,1,1328,"passed"
+"prune_preflight",1,0.794,0,1,992,"passed"
+"moments_original",1,9.693,0,673878,40435000,"passed"
+"moments_packed",1,9.501,0.0210000000000008,3131,2276120,"rejected: lexical error: invalid string in json text.
+                                        [[1699.0,200.0,0.0563018206313
+                     (right here) ------^
+"
+"prune_original",2,9.633,0,1,1328,"passed"
+"prune_preflight",2,1.38800000000001,0,1,992,"passed"
+"moments_original",2,9.617,0,673878,40435000,"passed"
+"moments_packed",2,9.63,0.019999999999996,3131,2276120,"rejected: lexical error: invalid string in json text.
+                                        [[1699.0,200.0,0.0563018206313
+                     (right here) ------^
+"

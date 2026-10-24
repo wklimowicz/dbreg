@@ -1,0 +1,2 @@
+"engine","reference","n_input","nobs","exits","coefficients","elapsed","coef_error","vcov_error","se_error","likelihood_error","score","projection","iterations","passed"
+"databricks","sparse",5000000,5e+06,105021,88,876.178,6.2450608379061e-08,1.39591001865197e-09,7.39443670877415e-09,4.69805672764778e-06,4.63065819546109e-09,1.90133481628052e-15,6,TRUE

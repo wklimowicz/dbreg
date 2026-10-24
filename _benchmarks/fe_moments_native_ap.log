@@ -1,0 +1,13 @@
+ℹ Loading dbreg
+[AP moments] y ~ x + z | f + g ~cluster
+[AP moments] y ~ x + z | f + g + h ~cluster
+[AP moments] y ~ x + z | f + g + h + j + k + all ~cluster
+[AP moments] y ~ x + z + x2 | f + g + h "iid"
+[AP moments] y ~ x + z + x2 | f + g + h "hc1"
+[AP moments] y ~ x + z + x2 | f + g + h ~g
+[AP moments] y ~ x + z + x2 | f + g + h ~cluster
+[AP moments] y ~ z | f + g + h | endog ~ x ~cluster
+[AP moments] y ~ x + z + x2 | f + g + h ~cluster
+[AP moments] y ~ x + z | f + g ~cluster
+test_ap_moments_live.R........   96 tests OK 4.9s
+All ok, 96 results (4.9s)

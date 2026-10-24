@@ -1,0 +1,54 @@
+ℹ Loading dbreg
+Starting independent strict fixest reference
+Iteration: 01 -- Deviance = 1,005,974.0 -- Evol. = -8880422
+Iteration: 02 -- Deviance = 1,005,935.3 -- Evol. = -38.60697
+Iteration: 03 -- Deviance = 1,005,935.3 -- Evol. = -0.04256606
+Iteration: 04 -- Deviance = 1,005,935.3 -- Evol. = -8.579809e-07
+Iteration: 05 -- Deviance = 1,005,935.3 -- Evol. = 0
+Null model:
+Iteration: 01 -- Deviance = 1,537,865.5 -- Evol. = -8348530
+Iteration: 02 -- Deviance = 1,105,811.9 -- Evol. = -432053.6
+Iteration: 03 -- Deviance = 1,025,575.3 -- Evol. = -80236.53
+Iteration: 04 -- Deviance = 1,019,287.2 -- Evol. = -6288.153
+Iteration: 05 -- Deviance = 1,019,219.7 -- Evol. = -67.52286
+Iteration: 06 -- Deviance = 1,019,219.7 -- Evol. = -0.01005388
+Iteration: 07 -- Deviance = 1,019,219.7 -- Evol. = -6.472692e-08
+Iteration: 01 -- Deviance = 1,005,935.3 -- Evol. = -8880460
+Iteration: 02 -- Deviance = 1,005,935.3 -- Evol. = 1.164153e-10
+Null model:
+Iteration: 01 -- Deviance = 1,537,865.5 -- Evol. = -8348530
+Iteration: 02 -- Deviance = 1,105,811.9 -- Evol. = -432053.6
+Iteration: 03 -- Deviance = 1,025,575.3 -- Evol. = -80236.53
+Iteration: 04 -- Deviance = 1,019,287.2 -- Evol. = -6288.153
+Iteration: 05 -- Deviance = 1,019,219.7 -- Evol. = -67.52286
+Iteration: 06 -- Deviance = 1,019,219.7 -- Evol. = -0.01005388
+Iteration: 07 -- Deviance = 1,019,219.7 -- Evol. = -6.472692e-08
+Reference refinement 1: coefficient delta=5.024e-12; covariance delta=1.448e-11
+Iteration: 01 -- Deviance = 1,005,935.3 -- Evol. = -8880460
+Iteration: 02 -- Deviance = 1,005,935.3 -- Evol. = 0
+Null model:
+Iteration: 01 -- Deviance = 1,537,865.5 -- Evol. = -8348530
+Iteration: 02 -- Deviance = 1,105,811.9 -- Evol. = -432053.6
+Iteration: 03 -- Deviance = 1,025,575.3 -- Evol. = -80236.53
+Iteration: 04 -- Deviance = 1,019,287.2 -- Evol. = -6288.153
+Iteration: 05 -- Deviance = 1,019,219.7 -- Evol. = -67.52286
+Iteration: 06 -- Deviance = 1,019,219.7 -- Evol. = -0.01005388
+Iteration: 07 -- Deviance = 1,019,219.7 -- Evol. = -6.472692e-08
+Reference refinement 2: coefficient delta=1.587e-13; covariance delta=8.684e-12
+$nobs
+[1] 5000000
+
+$elapsed
+[1] 879.683
+
+$refinements
+[1] 2
+
+$model_df
+[1] 2394
+
+$covariance_df
+[1] 2099
+
+Error: unexpected '=' in "="
+Execution halted

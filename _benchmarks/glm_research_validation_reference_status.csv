@@ -1,0 +1,2 @@
+pid,wall_time_at_stop,cpu_time_at_stop,status,reason
+45992,21:17,00:41:42,interrupted_without_result,strict 5M 88-slope reference exceeded practical validation time; independent sparse reference completed

@@ -1,0 +1,51 @@
+ℹ Loading dbreg
+START duckdb repetition 1 at 2026-10-24 09:10:41.665635
+[dbglm] iteration 1: deviance=1007045.99, score=20
+[dbglm] iteration 2: deviance=1005945.78, score=1.73
+[dbglm] iteration 3: deviance=1005935.31, score=0.0199
+[dbglm] iteration 4: deviance=1005935.31, score=2.76e-05
+[dbglm] iteration 5: deviance=1005935.31, score=1.31e-07
+[dbglm] iteration 6: deviance=1005935.31, score=2.44e-10
+$engine
+[1] "duckdb"
+
+$repetition
+[1] 1
+
+$elapsed
+[1] 26.214
+
+$iterations
+[1] 6
+
+$score
+[1] 1.412918e-09
+
+$projection
+[1] 1.28126e-15
+
+START duckdb repetition 2 at 2026-10-24 09:11:09.963151
+[dbglm] iteration 1: deviance=1007045.99, score=20
+[dbglm] iteration 2: deviance=1005945.78, score=1.73
+[dbglm] iteration 3: deviance=1005935.31, score=0.0199
+[dbglm] iteration 4: deviance=1005935.31, score=2.76e-05
+[dbglm] iteration 5: deviance=1005935.31, score=1.31e-07
+[dbglm] iteration 6: deviance=1005935.31, score=2.45e-10
+$engine
+[1] "duckdb"
+
+$repetition
+[1] 2
+
+$elapsed
+[1] 26.353
+
+$iterations
+[1] 6
+
+$score
+[1] 1.513585e-09
+
+$projection
+[1] 3.37025e-15
+

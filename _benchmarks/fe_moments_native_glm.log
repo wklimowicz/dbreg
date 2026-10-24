@@ -1,0 +1,15 @@
+ℹ Loading dbreg
+[Databricks test] binomial/cloglog iid
+[Databricks test] binomial/cloglog hc1
+[Databricks test] binomial/cloglog cluster
+[Databricks test] binomial/logit iid
+[Databricks test] binomial/logit hc1
+[Databricks test] binomial/logit cluster
+[Databricks test] binomial/probit iid
+[Databricks test] binomial/probit hc1
+[Databricks test] binomial/probit cluster
+[Databricks test] poisson/log iid
+[Databricks test] poisson/log hc1
+[Databricks test] poisson/log cluster
+test_glm_databricks_live.R....  209 tests OK 5.1s
+All ok, 209 results (5.1s)

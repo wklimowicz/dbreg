@@ -1,0 +1,10 @@
+"run","n","fe","elapsed","iterations","halvings","score","coef_error","se_error","error","batch"
+"union_1",100000,4,40.815,7,0,1.88125799150887e-09,8.70478422676513e-09,1.30292785328195e-09,"Early hybrid SQL syntax error; fixed before batch 3.",1
+"grouping_2",100000,4,22.067,7,0,1.88125799150887e-09,8.70478422676513e-09,1.30292785328195e-09,"Early hybrid SQL syntax error; fixed before batch 3.",1
+"grouping_3",100000,4,19.84,7,0,1.88125799150887e-09,8.70478422676513e-09,1.30292785328195e-09,"Early hybrid SQL syntax error; fixed before batch 3.",1
+"union_4",100000,4,30.599,7,0,1.88125799150887e-09,8.70478422676513e-09,1.30292785328195e-09,"Early hybrid SQL syntax error; fixed before batch 3.",1
+"union_1",1000000,6,199.846,8,0,1.12543155968754e-09,2.44001197025057e-08,5.08948314482255e-10,"",2
+"grouping_2",1000000,6,115.09,8,0,1.12543155968754e-09,2.44001197025057e-08,5.08948314482255e-10,"",2
+"hybrid_3",1000000,6,13.642,NA,NA,NA,NA,NA,"Early hybrid SQL syntax error; fixed before batch 3.",2
+"hybrid_1",1000000,6,99.308,8,0,1.12543155968754e-09,2.44001197025057e-08,5.08948314482255e-10,"Early hybrid SQL syntax error; fixed before batch 3.",3
+"packed_2",1000000,6,91.502,8,0,1.12543155968754e-09,2.44001197025057e-08,5.08948314482255e-10,"Early hybrid SQL syntax error; fixed before batch 3.",3

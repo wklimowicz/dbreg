@@ -1,0 +1,14 @@
+"tag","run","phase","elapsed","sql_bytes","rows","result_bytes","status","compilation_time_ms","execution_time_ms","result_fetch_time_ms","total_time_ms","read_bytes","rows_read_count","read_cache_bytes","read_remote_bytes","write_remote_bytes","network_sent_bytes","result_from_cache","photon_total_time_ms","task_total_time_ms","spill_to_disk_bytes"
+"glm_more_210538_control_1_2","control_1","setup_cleanup",6.469,203118,673878,40435000,"FINISHED",608,2617,2594,3232,191479835,15000000,111817187,79662648,0,0,FALSE,16383,16810,0
+"glm_more_210538_control_2_13","control_2","setup_cleanup",6.27799999999999,203118,673878,40435000,"FINISHED",636,2284,3090,2930,190950850,15000000,190950850,0,0,0,FALSE,14566,14847,0
+"glm_more_210538_materialized_1_5","materialized_1","setup_cleanup",6.767,65695,NA,56,"FINISHED",525,5949,118,6497,63726235,5000000,63726235,0,301384365,0,FALSE,4114,4276,0
+"glm_more_210538_materialized_1_6","materialized_1","setup_cleanup",5.666,6594,673878,40435000,"FINISHED",357,2072,3143,2437,526944029,15000000,21443063,505500966,0,0,FALSE,8446,8676,0
+"glm_more_210538_materialized_1_7","materialized_1","setup_cleanup",0.375,34,NA,56,"FINISHED",11,286,4,303,0,0,0,0,0,0,FALSE,0,0,0
+"glm_more_210538_materialized_2_10","materialized_2","setup_cleanup",1.315,34,NA,56,"FINISHED",11,294,4,311,0,0,0,0,0,0,FALSE,0,0,0
+"glm_more_210538_materialized_2_8","materialized_2","setup_cleanup",6.491,65695,NA,56,"FINISHED",556,5688,117,6251,63726235,5000000,63726235,0,301384365,0,FALSE,4011,4053,0
+"glm_more_210538_materialized_2_9","materialized_2","setup_cleanup",6.02499999999999,6594,673878,40435000,"FINISHED",359,2029,3345,2397,581397172,15000000,24030364,557366808,0,0,FALSE,8308,8720,0
+"glm_more_210538_packed_fixed_1_4","packed_fixed_1","setup_cleanup",6.568,203286,13801,34092200,"FINISHED",621,2527,3166,3159,190950850,15000000,190950850,0,0,0,FALSE,14664,16035,0
+"glm_more_210538_packed_fixed_2_11","packed_fixed_2","setup_cleanup",10.642,203286,13801,34092200,"FINISHED",660,2659,6001,3324,190950850,15000000,190950850,0,0,0,FALSE,15370,16340,0
+"glm_more_210538_setup_1","setup","setup_cleanup",4.587,10928,NA,56,"FINISHED",640,3754,2,4400,446070592,5019112,382343088,63727504,67303733,0,FALSE,6584,7186,0
+"glm_more_210538_two_branches_1_3","two_branches_1","setup_cleanup",6.552,137511,673878,40435000,"FINISHED",522,2630,3141,3159,127224615,10000000,127224615,0,0,0,FALSE,17116,17383,0
+"glm_more_210538_two_branches_2_12","two_branches_2","setup_cleanup",6.336,137511,673878,40435000,"FINISHED",505,2521,3069,3033,127224615,10000000,127224615,0,0,0,FALSE,16400,16643,0

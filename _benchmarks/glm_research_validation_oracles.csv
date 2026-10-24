@@ -1,0 +1,4 @@
+"comparison","rows","slopes","coefficient_error","covariance_error"
+"dbglm vs direct indicator GLM",44000,88,2.45405118448616e-09,1.06262643129185e-09
+"explicit fixest vs direct indicator GLM",44000,88,3.40989458891272e-11,2.41504594100661e-11
+"independent sparse Fisher vs explicit fixest",44000,88,4.96545027317552e-11,6.03694871870175e-11

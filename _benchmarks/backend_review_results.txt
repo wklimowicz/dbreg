@@ -1,0 +1,147 @@
+dbreg project review — 2026-10-23
+Checkout: feat/glm, baseline commit 0424a68 (with pre-existing user changes).
+
+What was fixed during this review
+
+1. SQL BIGINT aggregates corrupted numeric moments and IID inference.
+   cross_moments() now converts aggregates to numeric before matrix assignment.
+   Moments, demean, Mundlak and frame-based IV paths convert observation counts
+   before R arithmetic. Otherwise bit64's representation could corrupt the
+   intercept or truncate a fractional residual sum of squares during division.
+   On the existing Databricks 100k table, the unfixed no-FE fit returned
+   (-4006.89318, 11.00402, 14.26942), versus lm's
+   (0.09118729, 1.51070061, -0.61295456). The corrected fit matches lm.
+
+2. GLM FE dictionaries lost BIGINT ranks during unlist().
+   Converting each key vector before unlist() fixes both the IRLS predictor
+   lookup and final projected-regressor lookup. The same cloglog model worked
+   with DuckDB's numeric mode and failed with its integer64 mode. The live
+   Databricks fit failed after 157.204 seconds before this correction.
+   New tests compare coefficients and IID/HC1 covariance with lm/feglm under
+   both driver modes (32 assertions). bit64 is optional in Suggests only.
+
+3. Three tests required an undeclared newer DuckDB driver API.
+   Removed shared_home=FALSE from test constructors; the installed DuckDB
+   1.5.2 rejects that argument. The tests do not download extensions or create
+   stored secrets. They now run with the existing dependency declaration.
+
+Remaining priorities, in order
+
+1. Make linear rank decisions robust to units and additive shifts.
+   R/utils.R:detect_collinearity() applies QR directly to the raw X'X matrix.
+   In a reproducible 1,000-row example, shifting x by 10,000 silently removes
+   a genuinely varying regressor. lm retains it, with slope 3.028176. dbreg's
+   residual sum of squares rises from 1,044.060 to 9,883.711. A shift of 1,000
+   still works. See numerical_review.R. Centering/scaling the sufficient
+   statistics and using a rank rule on a normalized system should come before
+   more speed work. Also validate RSS/TSS cancellation for large outcome means.
+   This numerical issue remains unfixed in this review.
+
+2. Reduce remote iterative SQL work and share projection machinery.
+   Linear two-way unbalanced demeaning on Databricks still uses window AP;
+   the bounded CG path is selected only for DuckDB in dbreg_alternating_projections().
+   GLM already has moments and FE-level projection machinery worth reusing.
+   Measure SQL execution/planning, transfer and R solve time separately before
+   choosing optimizations. No server-side time breakdown was collected here.
+   Compare narrow UNION ALL moment branches with GROUPING SETS on actual
+   Databricks plans rather than assuming either is always faster.
+   The largest-FE Schur-complement solve is ALREADY implemented in
+   R/glm-projection-moments.R; older WIP suggestions to implement it are stale.
+
+3. Enforce FE-summary transfer limits before fetching.
+   R/wls-state.R:dbglm_fe_evaluate() calls dbglm_fe_moments_sql() without LIMIT,
+   fetches all pair summaries, and only then checks dbreg.duckdb_ap_max_edges.
+   This differs from dbglm_query_fe_moments(), which applies max_edges+1 in SQL.
+   High-cardinality inputs can therefore exceed the intended R transfer budget
+   before fallback. Bound the fused query as well and add an adversarial test.
+
+4. Keep integration tests on real DBI types and real backends.
+   The Databricks fixture correctly checks translated SQL, but its default
+   numeric BIGINT handling missed both live bugs found here. Add integer64
+   coverage across compress/IV/GLM paths and an opt-in live Databricks smoke
+   test checking values, cleanup after errors and convergence diagnostics.
+   Snapshot keys, high-cardinality effects, offsets and weights also deserve
+   real-backend checks. Do not treat fixture timings as warehouse performance.
+
+5. Finish documentation and release checks.
+   README and NEWS have no dbglm coverage, despite its exported API. Update
+   examples, supported-family/inference limits and backend configuration.
+   R CMD check --no-tests --no-vignettes --no-manual, with forced Suggests
+   disabled, completed with 1 WARNING and 1 NOTE. The warning lists four stale
+   Rd signatures: coef.dbreg, parse_regression_formula,
+   register_factor_display and setup_db_connection. The note is an unresolved
+   binsreg cross-reference because that optional package is unavailable.
+   The normal dependency check also stops when binsreg is missing. Regenerate
+   documentation and run a complete check in the CI dependency environment.
+
+Validation
+
+Completed per-file runs total 1,864 assertions with zero failures, including
+32 new integer64 regression assertions and reruns of affected OLS/IV/GLM tests.
+NYC data tests and optional binsreg comparisons were skipped. The package
+check above skipped tests/vignettes; it is not a claim of a fully clean check.
+No changes were pushed or committed. Existing WIP.md, SETUP.md and earlier
+DuckDB benchmark files were preserved.
+
+Live backend benchmark (after the fixes above)
+
+This compares dbreg/dbglm on DuckDB versus the same package on Databricks
+SQL, with fixest as an in-memory reference. It does not compare Spark ML
+against dbreg. Date: 2026-10-23. Databricks SQL 2026.42, 2X-Small PRO
+serverless warehouse, Photon enabled, one cluster. Local host: AMD Ryzen
+7 PRO 6850U, 30 GiB RAM; DuckDB 1.5.2 with four threads; fixest 0.14.0
+with its default eight threads; R 4.6.0; odbc 1.6.4.1.
+
+Synthetic data are generated once in a remote TEMP TABLE and the exact
+returned doubles copied into DuckDB and fixest. Timers exclude connection,
+warehouse startup, generation and download; they include the full fit and
+its SQL setup/cleanup. Data preparation took 5.528s at 100k and 11.453s
+at 1M (see run log if exact preparation timing is needed). Warehouse is
+warm; result reuse was disabled with SET use_cached_result=false. Other
+data caches may be warm. Backends alternate order. No test jobs ran during
+the final local fit timings. Linear models have three fits per engine,
+including the first fit; GLM has one fit per engine. No confidence intervals
+are claimed for these small timing samples.
+
+Models: moments_hc1 is y~x+z with HC1; demean_cluster is y~x+z|g+h
+clustered by h, with 100 and 20 levels and unequal cell counts. GLM is
+binary~x+z|g+h+k+j with cloglog, clustered by h, with 100/20/5/3 levels.
+AP tolerance is 1e-7; GLM uses its default controls. These are moderate-FE,
+in-memory-sized fixtures, not the 4.59M-row teacher application or an
+out-of-core/high-cardinality scaling test.
+
+Median elapsed seconds (GLM entries are single fits):
+
+Rows      Workload           fixest     DuckDB   Databricks
+100000    moments_hc1           0.016      0.016        1.308
+100000    demean_cluster        0.021      0.191       12.109
+100000    cloglog_4fe           0.255      1.161       34.093
+1000000   moments_hc1           0.111      0.021        1.197
+1000000   demean_cluster        0.147      0.258       16.066
+
+All final fits succeeded. The GLM converged in seven dbglm iterations on
+both backends, versus six fixest iterations; coefficient error versus the
+strict fixest reference is 8.71e-9 and maximum SE error 1.31e-9. Linear
+coefficient errors are below 3e-14. Linear FE SE comparisons use package
+default corrections: dbreg uses full FE counts, whereas fixest omits nested
+FE counts by default. The resulting maximum SE difference is 2.36e-7 at
+100k and 7.47e-9 at 1M. This difference is shared by the two dbreg backends
+and is not a numerical tolerance failure.
+
+The timing pattern suggests substantial remote coordination cost, but
+no server-side breakdown was collected; timings alone do not identify
+which fraction is network, planning, SQL execution or R. More favorable
+Databricks scaling on large/out-of-core inputs remains to be measured.
+
+Reproduce from the package root:
+  Rscript _benchmarks/backend_review.R /tmp/dbreg-backend-review
+  Rscript _benchmarks/numerical_review.R
+Credentials use DATABRICKS_HOST, DATABRICKS_TOKEN and DATABRICKS_SQL_PATH;
+DATABRICKS_ODBC_DRIVER optionally overrides the driver path. No credentials
+are recorded in the artifacts. Only session-scoped remote tables are made.
+Raw repetitions: backend_review.csv. Numerical stress case: numerical_review.csv.
+
+Cache-setting reference:
+https://docs.databricks.com/aws/en/sql/user/queries/query-caching
+DuckDB driver API reference:
+https://r.duckdb.org/reference/duckdb.html

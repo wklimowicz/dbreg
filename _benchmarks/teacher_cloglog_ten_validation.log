@@ -1,0 +1,4 @@
+VALIDATED: all six timed fits completed; both database engines pass against both references.
+VALIDATED: strict fixest reference converged, stabilized and passes against the sparse reference.
+138 passing comparisons; 8 explicitly retained default-fixest covariance/SE gate failures.
+All saved input snapshots match; original generator unchanged; final scripts parse.

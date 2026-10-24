@@ -1,0 +1,3 @@
+reference,status,construction_seconds,refinements,process_exit,note
+sparse,completed_and_validated,71.127,,0,Independent full-indicator Fisher scoring; excluded from timed fits
+strict_fixest,saved_and_validated,879.683,2,1,Initial fit plus two stable refinements completed; trailing parser error after result save from editing the running harness; saved result independently validated with final frozen comparison script

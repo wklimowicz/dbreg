@@ -1,0 +1,16 @@
+"first","second","edges"
+"spine_band_year","district",558645
+"spine_band_year","Experience",27011
+"spine_band_year","AGE",50364
+"spine_band_year","SEX",4002
+"spine_band_year","FTPTWK",4002
+"district","Experience",12270
+"district","AGE",12895
+"district","SEX",592
+"district","FTPTWK",592
+"Experience","AGE",759
+"Experience","SEX",88
+"Experience","FTPTWK",88
+"AGE","SEX",88
+"AGE","FTPTWK",88
+"SEX","FTPTWK",4

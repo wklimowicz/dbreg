@@ -1,0 +1,90 @@
+GLM benchmark and experiment index
+==================================
+
+Production implementation: R/.
+Maintainer guide: inst/GLM-DEVELOPMENT.txt.
+Regression tests: inst/tinytest/test_glm_*.R and shared helper_glm_*.R files.
+This directory is excluded from package builds. Its scripts are development
+experiments, not API implementations or required package dependencies.
+
+Five-million-row teacher-shaped cloglog benchmark
+------------------------------------------------
+teacher_cloglog_data.R defines the deterministic synthetic generator: six
+correlated fixed effects, rare exits and an outside-salary regressor.
+teacher_cloglog_benchmark.R and teacher_cloglog_local_benchmark.R establish
+the Databricks, DuckDB and fixest comparison. teacher_cloglog_results.txt
+records the original comparison and data checks.
+
+Production optimization evidence (chronological)
+------------------------------------------------
+glm_databricks_performance_results.txt: original bottlenecks and experiments.
+glm_databricks_integration_results.txt: integrated grouped moments, bounded
+  array lookup, stable centering and native parity validation.
+glm_databricks_followup_results.txt: exact raw-key pruning preflight, with an
+  interleaved full-fit comparison (median 94.648 -> 86.137 seconds).
+teacher_cloglog_pruning_benchmark.R reproduces that interleaving. It needs the
+  original generated SQL and strict fixest reference from the baseline run.
+
+Each report identifies its CSV measurements and validation artifacts. Source
+SHA256 manifests fingerprint the historical source tested at that time; they
+are not expected to match after the subsequent maintenance refactor. Runtime
+comparisons have few repetitions on one synthetic dataset and one warehouse.
+
+Maintenance validation
+----------------------
+glm_maintenance_results.txt describes the subsequent source reorganization,
+shared helpers and validation. glm_maintenance_check.log and
+glm_maintenance_test_counts.csv record the full package check;
+glm_maintenance_native_checks.csv records native backend tests. The matching
+glm_maintenance_source.sha256 fingerprints source, tests and the maintainer
+guide. This refactor has no new performance measurements.
+
+Additional edge cases and ordinary linear FE regression
+-------------------------------------------------------
+fe_edge_results.txt records additional cloglog/linear comparisons against
+fixest and the nobs.dbreg correction they exposed. fe_edge_validation.csv
+records targeted local/native checks; fe_edge_check.log and
+fe_edge_test_counts.csv record the full package check.
+teacher_fe_parity_benchmark.R uses the same 5M teacher rows for a linear
+probability model. Its measurements assess the separate linear FE projector,
+not the optimized GLM path. A capped nonconverged run is recorded explicitly
+as unsuccessful and must never be compared as a completed fit time.
+
+fe_moments_results.txt records the subsequent OLS/IV acceleration: a bounded
+adapter now reuses the GLM FE solver, with row certification and iterative
+fallback. teacher_fe_moments_results.csv contains completed timings on the
+same input. Historical teacher_fe_parity_results.csv remains unchanged.
+
+Exploratory work, not integrated
+--------------------------------
+glm_databricks_more_results.txt records subsequent experiments. In particular,
+the observed-curvature/Newton prototype in teacher_cloglog_newton_benchmark.R
+and glm_cloglog_newton_*.R remains an experiment. The package still uses Fisher
+scoring. Some scripts temporarily override namespace functions; inspect them
+and run them in a fresh R process, never as application setup code.
+
+Synthetic research-validation follow-up
+---------------------------------------
+glm_research_validation_results.txt records the seeded stress/separation/wide
+tests, native CI runner, independent reference checks and the SQL-tokenizer,
+shared coefficient lookup and integer64-input fixes exposed by validation.
+It distinguishes completed checks from incomplete optional large runs.
+inst/GLM-VALIDATION.txt explains scope
+and reproduction. teacher_cloglog_wide_validation.R prepares and compares the
+88-slope five-million-row model; teacher_cloglog_sparse_reference.R provides an
+additional full-indicator reference, distinct from fixest. Saved-fit checks
+are shared by teacher_cloglog_wide_compare.R.
+
+Five-million-row, ten-slope comparison
+--------------------------------------
+teacher_cloglog_ten_slopes.R compares two wage effects in five experience
+groups while retaining the original six FEs and district clustering.
+teacher_cloglog_ten_results.txt records two sequential default fits per engine,
+independent reference checks, input checks and any strict-gate discrepancies.
+The shared teacher_cloglog_salary_sql() fixture helper explicitly uses DOUBLE
+arithmetic. The ten-slope audit exposed a DECIMAL-rounding discrepancy in the
+older 88-slope comparison; its report now flags that limitation. Historical
+timings/check files are retained rather than relabelled as corrected reruns.
+
+Keep old reports/results as historical evidence. Do not infer production
+behavior from prototype scripts or update old timings after code refactors.

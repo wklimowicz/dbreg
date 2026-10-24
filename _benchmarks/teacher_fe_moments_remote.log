@@ -1,0 +1,22 @@
+ℹ Loading dbreg
+START Databricks 1 2026-10-23 23:27:59.122995
+[dbreg] Using strategy: demean
+[dbreg] Using fixed-effect projection for FE demeaning
+[dbreg] Bounded FE moments: 1 solve/refinement steps; certified max abs mean = 6.0686e-14
+[dbreg] Executing demean SQL
+
+      engine repetition elapsed  nobs coefficient          se   coef_error
+1 Databricks          1  42.514 5e+06  0.01663066 0.001015524 3.164136e-15
+      se_error   vcov_error projection_iterations    status max_iter error
+1 5.196718e-13 1.055478e-15                     1 converged      100      
+START Databricks 2 2026-10-23 23:28:42.389312
+[dbreg] Using strategy: demean
+[dbreg] Using fixed-effect projection for FE demeaning
+[dbreg] Bounded FE moments: 1 solve/refinement steps; certified max abs mean = 6.0686e-14
+[dbreg] Executing demean SQL
+
+      engine repetition elapsed  nobs coefficient          se   coef_error
+1 Databricks          2  42.584 5e+06  0.01663066 0.001015524 3.164136e-15
+      se_error   vcov_error projection_iterations    status max_iter error
+1 5.196718e-13 1.055478e-15                     1 converged      100      
+[1] 0

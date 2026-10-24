@@ -1,0 +1,13 @@
+"check","passed"
+"names",TRUE
+"nobs",TRUE
+"sample",TRUE
+"coef",TRUE
+"vcov",TRUE
+"se",TRUE
+"likelihood",TRUE
+"model_df",TRUE
+"covariance_df",TRUE
+"score",TRUE
+"projection",TRUE
+"converged",TRUE

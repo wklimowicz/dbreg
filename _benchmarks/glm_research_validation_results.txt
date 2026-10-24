@@ -1,0 +1,142 @@
+Synthetic research-validation follow-up — 2026-10-24
+===================================================
+
+Subsequent fixture audit (ten-slope benchmark): Spark DECIMAL division in the
+additional teacher-wage expression rounded some values that DuckDB calculated
+as DOUBLE. The mean discrepancy was 3.13e-7. The completed 5M/88-slope fit and
+its recorded numerical comparisons remain as measured, but that comparison
+must NOT be described as identical-input parity. The fixture now uses a shared
+explicit-DOUBLE expression. The corrected 88-slope case has not been rerun.
+Routine package/native tests are unaffected; their fixtures were shared without
+this separate wage expression. See teacher_cloglog_ten_results.txt for the newer
+cross-backend input checks and ten-slope comparison. Historical source hashes
+below fingerprint the earlier benchmark scripts, before this fixture correction.
+
+Status: implementation and validation work have concluded. Package/native
+regression checks and the 5M Databricks comparison passed. The optional 5M
+DuckDB run terminated without a fit, and the strict 5M fixest reference was
+interrupted without a result. Neither incomplete run is a parity pass.
+
+Scope and changes
+-----------------
+All new fixtures and warehouse work use synthetic data. This follow-up adds
+seeded rare-outcome stress tests, known-separation cases with analytic finite
+controls, an 88-slope teacher design, shared value/sample assertions, a native
+CI runner, and reproducible larger validation scripts. Existing historical
+performance reports remain unchanged; this work does not establish a new
+performance frontier.
+
+Three concrete correctness problems surfaced during validation:
+
+1. Large Databricks coefficient literals exhausted the SQL tokenizer's PCRE
+   match limit. The original 7,200,024-byte reproducer was truncated to 14
+   bytes. The fixed translator consumes quoted runs without per-character
+   backtracking, preserves quoted identifiers/literals, and rejects incomplete
+   tokenization. A 7.2 MB regression now runs locally and on native Databricks.
+   Evidence: glm_research_validation_sql_literal.csv and
+   glm_research_validation_native_literal.csv.
+
+2. Once tokenization preserved the complete statement, the 5M fit converged
+   but its clustered-covariance request exceeded the warehouse query-text
+   limit: it repeated the full coefficient dictionary once per FE. A shared
+   CTE now defines that dictionary once, with per-operation filtered CTEs.
+   Both predictor and projected-score construction use the same helper.
+   The regression case has 2,400 FE dictionary rows and 88 coefficient columns;
+   it checks the request bound and actual aggregate values on local/native SQL.
+   Evidence: glm_research_validation_lookup_size.csv and native suite results.
+
+3. On this DuckDB version, bigint="numeric" imports R integer64 storage bits
+   as floating-point values. Automatically managed connections now preserve
+   integer64 inputs. Supplied connections must preserve their SQL BIGINT type
+   or estimation fails with a clear corrective message. Setup releases owned
+   registrations/connections on failure. Prediction also decodes numeric
+   integer64 regressors/offsets after preserving exact factor levels.
+   test_integer64_input.R checks OLS/GLM parity, adjacent FE and row keys above
+   2^53, exported IDs, frequency weights, predictions and failure cleanup.
+
+The integer64 defect also invalidated the first local export of the large
+synthetic input: corrupted IDs removed the intended teacher-wage innovation.
+Those reference/local attempts are discarded, not counted as passes or useful
+timings. The export now verifies all IDs and their SQL round trip. The native
+fit generates its rows directly in SQL and did not use the invalid export.
+
+Independent references
+----------------------
+The routine 44,000-row fixture has 833 exits, 88 wage-by-Experience slopes and
+six correlated FEs. Its fixest reference centers the wage columns and expands
+the nuisance indicators explicitly, avoiding absorbed-reference covariance
+drift. Both models use K.fixef="full". Separate raw indicator GLM calculations
+agree to the errors recorded in glm_research_validation_oracles.csv. Final
+coefficient/covariance parity gates were not weakened.
+
+The verified five-million-row input has 105,021 exits, all 44 Experience levels
+and exactly the IDs 0 through 4,999,999. The full-indicator sparse Fisher
+reference independently reached a normalized score of 5.523005e-10 and a
+maximum slope step of 3.549064e-11. It computes the cluster sandwich including
+all nuisance indicators, with model df=2472 and covariance df=2177. This is an
+additional reference, not a fixest result. Its implementation uses Matrix and
+the raw Bernoulli likelihood, not dbglm's SQL/FE projection code. It also
+matches the small fixture's explicit fixest reference.
+
+The recorded 5M Databricks comparison passed all 12 sparse-reference checks
+(subject to the fixture discrepancy documented above): coefficient names,
+nobs, exact retained IDs, coefficients, full covariance, standard errors,
+likelihood, model/covariance df, score/projection certificates and convergence.
+Maximum absolute errors were 6.245061e-8 in coefficients, 1.39591e-9 in
+covariance, and 7.394437e-9 in standard errors. Likelihood error was 4.698057e-6
+in total (9.4e-13 per row). The fit used six IRLS iterations and took 876.178s
+in this overlapping validation run; this is not a controlled performance
+comparison. See glm_research_validation_databricks_sparse_*.csv.
+
+The direct strict 5M fixest reference was stopped after 21m17s wall time without
+returning a reference. Its controls were independent generating-probability
+initialization, fixef.tol=1e-10 and the unchanged coefficient/covariance stability
+gates. No completed fixest timing or direct 5M/88-slope fixest parity is claimed.
+The completed direct fixest comparisons are the routine wide and stress suites;
+the original one-slope 5M benchmark remains separate historical evidence.
+See glm_research_validation_reference_status.csv.
+
+The optional 5M/88-slope DuckDB run ended with SIGTERM (exit 143) before
+returning a fit. The log contains no diagnostic establishing the cause.
+Its last observed process state was 6m46s elapsed with about 18 GiB resident
+memory; the configured 4 GB DuckDB memory limit does not bound total process
+memory. There is no completed full-size DuckDB timing or parity result for
+this additional wide model. Routine DuckDB wide/stress checks passed. The
+original one-slope 5M DuckDB benchmark remains separate historical evidence.
+See glm_research_validation_duckdb_status.csv. No validation jobs remain
+running, and abandoned temporary spill files have been removed.
+
+Validation evidence
+-------------------
+R CMD build/check (--no-manual, --no-vignettes) passed on the final package
+source with zero errors, warnings or notes: 2,645 assertions in 37 nonempty
+local test files. The optional NYC/external-data tests were not enabled.
+All checked R/test files match the final source; DESCRIPTION matches after
+standard build normalization. The source manifest also fingerprints the
+validation scripts, workflow and guides.
+
+The native runner completed all seven suites. Replacing its original 209-case
+GLM run with the refreshed 216-case run gives 668 distinct passing assertions,
+with no failures. The refreshed run includes both large-SQL regressions.
+The separate 7.2 MB native smoke check also passed, but is not double-counted.
+Evidence: glm_research_validation_check.log, *_test_counts.csv, *_native.csv,
+*_native_environment.txt and *_source.sha256.
+
+The native runner covers ordinary GLM parity, pruning/sample identity, GLM/OLS
+FE edges, shared OLS/IV moments, rare-outcome stress, separation and the wide
+teacher fixture. Targeted reruns exercise changed paths; repeated assertions
+are not counted as additional distinct coverage.
+
+CI and practical limits
+-----------------------
+.github/workflows/databricks-validation.yaml and its R runner are ready for
+review, with weekly/default-branch/manual triggers, required native credentials,
+a pinned driver checksum, and retained artifacts. They have not been published
+or run on GitHub Actions in this session. The large 5M validation is a separate
+release check, not part of routine credentialed CI.
+
+No finite suite covers every data configuration. These checks validate the
+implementation and specified numerical contracts; they do not establish an
+empirical model's identification or causal interpretation. Known-separation
+tests are not a general separation detector. See inst/GLM-VALIDATION.txt for
+supported API limits, tolerances, test scope and reproduction commands.

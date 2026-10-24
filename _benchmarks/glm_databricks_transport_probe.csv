@@ -1,0 +1,13 @@
+"variant","setting","expected","text_bytes","binary_bytes"
+"numeric_large","1e+06",512,512,512
+"numeric_large","1e+06",4096,1023,1024
+"numeric_large","1e+06",60000,1023,608
+"numeric_large","1e+06",100000,1023,672
+"string_large","1000000",512,512,512
+"string_large","1000000",4096,4096,1024
+"string_large","1000000",60000,60000,608
+"string_large","1000000",100000,100000,672
+"string_bounded","65536",512,512,512
+"string_bounded","65536",4096,4096,1024
+"string_bounded","65536",60000,60000,608
+"string_bounded","65536",100000,100000,672

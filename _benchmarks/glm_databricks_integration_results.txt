@@ -1,0 +1,203 @@
+Databricks GLM production integration and validation
+2026-10-23
+
+This records the first production integration. The subsequent exact pruning
+optimization and its measurements are in glm_databricks_followup_results.txt.
+The source checksum and validation counts below describe that earlier snapshot.
+
+The optimized path is now part of dbglm(), selected automatically for eligible
+Databricks models. The normal formula and convergence tolerances are unchanged.
+This is a backend-specific SQL generator feeding the shared estimator, not a
+separate statistical implementation or a benchmark namespace substitution.
+
+Final production benchmark
+
+Same synthetic 5M-row teacher-shaped sample, original uncentered formula:
+
+  wastage ~ log_outside_salary |
+    spine_band_year + district + Experience + AGE + SEX + FTPTWK
+  family = binomial("cloglog"), vcov = ~district
+
+5,000,000 rows, 105,021 exits (2.10042%); FE cardinalities
+2,001 / 296 / 44 / 44 / 2 / 2. Age/experience correlation 0.951 and
+pay-band/experience correlation 0.978. The same exact data and strict fixest
+oracle are used as in teacher_cloglog_results.txt. No pure groups in the large
+benchmark; separate tests explicitly exercise pruning and excluded rows.
+
+Implementation                        Runs (seconds)         Median
+Original Databricks                    241.735, 220.065        230.900
+Final production Databricks              92.207,  91.317         91.762
+Original DuckDB, verified 4 workers      14.109,  12.714         13.412
+Final production DuckDB, 4 workers       11.946,  12.263         12.105
+fixest default, 4 workers                84.752,  80.389         82.571
+fixest strict independent oracle        214.078                 214.078
+
+The final Databricks implementation is about 2.52x faster than the original,
+using about 60% less elapsed time. It is close to local fixest performance;
+DuckDB remains substantially faster with data already local. The earlier
+84-second prototype used a physically precentered source and did not include
+the final production safeguards/preparation. Do not quote that prototype
+time as the package's measured production result.
+
+Each final fit converges in six iterations with no step halvings. Databricks:
+  slope = 0.830287650627359
+  district-clustered SE = 0.0503263715373309
+  final normalized score = 2.40309290361376e-10 (required <= 1e-8)
+  deviance = 1005945.36323747; N = 5,000,000
+
+Against strict fixest, absolute slope error is 3.12e-12 and SE error 2.18e-10.
+The two final Databricks repetitions agree in these reported values. DuckDB
+also passes the same independent accuracy gates. Default fixest's SE differs
+slightly more from the strict oracle; all differences are negligible here.
+No convergence, score, projection or collinearity tolerance was relaxed.
+
+Timing boundaries and environment
+
+Complete fit timers include FE setup, inference and cleanup, but exclude data
+generation, connections, warehouse startup, source transfer/load and fitting
+the independent oracle. Original sample download cost 37.887 s. Result reuse
+was disabled; data and other caches can be warm. Two runs on one synthetic
+sample are not a universal capacity/cost benchmark or a calibrated real-data
+forecast. The synthetic FE graph has 671,488 pairs, versus 305,235 reported
+for the real teacher data; no confidential teacher data were used.
+
+Databricks SQL 2026.42; 2X-Small PRO serverless warehouse, Photon, one cluster.
+R 4.6.0; DuckDB 1.5.2; fixest 0.14.0; odbc 1.6.4.1; DBI 1.3.0.
+Local Ryzen 7 PRO 6850U, about 30 GiB RAM. DuckDB's four workers and requested
+4 GB memory limit were verified at runtime (reported 3.7 GiB). fixest uses
+four workers. OpenBLAS is not separately thread-capped. The cloud and local
+engines do not run on identical hardware.
+
+What changed
+
+1. R/glm-databricks.R generates three aggregation branches: globals,
+   GROUPING SETS for FE marginals, and weight-only GROUPING SETS for FE pairs.
+   DuckDB keeps its materialized shared-source aggregation. Existing exact
+   score/deviance sum safeguards remain in use on Databricks.
+
+2. Small dense categorical FE coefficient dictionaries use constant arrays
+   instead of repeated broadcast lookup joins. Positive integer ranks,
+   density, total entries and SQL bytes are bounded. Oversized/sparse
+   dictionaries use the existing join path. The automatic array path is
+   limited to additive categorical FEs; varying slopes retain their joins.
+
+3. Expanded FE-model regressors are centered before projection moments.
+   Subtracting constants preserves slope units, estimates and covariance
+   because the FE space already contains the constant. This improves Schur
+   subtraction conditioning and eliminates the observed uncentered stall.
+   Centers are recorded in design_center. No-FE models are unchanged.
+
+4. The initial FE moment query has a transfer cap plus an overflow sentinel.
+   Overflow falls back to complete scalar diagnostics; truncated moments
+   cannot certify convergence. The fit owns an immutable physical base
+   snapshot, and IRLS changes values rather than rows or FE keys. Its verified
+   support count can therefore be reused without sorting every evaluation.
+   Any unexpected support-cardinality change errors. Tests cover unknown,
+   sufficient, insufficient and changed bounds, including absent global rows.
+
+5. Global summaries travel in one JSON payload and stay in a separate one-row
+   object in R. They are not expanded into mostly-NULL columns on every pair
+   row. This matters particularly when the number of global second moments
+   grows quadratically with the number of regressors. Transfer limits bound
+   rows/FE coefficient entries, not every possible model's total RAM use.
+
+6. Every successful recursive-pruning round materializes its reduced sample.
+   This prevents exponentially nested SQL on Databricks. The common case with
+   no pruning adds no write, and the moments path still avoids N-row state
+   writes during IRLS. New-row FE prediction remains unsupported, as documented.
+
+7. Verbose diagnostics now show the profiled score when the final certificate
+   rejects an apparently converged iteration. Documentation was updated to
+   describe the actual execution path and centering; existing stale argument
+   signatures found by R CMD check were regenerated. No new Imports were
+   added; odbc is an optional test dependency in Suggests.
+
+Where the time now goes
+
+The seven production evaluation queries together take 59.618 / 58.572 s.
+Their server compilation totals are 4.173 / 4.200 s (original about 108 s);
+execution totals 31.100 / 30.770 s; result-fetch totals 22.694 / 21.276 s.
+Setup/cleanup costs 24.392 / 24.339 s and covariance 4.833 / 4.737 s.
+Server counters are not an additive decomposition of client wall time.
+Further gains would target setup and sparse-result transport; the small local
+Schur solver is not the main remaining cost. No further runtime is promised.
+
+Rejected experiments retained
+
+The original uncentered array-only prototype stalled at the final score
+certificate and was interrupted. The integrated path centers automatically.
+Adding an ordered limit to every evaluation passed numerical checks but cost
+100.316 / 105.106 s per Databricks fit. Removing ordering from the preflight
+then produced a roughly 308 s client fetch for a query that completed on the
+server in about 3.4 s; that run was interrupted, not counted as a successful
+fit. Its underlying driver/transport cause was not established. The final
+implementation retains ordered preflight and reuses its fixed support bound.
+
+Validation design
+
+Independent references are glm/lm and fixest; the strict small-model helper
+refines fixest using only fixest's own previous linear predictor. It never
+starts the oracle from dbglm estimates. Comparisons include full covariance
+matrices, SEs, likelihood, sample size, coefficient names, FE degrees of
+freedom and convergence, not just one headline coefficient.
+
+Existing coverage includes no/one/two/six FEs, logit/cloglog/probit/Poisson,
+offsets, integer weights, IID/HC1/cluster covariance, varying slopes, absorbed
+columns, interactions (including 88 slopes), scaling, boundaries, missing
+values, pruning, solver fallbacks and cleanup. The Databricks SQL fixture is
+explicitly an offline portability test, not a substitute for Spark execution.
+
+New cases run through that fixture and on the live warehouse: six correlated
+FEs with multiple regressors; all four families and three covariance types;
+array/join equivalence; a 1e6 regressor shift; rank holes and sparse-rank/byte
+fallbacks; scalar serialization over extreme magnitudes; bounded overflow
+and fixed-support reuse; exact retained-row IDs after exclusions and recursive
+pruning; df parity and cleanup after a rejected fit. Live result reuse is off.
+
+Final validation results
+
+The final source passed R CMD check with 0 errors, 0 warnings and one NOTE:
+the optional binsreg package was unavailable for an Rd cross-reference.
+The package check ran 2,088 assertions across 29 nonempty test files. Five
+files were skipped/empty: three NYC-data suites, the optional binsreg
+comparison, and the environment-gated live Databricks suite. The latter
+was run separately against the actual warehouse and passed all 209
+assertions; the separate live sample/pruning suite passed all 14 assertions.
+Thus 223 native Databricks assertions passed on the final source. The
+offline sample/pruning run is also included in the package-check count.
+
+Evidence is retained in glm_databricks_integration_check.log,
+glm_databricks_integration_test_counts.csv and
+glm_databricks_integration_live_final.csv. The source checksum manifest is
+glm_databricks_integration_source.sha256. Production fit and query records
+are teacher_cloglog_production_fits.csv and
+teacher_cloglog_production_queries.csv; all recorded production statements
+finished successfully and none reused the query result cache.
+
+Files and reproduction
+
+R/glm-databricks.R                     Specialized SQL, compact reader, arrays
+R/dbglm.R                             Internal centering and recorded centers
+R/glm-projection-moments.R             Backend dispatch and bounded support
+R/wls-state.R                         Evaluation, bounds and predictor dispatch
+R/glm-sample.R                        Bounded-plan recursive pruning
+inst/tinytest/test_glm_databricks*.R   Fixture, optimization, live, sample tests
+inst/tinytest/helper_glm_databricks*.R Shared fixture and numerical cases
+_benchmarks/teacher_cloglog_integrated.R
+                                     Actual package benchmark, no substitutions
+
+  Rscript -e 'pkgload::load_all(); tinytest::test_all(".")'
+  DBREG_TEST_DATABRICKS=TRUE Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_glm_databricks_live.R")'
+  DBREG_TEST_DATABRICKS=TRUE Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_glm_databricks_sample.R")'
+  Rscript _benchmarks/teacher_cloglog_integrated.R /tmp/teacher-cloglog-5m /tmp/teacher-cloglog-production 2
+  Rscript _benchmarks/glm_databricks_history.R /tmp/teacher-cloglog-production
+
+Live tests require the already configured native ODBC driver and Databricks
+environment credentials. They use only synthetic session-temporary tables.
+The original benchmark report explains regeneration of the 5M sample/oracle.
+
+These results support using the implementation for the documented GLM scope,
+especially the tested teacher-shaped additive-FE cloglog model. They do not
+prove every possible data/design combination safe or constitute a complete
+general separation detector. Unsupported cases and failed convergence remain
+explicit errors rather than ordinary successful inference.

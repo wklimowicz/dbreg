@@ -1,0 +1,77 @@
+GLM maintenance refactor - 2026-10-23
+====================================
+
+Scope
+-----
+Organize the current production GLM implementation for maintenance. Preserve
+the existing Fisher-scoring estimator, numerical controls and optimized
+Databricks query strategy. No further optimization or timing experiment was
+performed, and the exploratory observed-curvature/Newton code remains outside
+the package.
+
+Changes
+-------
+Separated the former wls-state.R into projection dispatch, SQL projection,
+working-state construction, absorbed fitting and covariance modules. Moved
+design expansion out of the no-FE fitting module. Generic FE moment reading
+now lives with the moments projector, leaving Databricks-specific query
+generation in glm-databricks.R.
+
+Centralized coefficient frame construction/upload and resource ownership.
+Extracted the state-builder callback with immutable context and explicit
+per-call strategy flags, so cap fallbacks cannot capture stale choices.
+Consolidated binomial working equations, FE diagnostic decoding and the two
+absorbed step-acceptance/failure paths. Kept the intentionally different no-FE
+boundary-prediction policy separate.
+
+Replaced formula-parser superassignment with explicit local state. Applied
+consistent formatting and exact field access throughout GLM source. Saved
+call arguments are assembled as a list before conversion to a language
+object, including when optional arguments are absent.
+
+Added inst/GLM-DEVELOPMENT.txt with the execution flow, module map, contracts,
+numerical/ownership invariants and test commands. GLM-INDEX.txt distinguishes
+production performance evidence from historical exploratory scripts.
+
+Validation
+----------
+Full R CMD check: Status OK; no errors, warnings or notes.
+2,133 assertions passed across 30 nonempty files (2,124 existing plus 9 new).
+The optional binsreg comparison, three NYC-data files and native Databricks
+gate were empty/skipped during this local package check. The missing optional
+binsreg Rd cross-reference was reported as INFO, not a NOTE.
+
+Native Databricks validation subsequently passed all 259 assertions:
+  test_glm_databricks_live.R:   209
+  test_glm_databricks_sample.R:  50
+The native cases include cloglog, logit, probit and Poisson; iid, HC1 and
+cluster covariance; independent fixest references; array/join paths;
+regressor translation; pruning policies; and retained sample keys.
+
+The new resource tests use an actual DuckDB connection and verify coefficient
+round trips with integer64 keys, cleanup after an injected upload failure,
+failed CREATE cleanup, repeat cleanup and survival of caller-owned data and
+connections. Existing tests also cover fit failure and sample export ownership.
+
+Source audit found no missing or duplicate existing functions. Beyond moves,
+formatting and exact field syntax, seven existing function bodies changed;
+eleven private helpers were introduced. The four families' generated working
+queries, with both default and explicit predictor expressions, were byte-for-
+byte identical to the pre-refactor source in all eight comparisons.
+
+All checked R source and test files match the final working tree. The source
+manifest additionally records DESCRIPTION, NAMESPACE and the maintainer guide.
+No runtime improvement is claimed for this maintenance change.
+
+Evidence
+--------
+glm_maintenance_check.log
+glm_maintenance_test_counts.csv
+glm_maintenance_native.log
+glm_maintenance_native_checks.csv
+glm_maintenance_source.sha256
+
+Reproduction: use the local and native test commands in
+inst/GLM-DEVELOPMENT.txt. The R CMD check for this report built with
+--no-build-vignettes --no-manual, then checked with --no-manual --no-vignettes
+and _R_CHECK_FORCE_SUGGESTS_=false.

@@ -1,0 +1,104 @@
+Additional FE edge cases and linear performance - 2026-10-23
+===========================================================
+
+The ambiguous name "feeeg" was treated as ordinary fixed-effects regression,
+dbreg versus fixest::feols, alongside the requested cloglog/feglm comparisons.
+
+New regression cases
+--------------------
+One shared fixture/helper runs on both DuckDB and native Databricks:
+  * Three disconnected components in the FE incidence structure.
+  * Frequency weights from 1 to 100 and offsets from -1.5 to 0.8.
+  * An exact duplicate regressor and an additional FE-absorbed column.
+  * An unbalanced, strongly correlated panel with 84 exits in 6,000 rows (1.4%).
+
+Each case tests cloglog and ordinary linear regression, with iid and externally
+clustered covariance. Checks cover coefficient identities/values, full
+covariance matrices, sample sizes, source-table survival, and, for GLMs,
+likelihood, parameter counts and convergence/projection diagnostics. References
+use fixest independently; GLM references use the existing refinement helper.
+Pruning is disabled on these finite-solution fixtures to align samples.
+Linear reference covariance uses K.fixef="full" to match dbreg's convention.
+
+The tests exposed a sample-size API bug: without nobs.dbreg(), stats::nobs()
+could return the aggregate row count, often 1. The new method returns the
+stored estimation sample size. It is registered and documented, with tests
+across moments, compress, demean and Mundlak. No estimation equations changed.
+
+Validation
+----------
+133 targeted local assertions passed; 124 native Databricks assertions passed.
+The local file includes nine additional extractor/cleanup checks. The native
+runner uses the same four numerical cases and reference code as the local run.
+Full R CMD check: Status OK, 2,266 assertions across 31 nonempty test files;
+zero errors, warnings or notes. Optional binsreg/NYC and native gates were
+empty during the local package check. Native testing was run separately.
+Source, tests and method documentation in the checked build match the final
+working tree. The maintainer guide subsequently gained a test-map entry.
+
+Large linear FE performance: a material limitation
+-------------------------------------------------
+The optimized GLM path and ordinary linear FE projector are separate. The
+following is a linear probability model on the original deterministic 5M
+teacher-shaped rows, not another cloglog timing:
+
+  wastage ~ log_outside_salary |
+    spine_band_year + district + Experience + AGE + SEX + FTPTWK
+
+Cluster: district. Both packages use full FE parameter counting. Local engines
+use four threads. dbreg uses strategy="demean", AP tolerance 1e-7, and a cap
+of 1,000 iterations for the completed local fit. Timed feols uses its default
+demeaning tolerance; the independent reference uses fixef.tol=1e-10.
+Input loading/generation, reference fitting and warehouse startup are excluded.
+Databricks result reuse is disabled. Tests and timings ran separately.
+
+Single completed fit per local engine (seconds, not medians):
+  fixest::feols       9.739
+  dbreg on DuckDB   399.318   (484 projection sweeps)
+
+The completed DuckDB fit retains all 5M rows and matches the strict reference:
+  coefficient absolute error  5.3116e-12
+  standard-error absolute error 3.4190e-10
+The timed default feols fit has coefficient error 2.6397e-9 and SE error
+1.2873e-8 versus the stricter reference. These are single-run observations.
+The required 484 local sweeps exceed dbreg's default cap of 100.
+
+The Databricks diagnostic was deliberately capped at 30 sweeps after observing
+the slow local convergence. It took 360.909 seconds and did NOT converge:
+maximum absolute group mean 7.6838e-4, versus the requested tolerance 1e-7.
+There is no coefficient/SE result from that run and no large-sample native
+parity claim. This is an unsuccessful bounded run, not a complete fit time.
+The smaller native edge-case fits above did finish and passed parity checks.
+
+These results do not support calling the ordinary many-FE path quick or at
+a performance frontier. Accelerating the linear FE projector is substantial
+remaining work; the existing GLM performance conclusions cannot be transferred
+to it. No additional solver optimization was introduced in this testing round.
+
+Benchmark-driver note: the local process reported an error after writing both
+completed fits. The benchmark script was edited while that process was running.
+The saved coefficients, SEs and observation counts were independently rechecked
+against the strict reference before using the timings. The final script handles
+failed fits explicitly; the remote diagnostic exited normally with the recorded
+not_converged status. Neither a failed nor a partial fit is labeled successful.
+
+Evidence and reproduction
+-------------------------
+inst/tinytest/helper_fe_edges.R
+inst/tinytest/test_fe_edges.R
+inst/tinytest/test_fe_edges_live.R
+fe_edge_validation.csv, fe_edge_native.log
+fe_edge_check.log, fe_edge_test_counts.csv, fe_edge_source.sha256
+teacher_fe_parity_results.csv, teacher_fe_parity_reference.csv
+teacher_fe_parity_local.log, teacher_fe_parity_remote.log
+teacher_fe_parity_local_environment.txt, teacher_fe_parity_remote_environment.txt
+
+  Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_fe_edges.R")'
+  DBREG_TEST_DATABRICKS=TRUE Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_fe_edges_live.R")'
+  Rscript _benchmarks/teacher_fe_parity_benchmark.R /tmp/teacher-cloglog-5m /tmp/teacher-fe-parity local 1 1000
+  Rscript _benchmarks/teacher_fe_parity_benchmark.R /tmp/teacher-cloglog-5m /tmp/teacher-fe-parity remote 1 30
+
+Run the benchmark modes sequentially with no competing tests. The input folder
+comes from the original teacher benchmark and contains teachers.parquet,
+data_generation.sql and data_summary.csv. Native credentials/driver follow the
+existing Databricks test setup. Only synthetic session-scoped tables are used.

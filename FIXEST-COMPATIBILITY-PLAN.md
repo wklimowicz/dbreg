@@ -29,6 +29,14 @@ requested OLS exports use an owned immutable fit snapshot. Evidence is in
 Performance benchmarking of default fitting versus optional identity/export
 paths is next, before broader retained-state work.
 
+That performance checkpoint is now complete on a synthetic million-row DuckDB
+panel: 210 measured warmed fits passed value checks. Normal fits show no large
+consistent slowdown; explicit key validation/export can roughly double simple
+OLS cost and increased peak client RSS about 16% in this fixture. Evidence and
+limitations are in `_benchmarks/compat_performance_20261024/results.txt`. Keep
+native defaults compact; prediction dictionaries and optional row-sized inference
+state must be separate capabilities. Learned-effect recovery is the next milestone.
+
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
 The next dependency is shared observation identity and fitted state. Use dbreg's

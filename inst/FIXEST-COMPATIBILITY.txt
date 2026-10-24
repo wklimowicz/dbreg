@@ -209,6 +209,16 @@ An export never replaces an existing relation. Explicit snapshots cost database
 storage for required source columns plus the retained-key output; default native
 fits do not retain these resources. This is not portable fitted-state persistence.
 
+The 2026-10-24 million-row DuckDB performance checkpoint found no large consistent
+normal-fit regression (pooled integer-weight medians within roughly -6%/+7%).
+Explicit key/export modes cost 2.13x for simple OLS, 1.61x for two-FE OLS and
+1.04x-1.29x for cloglog in that fixture; peak client RSS rose about 16% with
+exports. Fractional binomial reporting added a measured 0.047-0.079s SQL pass.
+These are local warmed measurements, not native or disk-bound guarantees.
+Evidence: _benchmarks/compat_performance_20261024. Keep prediction dictionaries
+separate from optional observation-sized inference state and reuse existing
+fit-owned relations when retention is requested; default native fits stay compact.
+
 Next fitted-state slice: preserve/reconstruct learned GLM effects on both moment
 and SQL projection paths and verify their sum against the fitted predictor. Add
 typed dictionaries and model-owned lifecycle tests before exposing prediction/

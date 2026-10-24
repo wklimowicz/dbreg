@@ -1,0 +1,23 @@
+	Command being timed: "Rscript _benchmarks/check_fixest_compat_performance.R run /home/wojtek/coding/R/dbreg/dbreg /tmp/dbreg-compat-perf-warm-1m.duckdb sample _benchmarks/compat_performance_20261024/warm-1m/current-sample 5 current"
+	User time (seconds): 51.16
+	System time (seconds): 2.09
+	Percent of CPU this job got: 149%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:35.51
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 672864
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 1
+	Minor (reclaiming a frame) page faults: 855564
+	Voluntary context switches: 2136
+	Involuntary context switches: 1084
+	Swaps: 0
+	File system inputs: 6080
+	File system outputs: 304
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

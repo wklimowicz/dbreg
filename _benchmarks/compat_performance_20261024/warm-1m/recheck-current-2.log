@@ -1,0 +1,25 @@
+ℹ Loading dbreg
+Failed to connect to system scope bus via local transport: Operation not permitted (consider using --machine=<user>@.host --user to connect to bus of other user)
+current-2 integer ols 1: 0.093s
+current-2 integer ols 2: 0.097s
+current-2 integer ols 3: 0.0940000000000003s
+current-2 integer ols 4: 0.105s
+current-2 integer ols 5: 0.101s
+current-2 integer ols_fe 1: 0.484s
+current-2 integer ols_fe 2: 0.483000000000001s
+current-2 integer ols_fe 3: 0.507s
+current-2 integer ols_fe 4: 0.494999999999999s
+current-2 integer ols_fe 5: 0.484999999999999s
+current-2 integer glm 1: 0.689s
+current-2 integer glm 2: 0.677s
+current-2 integer glm 3: 0.679000000000002s
+current-2 integer glm 4: 0.673999999999999s
+current-2 integer glm 5: 0.766999999999999s
+current-2 integer glm_fe 1: 1.775s
+current-2 integer glm_fe 2: 1.913s
+current-2 integer glm_fe 3: 1.781s
+current-2 integer glm_fe 4: 1.891s
+current-2 integer glm_fe 5: 1.819s
+Warning message:
+In system("timedatectl", intern = TRUE) :
+  running command 'timedatectl' had status 1

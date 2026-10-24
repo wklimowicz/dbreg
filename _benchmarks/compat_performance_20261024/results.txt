@@ -1,0 +1,50 @@
+Compatibility performance checkpoint, 2026-10-24
+
+Scope: synthetic 1,000,000-row persisted DuckDB input; x/z regressors; optional
+1,000 by 50 fixed-effect groups. Same input/runtime for 00f2868 (pre-change) and
+80ec8f1 (weights, argument guards, compact formulas and sample identities).
+DuckDB 1.5.2, R 4.6.0, two DuckDB threads, 2GB DuckDB memory limit, BLAS/OMP=2.
+The limit is not a cap on total client RSS. No panel is collected into R.
+
+Reported fits have two excluded warm-ups per model and five measured repetitions.
+Initial integer-weight timings looked 18-19% slower for GLM; alternating baseline/
+current/current/baseline rechecks did not reproduce that magnitude. Keep all
+raw observations: pooled integer comparisons use 15 measurements per version.
+All 210 measured warmed fits passed coefficient, full covariance, sample-size,
+strategy and relevant weighted-likelihood equivalence checks before comparison.
+
+Current normal fit -> row_id plus sample_table export, median seconds:
+  OLS                 0.099 -> 0.211   (2.13x)
+  OLS, two FE         0.195 -> 0.314   (1.61x)
+  cloglog             0.656 -> 0.848   (1.29x)
+  cloglog, two FE     1.753 -> 1.816   (1.04x)
+
+Unweighted current/baseline default medians ranged from 0.90x to 1.05x.
+Pooled integer-weight current/baseline medians ranged from 0.94x to 1.07x.
+These results do not show a large consistent normal-fit regression; timing
+variation is material and this is not a universal performance guarantee.
+
+The fractional binomial reporting query was timed directly: median 0.047s
+without FE and 0.079s with two FE. Fractional weights equal 0.25 times the integer
+weights (1,2,3); covariance and unrounded objective are checked on that scale.
+Do not attribute entire weighted/unweighted timing differences to reporting.
+
+Whole-process peak RSS, including DuckDB (GNU time):
+  baseline default 578600 KB; current default 577940 KB;
+  current sample export 672864 KB (about 16% above current default).
+Processes run all model cases plus warm-ups, so these peaks are not per-fit RAM.
+
+Fit timings include requested snapshot/key-table writes and private cleanup;
+the caller's subsequent key-count check and export-table drop are outside the
+fit timer. Exports are off by default. They add unique-key GROUP BY work and
+database writes, which can be substantial compared with a cheap moments fit.
+Databricks and disk-bound/180M-row workloads were not benchmarked here.
+
+Reproduce with _benchmarks/check_fixest_compat_performance.R:
+  prepare DBFILE 1000000
+  run REPOSITORY DBFILE MODE OUTPUT_PREFIX 5 LABEL
+Modes: default, integer, row_id, sample, fraction. Baseline supports default/
+integer only. Use separate R processes, run sequentially, and capture /usr/bin/time
+-v for total peak RSS. Source identities and effective settings are saved.
+Summarize/check with _benchmarks/summarize_fixest_compat_performance.R warm-1m.
+Text logs normalize progress/padding only; CSVs retain raw measurements.

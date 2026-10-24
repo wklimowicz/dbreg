@@ -375,6 +375,7 @@ execute_iv_moments_strategy = function(inputs) {
 #' @keywords internal
 execute_iv_demean_strategy = function(inputs) {
   frame = build_demean_frame(inputs, inputs[["union_sql"]], inputs[["union_names"]], tag = "dbivreg")
+  if (inherits(frame, "dbreg_query_plan")) return(frame)
   on.exit(frame[["cleanup"]](), add = TRUE)
   dbivreg_run_frame(inputs, frame, "demeaned IV")
 }

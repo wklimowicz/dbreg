@@ -854,39 +854,11 @@ dbreg_alternating_projections = function(
       alt_table = tmp
     } else {
       for (fe_k in fe) {
-        mean_cols = vapply(vars_all, function(v) {
-          sprintf("SUM(__w * %s_tilde) / SUM(__w) AS %s_mean", v, v)
-        }, character(1))
-        mean_sql = paste0(
-          "SELECT ",
-          fe_k,
-          ", ",
-          paste(mean_cols, collapse = ", "),
-          " FROM ",
-          cur_table,
-          " GROUP BY ",
-          fe_k
-        )
-        create_temp_table_as(conn, mean_table, mean_sql, backend)
+      mean_sql = sql_ap_group_means(cur_table, vars_all, fe_k)
+      create_temp_table_as(conn, mean_table, mean_sql, backend)
 
-        update_cols = c(
-          sprintf("t.%s", id_cols),
-          "t.__w",
-          sprintf("t.%s_tilde - m.%s_mean AS %s_tilde", vars_all, vars_all, vars_all)
-        )
-        update_sql = paste0(
-          "SELECT ",
-          paste(update_cols, collapse = ", "),
-          " FROM ",
-          cur_table,
-          " t JOIN ",
-          mean_table,
-          " m ON t.",
-          fe_k,
-          " = m.",
-          fe_k
-        )
-        create_temp_table_as(conn, alt_table, update_sql, backend)
+      update_sql = sql_ap_join_projection(cur_table, mean_table, id_cols, vars_all, fe_k)
+      create_temp_table_as(conn, alt_table, update_sql, backend)
 
         drop_table_if_exists(conn, cur_table, backend)
         drop_table_if_exists(conn, mean_table, backend)
@@ -898,16 +870,7 @@ dbreg_alternating_projections = function(
 
     # Convergence check: max absolute weighted group mean across all FEs
     # in a single UNION ALL query.
-    mean_cols = paste(
-      sprintf("SUM(__w * %s_tilde) / SUM(__w) AS %s_mean", vars_all, vars_all),
-      collapse = ", "
-    )
-    inner_sql = paste(
-      sprintf("SELECT %s FROM %s GROUP BY %s", mean_cols, cur_table, fe),
-      collapse = " UNION ALL "
-    )
-    outer_cols = paste(sprintf("MAX(ABS(%s)) AS max_%s", mean_names, vars_all), collapse = ", ")
-    res = dbGetQuery(conn, paste0("SELECT ", outer_cols, " FROM (", inner_sql, ") t"))
+    res = dbGetQuery(conn, sql_ap_convergence(cur_table, vars_all, fe))
     max_abs = max(0, max(res[1, ], na.rm = TRUE))
 
     if (isTRUE(verbose)) {
@@ -1113,6 +1076,7 @@ choose_strategy = function(inputs) {
 #' @keywords internal
 finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg") {
   if (inputs[["sql_only"]]) {
+    if (inherits(result, "dbreg_query_plan")) return(result)
     cat(result)
     return(invisible(result))
   }

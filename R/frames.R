@@ -88,7 +88,7 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     message(sprintf("[%s] Using fixed-effect projection for FE demeaning", tag))
   }
   if (use_ap && sql_only) {
-    stop(sprintf("[%s] sql_only is not supported for alternating projections.", tag), call. = FALSE)
+    return(dbreg_ap_query_plan(inputs, x_sql, x_names))
   }
 
   cleanup = function() invisible(NULL)

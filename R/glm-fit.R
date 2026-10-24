@@ -99,7 +99,7 @@ dbglm_irls = function(conn, table, x, beta, family, control, verbose, separation
       return(c(current, list(beta = beta, iterations = iter, deviance_history = history,
         step_halvings = halvings_total, finite_mle = FALSE, converged = FALSE)))
     }
-    if (step == 1 && relative <= control[["glm_tol"]] &&
+    if (step == 1 && (family[["link"]] == "identity" || relative <= control[["glm_tol"]]) &&
       is.finite(current[["score_max"]]) && current[["score_max"]] <= control[["score_tol"]]) {
       if (dbglm_boundary(current, family[["link"]])) {
         stop("GLM reached the numerical probability boundary; a finite solution is not established.", call. = FALSE)

@@ -24,7 +24,8 @@ retain_glm_score_frame = function(result, fit, conn, base, x, fe, original, reso
   state[["bread"]] = if (length(x)) dbglm_solve(fit[["H"]])[["inverse"]] else matrix(numeric(), 0L, 0L)
   state[["coefficient_names"]] = names(stats::coef(structure(result, class = c("dbglm", "dbreg"))))
   dimnames(state[["bread"]]) = rep(list(state[["coefficient_names"]]), 2L)
-  state[["kind"]] = "glm"
+  state[["kind"]] = if (result[["family"]][["family"]] == "gaussian") "gaussian" else "glm"
+  state[["dispersion_scaled"]] = result[["dispersion_scaled"]]
   state[["weight_scale"]] = weight_scale
   state[["K_model"]] = counts[["model"]]
   state[["default_ssc"]] = ssc

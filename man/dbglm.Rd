@@ -2,7 +2,7 @@
 % Please edit documentation in R/dbglm.R
 \name{dbglm}
 \alias{dbglm}
-\title{Fit a binomial or Poisson GLM on a database relation}
+\title{Fit a binomial, Poisson or Gaussian GLM on a database relation}
 \usage{
 dbglm(
   fml,
@@ -39,7 +39,7 @@ precedence as [dbreg()]. A default connection is in memory with spilling
 disabled. Caller connections retain their settings and remain open.}
 
 \item{family}{A built-in `binomial("cloglog")` (default), `binomial("logit")`,
-`binomial("probit")`, or `poisson("log")`. Poisson responses must be
+`binomial("probit")`, `poisson("log")`, or `gaussian("identity")`. Poisson responses must be
 nonnegative integer counts; binomial responses must be zero or one.}
 
 \item{weights}{Optional column of nonnegative observation weights, including
@@ -65,7 +65,8 @@ Named vectors must identify the retained design coefficients.}
 \item{verbose}{Print iteration diagnostics?}
 
 \item{fixef_rm}{Recursive FE exclusion policy, using fixest conventions.
-If perfect-prediction groups remain under the selected policy, fitting errors.}
+If perfect-prediction groups remain under the selected policy, fitting errors.
+Gaussian `"perfect_fit"` removes singletons; `"infinite_coef"` removes none.}
 
 \item{row_id}{Optional character vector of unique, nonmissing source-key
 columns. Otherwise opaque snapshot keys are assigned once.}
@@ -102,7 +103,8 @@ A compact object of class `c("dbglm", "dbreg")`, containing slopes,
 }
 \description{
 Fits binomial logit, probit, complementary-log-log and log-link Poisson models
-using SQL-backed IRLS. Only bounded sufficient statistics are transferred to R.
+using SQL-backed IRLS. Gaussian identity models use one certified WLS update.
+Only bounded sufficient statistics are transferred to R.
 Supports additive and joint
 categorical fixed effects and group-specific linear/quadratic trends on native
 DuckDB and Databricks connections, with recursive fixed-effect sample exclusions.
@@ -124,12 +126,19 @@ Missing/nonfinite model values and zero weights are omitted. Model
   the unrounded weights. Use `logLik(model, type = "weighted")` for the
   weighted Bernoulli objective actually optimized. For Poisson models and
   integer-weight binomial models the two likelihoods coincide.
+  Gaussian models estimate dispersion using weighted RSS divided by model
+  residual df. Their IID covariance and t tests follow `fixest::feglm()`,
+  including its additional IID SSC factor. Gaussian default likelihood uses
+  R's Gaussian AIC convention (profile likelihood minus one); `type="weighted"`
+  returns the profile likelihood. Likelihood df excludes the dispersion,
+  matching fixest. These conventions differ from OLS [dbreg()].
   If all retained weights are below one, fitting rescales them by a power
   of two to avoid premature convergence and loss of precision for very small
   weights. The divisor is recorded in `weight_scale`. Likelihood, deviance
   and IID covariance are returned on the original weight scale; sandwich
   covariances are invariant to this rescaling. Score diagnostics use the
-  internal scale.
+  internal scale. Gaussian models also normalize uniformly large weights and
+  combine dispersion and bread on the internal scale before restoring units.
   With absorbed effects, expanded regressor columns are centered internally
   before forming projection moments. Their slopes, units and covariance are
   unchanged; the retained column centers are recorded in `design_center`.

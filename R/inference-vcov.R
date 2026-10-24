@@ -124,7 +124,8 @@ retained_covariance = function(object, vcov = "iid", cluster = NULL, ssc = NULL,
   bread = state[["bread"]]
   G = numeric()
   if (request[["kind"]] == "iid") {
-    if (state[["kind"]] == "ols") V = bread*state[["rss"]]/(if (ssc[["K.adj"]]) n-K else n) else
+    if (state[["kind"]] == "ols") V = bread*state[["rss"]]/(if (ssc[["K.adj"]]) n-K else n-1) else if (state[["kind"]] == "gaussian")
+      V = bread*state[["dispersion_scaled"]]*(if (ssc[["K.adj"]]) (n-1)/(n-K) else 1) else
       V = bread/state[["weight_scale"]]*(if (ssc[["K.adj"]]) (n-1)/(n-K) else 1)
   } else if (request[["kind"]] == "hc1") {
     V = score_moments(conn, from, q(state[["scores"]]), projection = bread)[["matrix"]]

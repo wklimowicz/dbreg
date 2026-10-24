@@ -1,11 +1,12 @@
-# SQL kernels for binomial and Poisson GLMs on supported backends.
+# SQL kernels for the supported built-in GLM families.
 dbglm_family = function(family) {
   if (!inherits(family, "family") ||
     !is.character(family[["link"]]) || length(family[["link"]]) != 1 ||
     is.na(family[["link"]]) ||
     !(identical(family[["family"]], "binomial") && family[["link"]] %in% c("cloglog", "logit", "probit") ||
-      identical(family[["family"]], "poisson") && family[["link"]] == "log")) {
-    stop("`family` must be binomial('cloglog'), binomial('logit'), binomial('probit') or poisson('log').", call. = FALSE)
+      identical(family[["family"]], "poisson") && family[["link"]] == "log" ||
+      identical(family[["family"]], "gaussian") && family[["link"]] == "identity")) {
+    stop("`family` must be binomial('cloglog'), binomial('logit'), binomial('probit'), poisson('log') or gaussian('identity').", call. = FALSE)
   }
   # Literal link arguments keep canonical family closures independent of this
   # validator's evaluation frame and the caller's family object.
@@ -13,7 +14,8 @@ dbglm_family = function(family) {
     "binomial/logit" = stats::binomial("logit"),
     "binomial/probit" = stats::binomial("probit"),
     "binomial/cloglog" = stats::binomial("cloglog"),
-    "poisson/log" = stats::poisson("log"))
+    "poisson/log" = stats::poisson("log"),
+    "gaussian/identity" = stats::gaussian("identity"))
   functions = c("linkfun", "linkinv", "mu.eta", "variance", "dev.resids", "aic",
     "validmu", "valideta")
   for (name in functions) {
@@ -69,13 +71,16 @@ dbglm_normal_sql = function(eta, a = paste0("ABS(", eta, ")"), exp_half = paste0
 }
 
 dbglm_boundary = function(state, link) {
-  if (link == "log") {
+  if (link == "identity") {
+    !is.finite(state[["mu_min"]]) || !is.finite(state[["mu_max"]])
+  } else if (link == "log") {
     !is.finite(state[["mu_min"]]) || !is.finite(state[["mu_max"]]) || state[["mu_min"]] <= 0
   } else state[["mu_min"]] <= .Machine[["double.eps"]] || state[["mu_max"]] >= 1 - .Machine[["double.eps"]]
 }
 
 dbglm_family_sql = function(link, eta = "eta", a = NULL, exp_half = NULL) {
   eps = dbglm_number(.Machine[["double.eps"]])
+  if (link == "identity") return(list(mu = eta, derivative = "1.0"))
   if (link == "logit") {
     mu = sprintf(paste0("CASE WHEN %1$s < -30 THEN %2$s WHEN %1$s > 30 THEN %3$s ",
       "ELSE EXP(%1$s) / (1.0 + EXP(%1$s)) END"),
@@ -109,6 +114,11 @@ dbglm_family_sql = function(link, eta = "eta", a = NULL, exp_half = NULL) {
 
 dbglm_working_sql = function(table, x, beta, link, eta = NULL) {
   if (is.null(eta)) eta = paste(c("__dbglm_o", sprintf("(%s)*(%s)", dbglm_number(beta), x)), collapse = " + ")
+  if (link == "identity") return(paste0(
+    "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
+    "means AS (SELECT *,eta AS mu,1.0 AS d FROM predictor), ",
+    "working AS (SELECT *,__dbglm_a AS w,__dbglm_y-__dbglm_o AS z,",
+    "__dbglm_a*(__dbglm_y-mu) AS score,__dbglm_a*POWER(__dbglm_y-mu,2) AS dev FROM means) "))
   if (link == "log") {
     kernel = dbglm_family_sql(link)
     return(paste0(

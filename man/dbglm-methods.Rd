@@ -10,7 +10,7 @@
 \alias{tidy.dbglm}
 \alias{glance.dbglm}
 \alias{print.dbglm}
-\title{Methods for database binomial and Poisson GLMs}
+\title{Methods for database binomial, Poisson and Gaussian GLMs}
 \usage{
 \method{logLik}{dbglm}(object, type = c("fixest", "weighted"), ...)
 
@@ -55,7 +55,9 @@
 \item{type}{For `logLik`, `"fixest"` reports the likelihood using the
 `fixest::feglm()` convention (the default); `"weighted"` returns the
 objective with unrounded observation weights. These differ for fractional
-binomial weights. For `predict`, `"link"` returns the linear predictor and
+binomial weights. Gaussian default likelihood is profile likelihood minus
+one, following R's family AIC convention; `"weighted"` omits that constant.
+For `predict`, `"link"` returns the linear predictor and
 `"response"` returns the response mean.}
 
 \item{...}{Additional method arguments are not supported and produce an error.
@@ -97,5 +99,5 @@ rows with omitted positions missing; requires `retain="all"`.}
 \item{collin}{Include structurally collinear coefficients as NA?}
 }
 \description{
-Methods for database binomial and Poisson GLMs
+Methods for database binomial, Poisson and Gaussian GLMs
 }

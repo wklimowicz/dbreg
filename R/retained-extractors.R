@@ -115,17 +115,18 @@ residuals.dbreg = function(object, type = c("response", "deviance", "pearson", "
   if (!glm && type %in% c("deviance", "pearson")) value = paste0(e, "*SQRT(", w, ")")
   if (glm && type != "response") {
     mu = q(state[["mu"]])
+    gaussian = object[["family"]][["family"]] == "gaussian"
     poisson = object[["family"]][["family"]] == "poisson"
     if (type == "working") {
-      derivative = if (poisson) paste0("GREATEST(EXP(", eta, "),", dbglm_number(.Machine[["double.eps"]]), ")") else
+      derivative = if (gaussian) "1.0" else if (poisson) paste0("GREATEST(EXP(", eta, "),", dbglm_number(.Machine[["double.eps"]]), ")") else
         dbglm_family_sql(object[["family"]][["link"]], eta)[["derivative"]]
       value = paste0(e, "/(", derivative, ")")
     } else if (type == "pearson") {
-      variance = if (poisson) mu else paste0(mu, "*(1.0-", mu, ")")
+      variance = if (gaussian) "1.0" else if (poisson) mu else paste0(mu, "*(1.0-", mu, ")")
       value = paste0(e, "*SQRT(", w, ")/SQRT(", variance, ")")
     } else {
       y = paste0("CAST(", q(object[["yvar"]]), " AS DOUBLE)")
-      deviance = if (poisson) sql_poisson_bd0(y, mu) else paste0("CASE WHEN ", y, "=0 THEN -LN(1.0-", mu, ") ELSE -LN(", mu, ") END")
+      deviance = if (gaussian) paste0("POWER(", e, ",2)/2.0") else if (poisson) sql_poisson_bd0(y, mu) else paste0("CASE WHEN ", y, "=0 THEN -LN(1.0-", mu, ") ELSE -LN(", mu, ") END")
       value = paste0("(CASE WHEN ", e, "<0 THEN -1.0 ELSE 1.0 END)*SQRT(GREATEST(2.0*", w, "*(", deviance, "),0.0))")
     }
   }

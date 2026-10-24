@@ -355,3 +355,34 @@ Mathematical state is 8,120 bytes, with at most one row returned per recovery
 query during fitting. Retention adds about 5.1s and 18% whole-process peak RSS
 locally. These are scoped tests, not a full native package or native large-state
 performance/storage gate. Database outputs, inference and adapters remain pending.
+
+Keyed SQL prediction output checkpoint, 2026-10-24
+-------------------------------------------------
+Final full local: 4,427 assertions, zero failures, 233.25 seconds. Broad native
+output/key gates: 137 assertions in 920.78 seconds, four in 19.23 seconds. A
+final response-helper/Poisson tail correction passes 16 focused native checks
+in 29.63 seconds. All gates have zero failures. Package check: zero errors and
+warnings, existing optional binsreg NOTE, complete source suite run separately.
+Evidence: _benchmarks/sql_prediction_20261024; audit-source.R verifies scope.
+
+The broad native source predates only response-helper extraction/Poisson tails
+and registration of the focused fixture. Those three original files are archived
+and verified. Final full local, focused native and resource manifests match the
+final implementation. The focused native gate covers all binomial kernels too.
+The initial untranslated-isfinite native failure is retained with exact source;
+it is not counted as a pass. Existing fitting kernels/defaults are unchanged.
+
+Coverage includes OLS/four GLM families, fixed factor coding/powers/interactions,
+17-digit numeric and quoted/backslash/UTF-8 categories, BIGINT/date tuple keys,
+portable three-FE/varying slopes, SQL dictionaries, missing/non-estimable rows,
+NaN/duplicate/null keys, explicit exports, close/GC/shared session ownership and
+serialization boundaries. Poisson tails compare against canonical R and fixest,
+including epsilon floors, links 701/709, overflow and Inf-Inf missing values.
+
+A SQL-only million-row output matches an analytical predictor to 1.4e-10; setup
+queries collect at most one row and 3,744 total R result-object bytes. Output
+creation median is 0.155s (range 0.146-0.510s, three warmed measurements); result
+handle is 41,688 bytes. Peak whole-process RSS 561,276 KiB includes fitting and
+embedded DuckDB, not output-only R memory. Backend row storage remains required;
+this is not a native/disk/history storage performance gate. Retained inference,
+default/original-sample prediction and compatibility adapters remain unfinished.

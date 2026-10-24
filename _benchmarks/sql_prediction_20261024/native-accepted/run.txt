@@ -1,0 +1,20 @@
+ℹ Loading dbreg
+Starting native suite: test_sql_prediction_live.R
+[SQL prediction] fitted factors, powers and interactions
+[SQL prediction] exact BIGINT/date tuples and nonstandard output keys
+[SQL prediction] portable multi-FE effects and varying slopes
+[SQL prediction] SQL dictionaries and owned output lifetimes
+[SQL prediction] binomial/logit
+[SQL prediction] binomial/cloglog
+[SQL prediction] binomial/probit
+[SQL prediction] poisson/log
+
+test_sql_prediction_live.R....  137 tests OK 15.3s
+All ok, 137 results (15.3s)
+Starting native suite: test_sql_prediction_keys_live.R
+
+test_sql_prediction_keys_live.R    4 tests OK 19.2s
+All ok, 4 results (19.2s)
+                            suite assertions failures error elapsed_seconds
+1      test_sql_prediction_live.R        137        0             920.77939
+2 test_sql_prediction_keys_live.R          4        0              19.23184

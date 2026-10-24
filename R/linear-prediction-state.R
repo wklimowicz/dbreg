@@ -9,7 +9,7 @@ finalize_linear_prediction = function(result, inputs) {
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
   design = sql_model_matrix(inputs[["fml"]], conn, sub("^FROM\\s+", "", from, ignore.case = TRUE),
     expand = "all", fe_vars = inputs[["fe"]], intercept = inputs[["intercept"]], factor_refs = inputs[["factor_refs"]])
-  register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]], design[["col_names"]], design[["aliases"]])
+  register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]], design[["col_names"]], design[["aliases"]], factor_classes = design[["factor_classes"]])
   map = inputs[["name_map"]]
   variable = names(map) %in% names(inputs[["source_map"]])
   map[variable] = coef_var_name(map[variable])

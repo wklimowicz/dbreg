@@ -1,5 +1,14 @@
 # Fixest compatibility (development branch)
 
+- `predict()` can return keyed database output on DuckDB/native Databricks using
+  `row_id` and `conn`/`table`/`path` or `newdata`. OLS and all four GLM families
+  use saved factor coding and learned effects. `head()` previews output and
+  `as.data.frame()` explicitly collects it. Output leases survive model close;
+  `close(output)` releases owned tables and preserves caller-owned exports.
+- SQL factor literals preserve 17-digit numeric values and native text containing
+  quotes, backslashes or UTF-8. Prediction uses original typed FE keys and keeps
+  exact large output keys when a driver would otherwise round them.
+
 - Oversized one- or two-FE prediction dictionaries can stay in SQL, with bounded
   key matching and estimability checks. `close(model)` releases owned state;
   caller connections/exports survive. These live dictionaries cannot be restored

@@ -1,0 +1,27 @@
+dbreg_test_sql_prediction_keys = function(conn) {
+  resources = dbreg:::dbglm_resources()
+  resources[["conn"]] = conn
+  on.exit(dbreg:::dbglm_release_resources(resources))
+  d = data.frame(id = 1:20, x = sin(1:20), y = cos(1:20))
+  table = dbreg:::prediction_upload_frame(conn, d, resources)
+  fit = dbreg(y ~ x, conn = conn, table = table, strategy = "moments")
+  name = basename(tempfile("prediction_nan_keys_"))
+  resources[["tables"]] = c(resources[["tables"]], name)
+  q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
+  sql = paste0("SELECT CASE WHEN id=2 THEN CAST('NaN' AS DOUBLE) ELSE CAST(id AS DOUBLE) END AS id,x FROM ", table)
+  DBI::dbExecute(conn, dbreg:::sql_sample_table(conn, name, sql, c("id", "x")))
+  before = dbglm_validation_tables(conn)
+  expect_error(predict(fit, conn = conn, table = q(name), row_id = "id"), "unique and nonmissing")
+  expect_identical(dbglm_validation_tables(conn), before)
+  # Fractional double keys remain double; only missing NaN is normalized.
+  sql = paste("SELECT CAST(id AS DOUBLE)+0.25 AS id,x FROM", table)
+  valid = basename(tempfile("prediction_double_keys_"))
+  resources[["tables"]] = c(resources[["tables"]], valid)
+  DBI::dbExecute(conn, dbreg:::sql_sample_table(conn, valid, sql, c("id", "x")))
+  output = predict(fit, conn = conn, table = q(valid), row_id = "id")
+  on.exit(close(output), add = TRUE)
+  values = as.data.frame(output)
+  expect_equal(sort(values[["id"]]), seq_len(20) + .25)
+  expected = predict(fit, d)
+  expect_equal(values[[output[["prediction_column"]]]], expected[match(values[["id"]]-.25, d[["id"]])], tolerance = 1e-12)
+}

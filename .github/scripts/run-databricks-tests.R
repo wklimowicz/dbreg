@@ -25,7 +25,8 @@ write.csv(data.frame(file = names(hashes), md5 = unname(hashes)), file.path(out,
 suites = c("test_glm_databricks_live.R", "test_glm_databricks_sample.R", "test_fe_edges_live.R",
   "test_ap_moments_live.R", "test_glm_stress_live.R", "test_glm_separation_live.R", "test_glm_wide_live.R", "test_linear_design_live.R",
   "test_glm_fractional_live.R", "test_sample_identity_live.R", "test_prediction_state_live.R", "test_prediction_snapshot_live.R",
-  "test_linear_prediction_live.R", "test_database_prediction_live.R", "test_database_two_fe_live.R")
+  "test_linear_prediction_live.R", "test_database_prediction_live.R", "test_database_two_fe_live.R", "test_sql_prediction_live.R",
+  "test_sql_prediction_keys_live.R", "test_sql_prediction_tails_live.R")
 if (length(args) > 1L) {
   requested = args[-1L]
   if (anyDuplicated(requested) || any(!requested %in% suites)) {

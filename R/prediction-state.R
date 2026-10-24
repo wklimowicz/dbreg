@@ -34,6 +34,9 @@ prediction_key_part = function(value, type) {
   } else if (type == "logical") {
     if (!is.logical(value)) stop("Logical FE keys require logical newdata columns.", call. = FALSE)
     value = ifelse(is.na(value), NA_character_, ifelse(value, "TRUE", "FALSE"))
+  } else if (type == "date") {
+    if (!inherits(value, "Date") && !is.character(value)) stop("Date FE keys require Date or ISO date-string columns.", call. = FALSE)
+    value = as.character(value)
   } else value = as.character(value)
   ifelse(is.na(value), NA_character_, paste0(nchar(enc2utf8(value), type = "bytes"), ":", enc2utf8(value)))
 }
@@ -73,7 +76,8 @@ prediction_key_metadata = function(conn, retained, components) {
 
 prediction_fe_dictionary = function(conn, retained, fe, components, limit, public_components = components) {
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
-  types = prediction_key_metadata(conn, retained, components)[["types"]]
+  metadata = prediction_key_metadata(conn, retained, components)
+  types = metadata[["types"]]
   fields = vapply(seq_along(components), function(i) {
     value = q(components[i])
     if (types[i] == "integer") value = paste0("CAST(", value, " AS STRING)")
@@ -88,7 +92,8 @@ prediction_fe_dictionary = function(conn, retained, fe, components, limit, publi
   if (anyNA(keys) || anyDuplicated(keys) || anyDuplicated(dictionary[["id"]])) {
     stop("Could not preserve the fitted FE key dictionary exactly.", call. = FALSE)
   }
-  list(columns = public_components, types = unname(types), key = keys, id = dictionary[["id"]])
+  list(columns = public_components, types = unname(types), key = keys, id = dictionary[["id"]],
+    sql_types = unname(metadata[["sql_types"]]))
 }
 
 dbglm_prediction_state = function(...) build_prediction_state(...)

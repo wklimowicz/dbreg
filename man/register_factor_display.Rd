@@ -9,7 +9,8 @@ register_factor_display(
   factor_levels = list(),
   level_aliases = NULL,
   col_names = NULL,
-  aliases = NULL
+  aliases = NULL,
+  factor_classes = NULL
 )
 }
 \arguments{
@@ -17,6 +18,8 @@ register_factor_display(
 
 \item{level_aliases}{Optional data frame of SQL aliases with their `var`
 and `level` (the `level_aliases` element of [sql_model_matrix()]).}
+
+\item{factor_classes}{Optional named fitted source classes for factors.}
 }
 \description{
 Adds entries to `inputs$name_map` so that factor dummies named after their

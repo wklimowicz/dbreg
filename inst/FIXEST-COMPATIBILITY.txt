@@ -28,7 +28,8 @@ Implementation sequence
    OLS exports use an immutable snapshot throughout fitting. Bounded portable
    OLS/GLM learned-effect state is implemented behind explicit retention. Large
    one-/two-FE dictionaries and resource leases can stay in SQL; larger FE
-   systems, database prediction outputs and post-fit scores remain pending.
+   systems and post-fit scores remain pending. Keyed database prediction output
+   is implemented in the subsequent checkpoint described below.
 3. Supported formula/argument normalization: i()/references, public coefficient
    identities, OLS offsets and varying slopes, fixef.rm, weights and subset.
    Partial existing formula support remains; compatibility entry points pending.
@@ -321,3 +322,45 @@ adds 5.1s and 18% whole-process RSS in that warmed local fixture. Evidence:
 _benchmarks/two_fe_prediction_20261024. Keyed database output, retained inference,
 compatibility adapters and large three-or-more-FE/varying-slope recovery remain
 unfinished. Native large-state performance/disk-history storage are unmeasured.
+
+Keyed database prediction output (2026-10-24)
+--------------------------------------------
+Native predict methods accept conn/table/path/newdata plus explicit row_id to
+request a dbreg_prediction relation on DuckDB or native Databricks. Exactly one
+source is required. Without those new arguments, native vector prediction keeps
+its existing defaults. GLM SQL output supports link and response for all four
+families. Learned effects require retain="prediction". Poisson response uses
+R's epsilon floor and natural overflow threshold, separately from the
+conservative fitting guard. Portable dictionaries
+are uploaded in bounded batches; large one-/two-FE dictionaries stay in their
+owning session. Output values are materialized once, then keys are validated on
+that immutable result. Missing inputs and unknown/non-estimable FE combinations
+yield NULL without dropping rows; ordinary unseen factor levels error.
+
+The SQL compiler uses saved factor levels/references and the same expansion
+helpers as fitting. It never discovers categories from prediction data. Native
+text literals use base64, preserving quotes/backslashes/UTF-8. Numeric factor
+literals use 17 significant digits instead of DBI's rounded numeric quoting.
+R newdata retains native R factor-label coercion separately from original typed
+values used for continuous variables, finite checks and FE keys.
+
+The relation exposes conn, table, row_id and prediction_column. It has no implicit
+row order. head() collects only a bounded preview; as.data.frame() explicitly
+collects all rows. SQL key columns retain their input types. Collection returns
+exact integer text when a driver's numeric conversion would round a large key;
+integer64-capable drivers retain integer64. SQL NaN is rejected as a missing
+key; fractional numeric keys remain numeric. Date/integer text FE matching is
+strict rather than accepting timestamp strings or scientific-notation integers.
+
+Default output tables belong to the result lease. close() is idempotent; a
+model can close while its already-materialized output survives. A public conn
+handle keeps its result lease alive when reused, allowing another model/output
+to share the owning session. Released public handles are rejected. The last
+lease closes an owned session; caller sessions remain open. Garbage collection
+attempts cleanup. Serialized live handles cannot restore their database state.
+An optional prediction_table names an existing-session export that must not
+already exist; it requires a caller-owned connection and survives result close.
+IV, Mundlak and prediction intervals are explicitly unsupported in this output
+API. Native GLM nonstandard RHS names retain their existing fitting boundary;
+nonstandard output keys are supported. Original-sample/default prediction and
+post-fit covariance still require the next retained-state increment.

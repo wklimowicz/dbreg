@@ -58,11 +58,21 @@ confint.dbglm = function(object, parm, level = 0.95, fe = FALSE, ...) {
 #' @param newdata Data frame containing regressors, fitted FE keys and varying
 #'   slope variables, and any fitted offset column. Outcomes and fitting weights
 #'   are not required. Missing inputs preserve their positions as `NA` predictions.
+#' @param conn,table,path Optional database connection and prediction source, as
+#'   in [predict.dbreg()]. Database output supports DuckDB and native Databricks.
+#' @param row_id Unique, nonmissing prediction key columns. This or any database
+#'   argument selects keyed database output; see [dbreg-prediction].
+#' @param prediction_table Optional caller-named output session table. Requires
+#'   a caller-owned connection and must not already exist.
 #' @export
-predict.dbglm = function(object, newdata, type = c("link", "response"), ...) {
+predict.dbglm = function(object, newdata = NULL, type = c("link", "response"),
+  conn = NULL, table = NULL, path = NULL, row_id = NULL, prediction_table = NULL, ...) {
   check_unused_args(list(...))
   type = match.arg(type)
-  if (missing(newdata)) stop("`newdata` is required; dbglm does not retain input rows.", call. = FALSE)
+  if (any(!vapply(list(conn, table, path, row_id, prediction_table), is.null, logical(1)))) {
+    return(predict_sql(object, newdata, conn, table, path, row_id, prediction_table, type))
+  }
+  if (is.null(newdata)) stop("`newdata` is required; dbglm does not retain input rows.", call. = FALSE)
   if (length(object[["fe"]]) && is.null(object[["fitted_state"]])) {
     stop("New-row prediction for absorbed GLMs requires fitting with retain='prediction'.", call. = FALSE)
   }

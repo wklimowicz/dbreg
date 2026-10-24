@@ -5,12 +5,36 @@ fitted_resource_valid_connection = function(conn) {
 }
 
 fitted_resource_session = function(conn, own_conn = FALSE) {
+  inherited = attr(conn, "dbreg_resource_lease", exact = TRUE)
+  if (!is.null(inherited)) {
+    fitted_resource_connection(inherited)
+    return(inherited[["session"]])
+  }
   session = new.env(parent = emptyenv())
   session[["conn"]] = conn
   session[["own_conn"]] = isTRUE(own_conn)
   session[["references"]] = 0L
   session[["closed"]] = FALSE
   session
+}
+
+# A public connection handle keeps its result lease alive while used as input
+# to another operation. The shared session itself keeps an untagged handle, so
+# unrelated leases do not prevent garbage collection of abandoned results.
+fitted_resource_public_connection = function(lease) {
+  conn = fitted_resource_connection(lease)
+  attr(conn, "dbreg_resource_lease") = lease
+  conn
+}
+
+fitted_resource_same_connection = function(a, b) {
+  if (!fitted_resource_valid_connection(a) || !fitted_resource_valid_connection(b)) return(FALSE)
+  for (slot in c("conn_ref", "ptr")) {
+    pointer = attr(a, slot, exact = TRUE)
+    if (typeof(pointer) == "externalptr" && identical(pointer, attr(b, slot, exact = TRUE))) return(TRUE)
+  }
+  attr(a, "dbreg_resource_lease") = attr(b, "dbreg_resource_lease") = NULL
+  identical(a, b)
 }
 
 fitted_resource_lease = function(session, tables = character(), views = character()) {

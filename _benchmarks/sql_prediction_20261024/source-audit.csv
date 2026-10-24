@@ -1,0 +1,5 @@
+"manifest","files","differences","scope"
+"local-final-tail/full-source-md5.csv",157,0,"final implementation"
+"native-tails/source-md5.csv",156,0,"final implementation"
+"large-output-source-md5.csv",53,0,"final implementation"
+"native-accepted/source-md5.csv",153,3,"pre-tail response helper; final tails covered separately"

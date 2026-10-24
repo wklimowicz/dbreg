@@ -192,3 +192,28 @@ before ownership transfer. The new 77-check shared fixture and 60-check native
 single-FE regression pass; the full local suite has 4,258 assertions. FE-only
 zero-column GLMs are covered, as are unit changes and nonconvergence cleanup.
 See GLM-VALIDATION.txt and _benchmarks/two_fe_prediction_20261024 for exact scope.
+Keyed SQL prediction output, 2026-10-24
+---------------------------------------
+sql_fitted_prediction_design() recompiles from saved column classes, levels,
+references and public/internal identities through the estimation expanders.
+sql_model_matrix_from_info()/glm_model_matrix_from_info() are pure expansion
+helpers; source category discovery remains confined to fitting. Native text
+literals use base64; numeric factors use dbglm_number() to avoid DBI rounding.
+
+sql_prediction_source() creates collision-safe aliases, checks source types,
+preserves original key fields and handles numeric/date inputs. R newdata uses
+separate factor-label columns to retain its existing coercion conventions.
+prediction_portable_tables() uploads only bounded dictionaries; database-backed
+state reuses its typed dictionaries. sql_prediction_equation() forms eta and
+joint-null/component certificates. predict_sql() materializes eta, validates
+keys against that immutable output, and optionally applies the existing GLM
+response kernels. All generated native expressions pass through dbglm_sql().
+
+dbreg_prediction exposes a tagged public connection handle. The tag keeps its
+lease alive while another call uses the handle; shared sessions keep untagged
+handles so abandoned outputs can still finalize. Explicit close invalidates
+that handle even if another lease keeps the physical connection alive. Only
+the final output table transfers into its lease; intermediates, uploads and
+portable lookups are cleaned up. Caller exports use separate, empty leases
+and require caller-owned sessions. Full collection is explicit and protects
+large integer keys from driver rounding; SQL types remain unchanged.

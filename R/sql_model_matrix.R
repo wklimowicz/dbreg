@@ -68,10 +68,17 @@ sql_model_matrix = function(
   # Get column types and factor levels from database
   col_info = get_column_info(conn, table, term_labels, factor_refs)
 
+  sql_model_matrix_from_info(term_labels, col_info, expand, sep, fe_vars, intercept,
+    fold_case = folds_identifier_case(conn))
+}
+
+# The fitted-design path supplies saved levels instead of discovering them from
+# newdata. Both paths use exactly the same expansion and reference decisions.
+sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep = "_x_",
+                                      fe_vars = character(), intercept = TRUE, fold_case = FALSE) {
   # SQL-safe aliases for factor dummies, one per (variable, level), computed
   # once so that every term uses the same alias. They avoid the model's
   # variable names and each other, and follow the backend's case rules.
-  fold_case = folds_identifier_case(conn)
   taken = names(col_info[["types"]])
   level_aliases = list()
   for (v in names(col_info[["levels"]])) {
@@ -109,6 +116,7 @@ sql_model_matrix = function(
   }
   
   result[["factor_levels"]] = col_info[["levels"]]
+  result[["factor_classes"]] = col_info[["factor_classes"]]
   result[["level_aliases"]] = level_aliases
   result
 }
@@ -150,7 +158,9 @@ get_column_info = function(conn, table, term_labels, factor_refs = NULL) {
     }
   }
   
-  list(types = types, levels = levels)
+  classes = vapply(schema, function(column) class(column)[[1L]], character(1))
+  list(types = types, levels = levels, factor_classes = classes[names(levels)],
+    level_sql = sql_factor_literals(conn, levels, classes))
 }
 
 #' Expand a single term into SQL expressions
@@ -196,6 +206,8 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
     return(list(sql = var, name = var, alias = var))
   }
   lvls = col_info[["levels"]][[var]]
+  level_sql = col_info[["level_sql"]][[var]]
+  if (is.null(level_sql)) level_sql = paste0("'", gsub("'", "''", lvls, fixed = TRUE), "'")
   la = col_info[["level_aliases"]]
   la = la[la[["var"]] == var, , drop = FALSE]
   if (length(lvls) < 2) {
@@ -204,10 +216,10 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
   # Drop first level (reference) only if appropriate
   if (drop_ref) {
     lvls = lvls[-1]
+    level_sql = level_sql[-1]
   }
   list(
-    # Escape single quotes in level names
-    sql = paste0("CASE WHEN ", var, " = '", gsub("'", "''", lvls, fixed = TRUE), "' THEN 1.0 ELSE 0.0 END"),
+    sql = paste0("CASE WHEN ", var, " = ", level_sql, " THEN 1.0 ELSE 0.0 END"),
     name = paste0(var, lvls),
     alias = la[["alias"]][match(lvls, la[["level"]])]
   )

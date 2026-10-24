@@ -1,0 +1,31 @@
+"suite","assertions","failures","error","elapsed_seconds"
+"test_sql_prediction_live.R",0,1,"! ODBC failed with error 00000 from
+  [Databricks][Hardy][UNRESOLVED_ROUTINE][UNRESOLVED_ROUTINE].
+✖  (80) Syntax or semantic analysis error thrown in server while executing
+  query. Error message from server:
+  org.apache.hive.service.cli.HiveSQLException: Error running query:
+  org.apache.spark.sql.AnalysisException: Cannot resolve routine `isfinite` on
+  search path [`system`.`session`, `system`.`builtin`, `system`.`ai`, `
+• <SQL> 'CREATE TEMP TABLE `dbreg_prediction_77cff2d26fdb1` TBLPROPERTIES
+  ('delta.columnMapping.mode'='name') AS SELECT r.dbreg_prediction_id1__ AS
+  `row key`,CASE WHEN NOT (r.dbreg_prediction_raw1__ IS NOT NULL AND
+  r.dbreg_prediction_raw2__ IS NOT NULL AND r.dbreg_prediction_raw3__ IS NOT
+  NULL AND isfinite(r.dbreg_prediction_raw1__) AND
+  isfinite(r.dbreg_prediction_raw2__)) THEN CAST(NULL AS DOUBLE) WHEN NOT
+  (g1.id IS NOT NULL) THEN CAST(NULL AS DOUBLE) WHEN NOT (TRUE) THEN CAST(NULL
+  AS DOUBLE) WHEN NOT
+  isfinite(((0.41494183940474566)*(r.dbreg_prediction_x1__)+(1.0)*g1.gamma1+-0.016081208217354068+r.dbreg_prediction_offset__))
+  THEN CAST(NULL AS DOUBLE) ELSE
+  ((0.41494183940474566)*(r.dbreg_prediction_x1__)+(1.0)*g1.gamma1+-0.016081208217354068+r.dbreg_prediction_offset__)
+  END AS `prediction` FROM (SELECT r.*,(CAST((x) AS
+  DOUBLE)-(0.0052977273202953383)) AS dbreg_prediction_x1__ FROM (SELECT
+  raw.*,CAST(raw.dbreg_prediction_raw1__ AS DOUBLE) AS
+  `x`,raw.dbreg_prediction_raw4__ AS dbreg_prediction_id1__,CAST(0.0 AS DOUBLE)
+  AS dbreg_prediction_offset__ FROM (SELECT `x` AS
+  dbreg_prediction_raw1__,`keyg` AS dbreg_prediction_raw2__,`datekey` AS
+  dbreg_prediction_raw3__,`row key` AS dbreg_prediction_raw4__ FROM
+  `dbreg_prediction_input_77cff4cdc82ac`) raw) r) r LEFT JOIN
+  `dbreg_prediction_input_77cff112f9971` g1 ON
+  g1.k1=TRY_CAST(r.dbreg_prediction_raw2__ AS BIGINT) AND
+  g1.k2=TRY_CAST(r.dbreg_prediction_raw3__ AS DATE)'
+ℹ From 'nanodbc/nanodbc.cpp:1802'.",154.991939067841

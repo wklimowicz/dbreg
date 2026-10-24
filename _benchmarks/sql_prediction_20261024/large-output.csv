@@ -1,0 +1,4 @@
+"repetition","rows","elapsed_seconds","maximum_collected_rows","collected_object_bytes","max_prediction_error","result_object_bytes"
+1,1e+06,0.510000000000002,1,3744,1.35840449999591e-10,41688
+2,1e+06,0.154999999999999,1,3744,1.35840449999591e-10,41688
+3,1e+06,0.146000000000001,1,3744,1.35840449999591e-10,41688

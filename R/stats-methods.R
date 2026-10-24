@@ -118,6 +118,25 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
 #' or weights. Mundlak means are computed from the supplied population, using
 #' fitted-model weights when present; they are not saved training group means.
 #'
+#' @param conn,table,path Optional database connection and prediction source,
+#'   following [dbreg()] source conventions. Supply exactly one of `newdata`,
+#'   `table`, or `path`. DuckDB and native Databricks support database output.
+#' @param row_id Explicit unique, nonmissing prediction key column names.
+#'   Supplying database arguments or `row_id` selects keyed database output.
+#' @param prediction_table Optional caller-named session table receiving output.
+#'   Requires a caller-owned connection and must not already exist. Otherwise
+#'   the result owns its temporary table; see [dbreg-prediction].
+#' @section Database prediction:
+#' Returns a `dbreg_prediction` relation containing the original typed keys and
+#'   a prediction column. Its `prediction_column` field names that column.
+#'   Rows have no implicit order. `head()` previews and `as.data.frame()` collects
+#'   explicitly. Collection returns exact integer keys as text if the driver
+#'   would otherwise round them; database columns retain their original types.
+#'   Missing inputs and unknown/non-estimable FE combinations yield SQL `NULL`.
+#'   Ordinary unseen factor levels raise an error. Learned effects require
+#'   `retain = "prediction"`; database dictionaries require their owning session.
+#'   Intervals, IV and Mundlak database output are currently unsupported.
+#'
 #' @seealso [dbreg()] for examples.
 #' @inherit coef.dbreg examples
 #' @importFrom stats model.matrix reformulate ave update as.formula coef vcov qt
@@ -128,10 +147,19 @@ predict.dbreg = function(
   newdata = NULL,
   interval = c("none", "confidence", "prediction"),
   level = 0.95,
+  conn = NULL,
+  table = NULL,
+  path = NULL,
+  row_id = NULL,
+  prediction_table = NULL,
   ...
 ) {
   check_unused_args(list(...))
   interval = match.arg(interval)
+  if (any(!vapply(list(conn, table, path, row_id, prediction_table), is.null, logical(1)))) {
+    if (interval != "none") stop("Database prediction output does not support intervals.", call. = FALSE)
+    return(predict_sql(object, newdata, conn, table, path, row_id, prediction_table))
+  }
   stored_compression = identical(object[["strategy"]], "compress") &&
     (is.null(newdata) || identical(newdata, object[["data"]]))
   if (!is.null(object[["fitted_state"]]) && !stored_compression) return(predict_linear_state(object, newdata, interval))

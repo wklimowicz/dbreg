@@ -130,14 +130,28 @@ predictor using paired opposite noise. Six fits match beta/full covariance/N;
 retained predictions match the analytical target. Mathematical state is 8,120
 bytes; recovery queries return at most one row during fitting. Retention adds
 about 5.1s (4.588s to 9.713s medians) and 18% whole-process peak RSS locally.
-Native large-state performance/disk-history storage remain unmeasured. Keyed
-database output is the next milestone; its numerical/lifetime prototype passes
-locally, but the public API and factor/portable-state paths are not implemented.
+Native large-state performance/disk-history storage remain unmeasured.
+
+Keyed database prediction output now has a public API: explicit prediction
+row_id plus conn/table/path or newdata returns a dbreg_prediction relation.
+It supports portable and database-backed learned effects, fitted factor coding,
+all four GLM link/response kernels, typed keys and output leases. Collection is
+explicit; outputs survive model close, while caller-owned exports survive their
+result's close. The final full local gate passes **4,427 assertions**. Broad
+native checks pass **137 + 4** assertions; a final response-helper/Poisson tail
+correction passes **16** focused native checks. The broad run predates only
+that response-helper change and fixture registration; archived source and
+audit-source.R make the scope explicit. Package check has zero errors/warnings
+and the existing binsreg NOTE. Evidence: `_benchmarks/sql_prediction_20261024/`.
+The million-row keyed output matches its analytical target to 1.4e-10, with at
+most one row collected per setup query. Median output creation is 0.155s in
+this warmed local fixture; backend row storage remains required and native
+large-output performance/history storage are unmeasured.
 
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
-Remaining dependencies include keyed database outputs, retained sample/score
-state, post-fit inference and formula adapters. Three or more large FE blocks
+Remaining dependencies include retained sample/score state, post-fit inference
+and formula adapters. Three or more large FE blocks
 and large varying-slope designs still need a supported recovery boundary. Use dbreg's
 existing conventions; consult fixest for unresolved user-facing compatibility
 choices. Concrete API/lifetime decisions are recorded in

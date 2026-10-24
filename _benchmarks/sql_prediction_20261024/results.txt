@@ -1,0 +1,82 @@
+Keyed database prediction output checkpoint, 2026-10-24
+=======================================================
+
+This is a staged compatibility increment based on ea6aa04, not the complete
+fixest replacement. See inst/FIXEST-COMPATIBILITY.txt for remaining work.
+
+Completed validation
+---------------------
+Full final local: 4,427 assertions, zero failures, 233.246179580688 seconds.
+Broad native: 137 output checks (920.7794 seconds) and four key checks
+(19.2318 seconds), zero failures. Final focused native response/tail checks:
+16 assertions, zero failures, 29.6281 seconds. Native times are explicit seconds;
+tinytest's printed minute durations carry a misleading 's' label.
+Package check: zero errors/warnings, existing optional binsreg cross-reference
+NOTE. --no-tests/--no-vignettes/--no-manual, _R_CHECK_FORCE_SUGGESTS_=false;
+the separate complete local source suite above covers all local tests.
+
+Source scope is explicit: the broad native run preceded a final response-helper
+extraction and Poisson tail correction. Those two R files and registration of
+the new native fixture are the only differences. Their original contents are
+preserved under native-accepted/pre-tail-source and verified by audit-source.R.
+The final full local, focused native tails and resource benchmark manifests
+match the final implementation exactly. The focused native gate also exercises
+all three extracted binomial kernels, missing means and overflow to NaN.
+Reference: installed fixest 0.14.0; adjacent source v0.14.2 at
+789f888416e97673d154c840eec2d99101fc07b1. Per-run environment files record versions.
+
+Behavior and coverage
+----------------------
+Explicit row_id plus conn/table/path or R newdata selects a dbreg_prediction
+relation. Native vector defaults remain unchanged. Output is materialized once;
+unique/nonmissing keys are validated on that immutable result. OLS and four
+GLM link/response families use fitted coding and learned effects. Portable
+state uploads only bounded dictionaries; SQL dictionaries stay in their owner.
+Missing/unknown/non-estimable FE rows preserve their keys with NULL predictions;
+unseen ordinary factors error. Fitted levels are never discovered from newdata.
+
+Shared fixtures cover powers/interactions/references, arbitrary native text,
+17-digit decimal factors, exact BIGINT/date tuples, nonstandard keys, portable
+three-FE/varying-slope state, SQL two-FE dictionaries, missing/unseen keys,
+duplicate/NULL/NaN key failures, source preservation, exports, serialization,
+release and output survival after model close. Local ownership tests also cover
+shared sessions across outputs/fits, released public handles, last-owner close
+and garbage collection. Caller-named exports require caller-owned sessions.
+Poisson response matches R's epsilon floor and remains finite at links 701/709;
+actual overflow, missing inputs and Inf-Inf are checked independently.
+
+The first native run failed before completion because the new output CTAS
+bypassed dbglm_sql(), leaving isfinite() untranslated. Source/logs are preserved
+under native-initial. The final path uses the existing translator. Early package
+checking also exposed a missing utils::head import; the final namespace check
+passes with no new dependency. These failed development runs are not passes.
+
+Million-row resource check
+--------------------------
+large-output.R reuses the SQL-only paired-noise two-FE fixture with 1,000,000
+rows and 50,000/49,997 FE levels. Every keyed prediction is checked in SQL against
+the analytical target; max absolute error is 1.35840449999591e-10.
+No training/prediction panel is collected. Instrumented output creation returns
+at most one row per query, 3,744 cumulative R result-object bytes. Only the final
+output relation survives; closing it restores the fitted table inventory, and
+closing the model restores the original caller inventory.
+
+Three measured warmed output creations: median 0.154999999999999 seconds;
+range 0.146000000000001 to 0.510000000000002 seconds. Result handle object: 41,688 bytes.
+Peak whole-process RSS: 561,276 KiB, including model fitting, embedded DuckDB,
+trace instrumentation and backend execution. This is not output-only R memory.
+The row-sized output remains in the database. Two DuckDB threads, 2GB limit;
+other validation clients were active. These local measurements do not establish
+native/disk-bound performance or Delta history/storage behavior.
+
+Reproduction
+-------------
+Rscript _benchmarks/check_glm_fractional.R full OUTPUT linear_prediction
+Rscript .github/scripts/run-databricks-tests.R OUTPUT test_sql_prediction_live.R test_sql_prediction_keys_live.R test_sql_prediction_tails_live.R
+Rscript _benchmarks/sql_prediction_20261024/large-output.R DATABASE_FILE OUTPUT_PREFIX
+Rscript _benchmarks/sql_prediction_20261024/audit-source.R
+
+The DATABASE_FILE is prepared by the preceding two_fe_prediction_20261024
+large-state.R fixture. Run /usr/bin/time -v around large-output.R for peak RSS.
+Original-sample/default prediction, post-fit inference, formula adapters and
+large three-or-more-FE/varying-slope recovery remain outstanding.

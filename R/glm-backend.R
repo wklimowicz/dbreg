@@ -41,7 +41,11 @@ dbglm_sql = function(conn, sql) {
 dbglm_exact_sum = function(conn, expr) {
   if (!isTRUE(detect_backend(conn)[["is_databricks"]])) return(sprintf("FSUM(%s)", expr))
   ok = sprintf("isfinite(%1$s) AND ABS(%1$s) < 1e10", paste0("(", expr, ")"))
-  sprintf(paste0("(CASE WHEN SUM(CASE WHEN %1$s THEN 0 ELSE 1 END) = 0 THEN ",
+  # DECIMAL(38,18) stabilizes distributed cancellation but rounds very small
+  # scores to zero. When every term is small, ordinary double aggregation
+  # preserves their relative scale and avoids that absolute quantization floor.
+  sprintf(paste0("(CASE WHEN MAX(ABS(%2$s)) < 1e-9 THEN SUM(%2$s) ",
+    "WHEN SUM(CASE WHEN %1$s THEN 0 ELSE 1 END) = 0 THEN ",
     "CAST(SUM(CAST(CASE WHEN %1$s THEN (%2$s) END AS DECIMAL(38,18))) AS DOUBLE) ELSE SUM(%2$s) END)"), ok, expr)
 }
 

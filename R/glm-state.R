@@ -89,7 +89,11 @@ dbglm_fe_evaluate = function(conn, working, x, fe, collect_fe_moments = FALSE, m
     }
     singles = sets >= 1L & sets <= K
     h = as.numeric(res[["__h"]][singles])
-    s_val = ifelse(is.finite(h) & h > 0 & is.finite(res[["__ex1"]][singles]), abs(res[["__ex1"]][singles]) / sqrt(h), 0)
+    # Also certify the Newton-scale group equation. A square-root information
+    # score alone vanishes with a group's weight even when its predictor is
+    # far from its finite solution. This uses the already collected moments.
+    s_val = ifelse(is.finite(h) & h > 0 & is.finite(res[["__ex1"]][singles]),
+      abs(res[["__ex1"]][singles]) / sqrt(h) / pmin(1, sqrt(h)), 0)
     result = dbglm_fe_diagnostics(row, x, if (length(s_val)) max(s_val) else 0)
     # Retain the explicit NULL when a bounded summary cannot be used.
     result["fe_moments"] = list(fe_moments)
@@ -97,7 +101,8 @@ dbglm_fe_evaluate = function(conn, working, x, fe, collect_fe_moments = FALSE, m
   }
   fe_queries = character()
   for (i in seq_along(fe)) for (v in c("1.0", attr(fe, "slopes")[[i]])) {
-    fe_queries = c(fe_queries, paste0("SELECT COALESCE(ABS(", dbglm_exact_sum(conn, paste0("score*(", v, ")")), ")/NULLIF(SQRT(SUM(w*(", v, ")*(", v, "))),0),0) AS s FROM ", working, " GROUP BY ", fe[i]))
+    fe_queries = c(fe_queries, paste0("SELECT COALESCE(ABS(", dbglm_exact_sum(conn, paste0("score*(", v, ")")),
+      ")/NULLIF(SQRT(SUM(w*(", v, ")*(", v, ")))*LEAST(1.0,SQRT(SUM(w))),0),0) AS s FROM ", working, " GROUP BY ", fe[i]))
   }
   if (length(fe_queries)) {
     terms = c(terms, paste0("(SELECT MAX(s) FROM (", paste(fe_queries, collapse = " UNION ALL "), ") t) AS fe_score_max"))

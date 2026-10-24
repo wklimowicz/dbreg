@@ -38,7 +38,8 @@ binomial weights. For `predict`, `"link"` returns the linear predictor and
 `"response"` returns the response mean.}
 
 \item{...}{Additional method arguments are not supported and produce an error.
-New-row prediction with absorbed effects is not supported.}
+New-row prediction with absorbed effects requires `retain = "prediction"`
+when fitting. Unknown or non-estimable FE combinations return `NA`.}
 
 \item{parm}{Coefficient names or positions, defaulting to all coefficients.}
 
@@ -47,7 +48,9 @@ New-row prediction with absorbed effects is not supported.}
 \item{fe}{Must be `FALSE` for GLM confidence intervals. This argument is
 accepted for shared tidying; absorbed-effect intervals are not supported.}
 
-\item{newdata}{Data frame containing regressors and any fitted offset column.}
+\item{newdata}{Data frame containing regressors, fitted FE keys and varying
+slope variables, and any fitted offset column. Outcomes and fitting weights
+are not required. Missing inputs preserve their positions as `NA` predictions.}
 
 \item{conf.int}{Include confidence intervals?}
 

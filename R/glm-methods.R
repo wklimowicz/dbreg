@@ -1,7 +1,8 @@
 #' Methods for database binomial and Poisson GLMs
 #' @param object,x A `dbglm` model.
 #' @param ... Additional method arguments are not supported and produce an error.
-#'   New-row prediction with absorbed effects is not supported.
+#'   New-row prediction with absorbed effects requires `retain = "prediction"`
+#'   when fitting. Unknown or non-estimable FE combinations return `NA`.
 #' @name dbglm-methods
 #' @importFrom stats logLik nobs df.residual predict
 NULL
@@ -52,20 +53,27 @@ confint.dbglm = function(object, parm, level = 0.95, fe = FALSE, ...) {
 }
 
 #' @rdname dbglm-methods
-#' @param newdata Data frame containing regressors and any fitted offset column.
+#' @param newdata Data frame containing regressors, fitted FE keys and varying
+#'   slope variables, and any fitted offset column. Outcomes and fitting weights
+#'   are not required. Missing inputs preserve their positions as `NA` predictions.
 #' @export
 predict.dbglm = function(object, newdata, type = c("link", "response"), ...) {
   check_unused_args(list(...))
   type = match.arg(type)
   if (missing(newdata)) stop("`newdata` is required; dbglm does not retain input rows.", call. = FALSE)
-  if (length(object[["fe"]])) stop("New-row prediction for absorbed GLMs is not implemented.", call. = FALSE)
+  if (length(object[["fe"]]) && is.null(object[["fitted_state"]])) {
+    stop("New-row prediction for absorbed GLMs requires fitting with retain='prediction'.", call. = FALSE)
+  }
   newdata = as.data.frame(newdata)
   for (a in names(object[["factor_sources"]])) {
     source = object[["factor_sources"]][[a]]
     if (!source %in% names(newdata)) stop("newdata is missing columns: ", source, call. = FALSE)
     newdata[[a]] = newdata[[source]]
   }
-  required = unique(c(object[["model_spec"]][["source_vars"]], object[["offset"]]))
+  state = object[["fitted_state"]]
+  required = unique(c(object[["model_spec"]][["source_vars"]], object[["offset"]],
+    unlist(lapply(state[["specification"]][["dictionaries"]], `[[`, "columns")),
+    unlist(object[["varying_slopes"]])))
   absent = setdiff(required, names(newdata))
   if (length(absent)) stop("newdata is missing columns: ", paste(absent, collapse = ", "), call. = FALSE)
   valid = rep(TRUE, nrow(newdata))
@@ -85,7 +93,8 @@ predict.dbglm = function(object, newdata, type = c("link", "response"), ...) {
   if (object[["has_intercept"]]) design = cbind("(Intercept)" = 1, design)
   beta = stats::coef(object)
   names(beta) = object[["design_names"]]
-  eta = as.vector(design[, names(beta), drop = FALSE] %*% beta)
+  eta = if (!is.null(state)) predict_from_fitted_state(state, design, data) else
+    as.vector(design[, names(beta), drop = FALSE] %*% beta)
   if (!is.null(object[["offset"]])) eta = eta + as.numeric(data[[object[["offset"]]]])
   prediction[valid] = if (type == "link") eta else object[["family"]][["linkinv"]](eta)
   prediction

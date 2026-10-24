@@ -1,6 +1,6 @@
 # Same-data, same-runtime comparison of the pre-compatibility and current code.
 # prepare DBFILE N
-# run REPOSITORY DBFILE default|integer|row_id|sample|fraction OUTPUT_PREFIX REPEATS LABEL
+# run REPOSITORY DBFILE default|integer|row_id|sample|fraction|prediction OUTPUT_PREFIX REPEATS LABEL
 args = commandArgs(TRUE)
 if (length(args) < 1L) stop("Expected prepare or run.")
 if (args[[1L]] == "prepare") {
@@ -20,7 +20,7 @@ if (args[[1L]] == "prepare") {
 } else if (args[[1L]] == "run") {
   if (length(args) != 7L) stop("run REPOSITORY DBFILE MODE OUTPUT_PREFIX REPEATS LABEL")
   repo = normalizePath(args[[2L]])
-  mode = match.arg(args[[4L]], c("default", "integer", "row_id", "sample", "fraction"))
+  mode = match.arg(args[[4L]], c("default", "integer", "row_id", "sample", "fraction", "prediction"))
   out = args[[5L]]
   repeats = as.integer(args[[6L]])
   # The final argument is a descriptive revision label, separate from HEAD.
@@ -58,7 +58,7 @@ if (args[[1L]] == "prepare") {
   write.csv(data.frame(file = substring(names(hashes), nchar(repo) + 2L), md5 = unname(hashes)),
     paste0(out, "-source-md5.csv"), row.names = FALSE)
   models = c("ols", "ols_fe", "glm", "glm_fe")
-  if (mode == "fraction") models = c("glm", "glm_fe")
+  if (mode %in% c("fraction", "prediction")) models = c("glm", "glm_fe")
   rows = list()
   run_one = function(model, repetition) {
     glm = startsWith(model, "glm")
@@ -70,15 +70,24 @@ if (args[[1L]] == "prepare") {
     if (mode == "sample") fit_args[["sample_table"]] = "bench_retained"
     if (mode == "integer") fit_args[["weights"]] = "w_int"
     if (mode == "fraction") fit_args[["weights"]] = "w_frac"
+    if (mode == "prediction") fit_args[["retain"]] = "prediction"
     metrics[["ll_seconds"]] = 0
     metrics[["ll_calls"]] = 0L
     gc()
     elapsed = system.time({fit = do.call(if (glm) dbglm else dbreg, fit_args)})[["elapsed"]]
     if (glm && !isTRUE(fit[["converged"]])) stop("Only completed converged fits are benchmarked.")
+    if (mode == "prediction" && fe) {
+      newdata = DBI::dbGetQuery(conn, "SELECT x,z,g,h FROM perf_input ORDER BY id LIMIT 100")
+      prediction = stats::predict(fit, newdata)
+      stopifnot(all(is.finite(prediction)),
+        identical(stats::predict(unserialize(serialize(fit, NULL)), newdata), prediction))
+    }
     record = data.frame(label = label, revision = revision, mode = mode, model = model,
       repetition = repetition, elapsed_seconds = elapsed, nobs = nobs(fit),
       strategy = fit[["strategy"]], iterations = if (glm) fit[["iterations"]] else NA_integer_,
       likelihood_seconds = metrics[["ll_seconds"]], likelihood_calls = metrics[["ll_calls"]],
+      prediction_state_bytes = as.numeric(object.size(fit[["fitted_state"]])),
+      prediction_recovery_error = if (is.null(fit[["fitted_state"]])) NA_real_ else fit[["fitted_state"]][["prediction"]][["recovery_error"]],
       weighted_loglik = if (glm) as.numeric(if (mode == "fraction") logLik(fit, type = "weighted") else logLik(fit)) else NA_real_,
       coef_names = as.character(jsonlite::toJSON(names(coef(fit)), auto_unbox = FALSE)),
       coef_values = as.character(jsonlite::toJSON(unname(coef(fit)), digits = 17, auto_unbox = FALSE)),

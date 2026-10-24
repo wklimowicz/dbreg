@@ -52,7 +52,7 @@ dbglm_fe_multiply = function(sys, X) {
 
 # Factor the Schur complement on the non-absorbed levels; the identified basis
 # is chosen once per fit so FE normalisations stay fixed across iterations.
-dbglm_fe_solver = function(sys, cache) {
+dbglm_fe_solver = function(sys, cache, retain_null = FALSE) {
   if (any(!is.finite(sys[["Dg"]])) || any(sys[["Dg"]] <= 0)) stop("GLM fixed-effect information is singular.", call. = FALSE)
   scaled = sys[["Cm"]] / sys[["Dg"]]
   S = sys[["E"]] - crossprod(sys[["Cm"]], scaled)
@@ -77,6 +77,8 @@ dbglm_fe_solver = function(sys, cache) {
   # H follow from the dropped Schur pivots: v2[keep] = -S_kk^{-1} S_kd.
   dropped = setdiff(seq_along(sys[["rest"]]), keep)
   null_q = NULL
+  scaled_null_q = NULL
+  information_scale = sqrt(pmax(sys[["diag"]], .Machine[["double.xmin"]]))
   if (length(dropped)) {
     v2 = matrix(0, length(sys[["rest"]]), length(dropped))
     v2[cbind(dropped, seq_along(dropped))] = 1
@@ -86,7 +88,11 @@ dbglm_fe_solver = function(sys, cache) {
     V = matrix(0, sys[["n"]], length(dropped))
     V[sys[["rest"]], ] = v2
     V[sys[["big"]], ] = -scaled %*% v2
-    null_q = qr.Q(qr(V))
+    if (retain_null) null_q = qr.Q(qr(V))
+    # Remove SQL roundoff in information-scaled coordinates. An unscaled
+    # projection can move O(eps) from a large group into an O(1e-20) equation,
+    # corrupting that group's learned effect by many orders of magnitude.
+    scaled_null_q = qr.Q(qr(information_scale * V))
   }
   solve = function(rhs) {
     r1 = rhs[sys[["big"]], , drop = FALSE]
@@ -100,8 +106,9 @@ dbglm_fe_solver = function(sys, cache) {
     out[sys[["big"]], ] = r1 / sys[["Dg"]] - scaled %*% x2
     out
   }
-  project = function(rhs) if (is.null(null_q)) rhs else rhs - null_q %*% crossprod(null_q, rhs)
-  list(solve = solve, project = project)
+  project = function(rhs) if (is.null(scaled_null_q)) rhs else
+    rhs - information_scale * (scaled_null_q %*% crossprod(scaled_null_q, rhs / information_scale))
+  list(solve = solve, project = project, null_basis = null_q)
 }
 
 # One statement returns the global row (__set = 0), per-FE marginals

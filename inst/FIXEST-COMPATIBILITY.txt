@@ -25,9 +25,9 @@ Implementation sequence
    Implemented in this increment; validation evidence is in GLM-VALIDATION.txt.
 2. Shared fitted-state contract for learned effects, sample keys and resource
    ownership. OLS/GLM now share typed-key validation and retained-key exports;
-   OLS exports use an immutable snapshot throughout fitting. Learned effects,
-   model-owned state/lifetime and post-fit scores remain pending. These precede
-   prediction and post-fit clustering.
+   OLS exports use an immutable snapshot throughout fitting. Bounded portable
+   GLM learned-effect state is implemented behind explicit retention; database
+   resources, OLS recovery and post-fit scores remain pending.
 3. Supported formula/argument normalization: i()/references, public coefficient
    identities, OLS offsets and varying slopes, fixef.rm, weights and subset.
    Partial existing formula support remains; compatibility entry points pending.
@@ -35,8 +35,9 @@ Implementation sequence
    arguments, preserving explicit legacy aliases. Linear formulas no longer
    capture caller or strategy environments in compact results.
 4. Fitted link/response prediction with learned effects, including estimable
-   zero-weight rows, without outcomes in newdata. Not implemented for absorbed
-   fits. Existing OLS conditional-population prediction remains unchanged.
+   zero-weight rows, without outcomes in newdata. Implemented for bounded GLM
+   state with retain="prediction"; native validation is in progress. Existing
+   OLS conditional-population prediction remains unchanged.
 5. Two-way OLS cluster covariance and post-fit inference on the fitted sample.
    Not implemented. Include small-sample/FE-nesting policies and test df.
 6. Summary, se/coeftable, likelihood, sample and df extraction; convergence,
@@ -65,8 +66,8 @@ In particular, fixef.rm="none" tests do not establish default sample parity.
 Keep model df, covariance correction K and inference df distinct. Match the full
 covariance and named coefficient table, including off-diagonal entries.
 
-Fitted-state design requirements (pending implementation)
----------------------------------------------------------
+Fitted-state design requirements (partially implemented)
+-------------------------------------------------------
 Retain the original formula and fitted design coding separately from SQL aliases;
 retain FE key dictionaries, slopes, learned coefficients and centering metadata.
 Recovery must work on both bounded and SQL fallback solvers. Prediction must be
@@ -219,8 +220,34 @@ Evidence: _benchmarks/compat_performance_20261024. Keep prediction dictionaries
 separate from optional observation-sized inference state and reuse existing
 fit-owned relations when retention is requested; default native fits stay compact.
 
-Next fitted-state slice: preserve/reconstruct learned GLM effects on both moment
-and SQL projection paths and verify their sum against the fitted predictor. Add
-typed dictionaries and model-owned lifecycle tests before exposing prediction/
-post-fit covariance. Reuse the state schema for OLS recovery; do not ship a
-GLM-only public persistence interface that OLS cannot adopt.
+Portable prediction slice (validation in progress): native dbglm now accepts
+retain=c("none", "prediction"), defaulting to the existing compact behavior.
+Prediction retention reconstructs the learned predictor from bounded joint
+FE/regressor moments on both moment and SQL fitting paths, including varying
+slopes. Recovery must reproduce the fit's final eta before any fit-owned table
+is released. State is a versioned plain list, without resource handles, rows,
+outcomes or fitting weights. It does not provide training-row/default prediction
+or post-fit covariance. OLS and database-backed large state remain pending.
+
+Typed dictionaries preserve BIGINT text exactly and encode double keys with
+17 significant digits, including composite tuples. Supported SQL key types are
+integer, double/float, character, logical and date; unsupported types error.
+Integer newdata above 2^53 requires integer64 or exact decimal strings.
+Unknown keys, missing inputs and rows outside the joint identified design span
+return NA. Null directions certify disconnected components and training-only
+regressor relations; marginal level membership is insufficient. Unseen ordinary
+regressor factor levels keep the existing explicit error behavior.
+
+Portable recovery is limited by dbreg.prediction_max_entries (default 2e6), the
+FE moment row limit, and the existing dense/cross-product feasibility gates.
+The limits bound transfers and dense/null matrices. An oversized request errors
+and cleans up rather than collecting the panel; selecting owned database state
+at that boundary is still required by the full target above. Dictionary creation
+adds explicit SQL work; native default fitting does not create these dictionaries.
+
+Tiny group-specific weights require a relative group-equation certificate as
+well as square-root-information scores. The existing aggregate query supplies
+both scales. FE nuisance right-hand sides are projected in information-scaled
+coordinates so SQL roundoff from a large group cannot swamp a small group's
+equation. Uniformly small original weights continue to use the earlier global
+power-of-two normalization. Keep this numerical safeguard when extending state.

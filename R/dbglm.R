@@ -80,6 +80,12 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   Explicit `"prediction"` allows a no-FE boundary probability approximation,
 #'   with a warning, `finite_mle=FALSE`, `converged=FALSE`, and unavailable SEs,
 #'   tests and AIC/BIC. Coefficients are finite approximations, not a finite MLE.
+#' @param retain Default `"none"` keeps the compact fit. `"prediction"` saves
+#'   bounded portable FE dictionaries and learned coefficients for new-row
+#'   prediction. It adds SQL aggregation and dictionary transfer, without keeping
+#'   input rows or a connection. Oversized state errors instead of collecting
+#'   the panel; `options(dbreg.prediction_max_entries = 2e6)` bounds matrix and
+#'   transfer entries alongside the existing FE moment limits.
 #' @return A compact object of class `c("dbglm", "dbreg")`, containing slopes,
 #'   covariance, log likelihood, sample counts and convergence diagnostics. Input
 #'   rows, database connections and temporary relations are not retained.
@@ -88,8 +94,10 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   Fits that fail convergence or reach the numerical mean boundary
 #'   error rather than returning ordinary successful inference. These checks
 #'   do not constitute a complete general separation detector. Absorbed fits
-#'   support coefficients and inference; new-row prediction with absorbed effects
-#'   is not yet implemented. Grouped binomial responses and categorical
+#'   support new-row prediction when fitted with `retain = "prediction"`.
+#'   Unknown FE keys and combinations outside the identified training span return
+#'   `NA`. The saved state survives serialization and database disconnection.
+#'   Grouped binomial responses and categorical
 #'   no-intercept models remain unsupported.
 #'   For binomial models, [logLik()] follows the `fixest::feglm()` / R binomial
 #'   AIC convention: original weights are rounded to integers (ties to even)
@@ -140,7 +148,8 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
                   factor_refs = NULL, vcov = "iid", ssc = NULL, start = NULL,
                   control = dbglm_control(), verbose = FALSE,
                   fixef_rm = c("perfect_fit", "singletons", "infinite_coef", "none"),
-                  row_id = NULL, sample_table = NULL, separation = c("error", "prediction")) {
+                  row_id = NULL, sample_table = NULL, separation = c("error", "prediction"),
+                  retain = c("none", "prediction")) {
   family = dbglm_family(family)
   if (is.character(fml) && length(fml) == 1 && !is.na(fml)) fml = stats::as.formula(fml, env = baseenv())
   if (!is.logical(verbose) || length(verbose) != 1 || is.na(verbose)) stop("`verbose` must be TRUE or FALSE.", call. = FALSE)
@@ -152,6 +161,8 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   covariance = parse_vcov_args(vcov)
   fixef_rm = match.arg(fixef_rm)
   separation = match.arg(separation)
+  retain = match.arg(retain)
+  if (retain == "prediction") prediction_state_limit()
   if (family[["family"]] == "poisson" && separation == "prediction") {
     stop("Boundary prediction mode supports binomial families only.", call. = FALSE)
   }
@@ -330,7 +341,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     sprintf("CAST((%s) AS DOUBLE) AS %s", spec[["columns"]][["sql"]], spec[["columns"]][["alias"]]),
     if (!is.null(covariance[["cluster_var"]])) paste(quote_id(covariance[["cluster_var"]]), "AS __dbglm_cluster"))
   base = create(paste("SELECT", paste(fields, collapse = ", "), from))
-  if (is.null(sample_table)) drop(retained)
+  if (is.null(sample_table) && retain == "none") drop(retained)
   base_terms = c(
     if (length(x)) paste0("SUM(CASE WHEN ", paste(paste0("NOT isfinite(", x, ")"), collapse = " OR "), " THEN 1 ELSE 0 END) AS nonfinite"),
     if (length(fe)) sprintf("COUNT(DISTINCT %s) AS fe_size_%d", fe, seq_along(fe)),
@@ -378,6 +389,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     drop(original)
   } else keep = if (length(x)) dbglm_basis(dbglm_read_information(row, length(x)), control[["collin_tol"]]) else integer()
   all_names = public
+  all_x = x
   public = public[keep]
   x = x[keep]
   beta = stats::setNames(rep(0, length(x)), public)
@@ -440,6 +452,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   call[["separation"]] = separation
   call[["row_id"]] = if (length(row_id)) as.character(row_id) else NULL
   call[["sample_table"]] = sample_table
+  call[["retain"]] = retain
   call = as.call(call)
   saturated_loglik = if (family[["family"]] == "poisson") dbglm_saturated_loglik(conn, base) else 0
   weighted_loglik = (saturated_loglik - fit[["deviance"]] / 2) * weight_scale
@@ -471,6 +484,11 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     varying_slopes = normalized[["slopes"]], row_id = row_id, sample_table = sample_table, ap_cycles = fit[["ap_cycles"]], ap_residual = fit[["ap_residual"]],
     projection_iterations = fit[["ap_cycles"]], projection_residual = fit[["ap_residual"]],
     projection_method = if (!is.null(fit[["projection_method"]])) fit[["projection_method"]] else if (length(fe)) "group" else "none", call = call)
+  if (retain == "prediction" && length(fe)) {
+    result[["fitted_state"]] = dbglm_prediction_state(conn, fit[["working"]], retained,
+      fe, parsed[["fe_components"]], all_x, spec[["columns"]][["name"]],
+      design_center, trend_aliases, counts[["sizes"]], create, drop, n)
+  }
   if (!is.null(sample_table)) {
     keys = if (length(row_id)) row_id else "__dbglm_key"
     export_retained_sample(conn, sample_table, keys, from)

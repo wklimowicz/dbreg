@@ -22,7 +22,8 @@ dbglm(
   fixef_rm = c("perfect_fit", "singletons", "infinite_coef", "none"),
   row_id = NULL,
   sample_table = NULL,
-  separation = c("error", "prediction")
+  separation = c("error", "prediction"),
+  retain = c("none", "prediction")
 )
 }
 \arguments{
@@ -76,6 +77,13 @@ receiving retained keys after a successful fit. It remains caller-owned.}
 Explicit `"prediction"` allows a no-FE boundary probability approximation,
 with a warning, `finite_mle=FALSE`, `converged=FALSE`, and unavailable SEs,
 tests and AIC/BIC. Coefficients are finite approximations, not a finite MLE.}
+
+\item{retain}{Default `"none"` keeps the compact fit. `"prediction"` saves
+bounded portable FE dictionaries and learned coefficients for new-row
+prediction. It adds SQL aggregation and dictionary transfer, without keeping
+input rows or a connection. Oversized state errors instead of collecting
+the panel; `options(dbreg.prediction_max_entries = 2e6)` bounds matrix and
+transfer entries alongside the existing FE moment limits.}
 }
 \value{
 A compact object of class `c("dbglm", "dbreg")`, containing slopes,
@@ -95,8 +103,10 @@ Missing/nonfinite model values and zero weights are omitted. Model
   Fits that fail convergence or reach the numerical mean boundary
   error rather than returning ordinary successful inference. These checks
   do not constitute a complete general separation detector. Absorbed fits
-  support coefficients and inference; new-row prediction with absorbed effects
-  is not yet implemented. Grouped binomial responses and categorical
+  support new-row prediction when fitted with `retain = "prediction"`.
+  Unknown FE keys and combinations outside the identified training span return
+  `NA`. The saved state survives serialization and database disconnection.
+  Grouped binomial responses and categorical
   no-intercept models remain unsupported.
   For binomial models, [logLik()] follows the `fixest::feglm()` / R binomial
   AIC convention: original weights are rounded to integers (ties to even)

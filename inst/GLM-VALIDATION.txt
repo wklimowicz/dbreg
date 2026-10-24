@@ -241,3 +241,24 @@ Delta's column-mapping requirement for spaces in physical column names and
 ODBC's omission of session tables from existence metadata. Column mapping is
 set on newly created owned tables only; existence checks use native SHOW TABLES.
 No full native suite or large performance gate is claimed by this focused run.
+
+Portable learned-effect prediction checkpoint, 2026-10-24 (native run pending)
+----------------------------------------------------------------------------
+Full local suite: 3,773 assertions, zero failures. It includes 116 shared
+learned-effect assertions and four SQL portability checks for very small score
+sums. Package check: zero errors, zero warnings, the existing binsreg NOTE.
+Durable source identities/results: _benchmarks/prediction_state_20261024.
+
+The first native run completed 116 assertions with 108 passes/eight failures,
+all analytic tiny-weight prediction checks. DECIMAL(38,18) rounded those group
+scores to zero. The corrected aggregate uses double summation when all terms
+are small; ordinary larger terms retain the fixed-point cancellation safeguard.
+The pre-fix source archive/results are retained for reproducibility. The corrected
+native run is in progress and is not yet a completed validation gate.
+
+Other new coverage: cloglog/logit/probit/Poisson; moment and forced SQL fitting;
+varying, composite and three-way FEs; excluded zero-weight rows; exact BIGINT and
+closely spaced double keys; missing/unknown keys; disconnected and collinear
+non-estimability; serialization, source removal, bounded transfers and cleanup.
+This establishes bounded GLM newdata prediction only, not database-backed large
+state, OLS recovery, training-row/default predictions or post-fit covariance.

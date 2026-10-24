@@ -20,6 +20,13 @@
   OLS and GLM share key validation and export helpers. Databricks exports retain
   nonstandard key names through scoped column mapping and recognize existing
   session tables before fitting.
+- `dbglm(retain = "prediction")` saves bounded portable learned-effect state
+  for link/response prediction without outcomes or fitting weights. Prediction
+  includes varying slopes and checks the identified joint regressor/FE span;
+  unknown keys and non-estimable combinations return `NA`. Native retention
+  remains off by default. Database-backed large state and OLS support are pending.
+- Absorbed GLMs also certify group equations relative to group information,
+  preventing premature convergence for extremely small group-specific weights.
 
 # wojtek-dev integration (development branch)
 

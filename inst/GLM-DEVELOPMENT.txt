@@ -154,8 +154,10 @@ Use explicit coefficient, covariance, likelihood and sample tolerances. The
 fixest reference helper refines only fixest's own predictor until its output
 stabilizes, independently of dbglm. Match pruning and small-sample conventions
 when comparing packages. Passing tests does not establish support for grouped
-binomial responses or absorbed-FE prediction;
-those remain unsupported public API cases.
+binomial responses. Absorbed-FE newdata prediction requires explicit
+retain="prediction" and bounded portable dictionaries; large database-backed
+state and training-row/default prediction remain pending. See the compatibility
+contract for exact key, estimability and lifetime requirements.
 
 See _benchmarks/GLM-INDEX.txt in the repository for performance evidence and
 the distinction between production benchmarks and exploratory prototypes.

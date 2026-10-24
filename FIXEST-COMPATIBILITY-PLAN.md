@@ -37,6 +37,25 @@ limitations are in `_benchmarks/compat_performance_20261024/results.txt`. Keep
 native defaults compact; prediction dictionaries and optional row-sized inference
 state must be separate capabilities. Learned-effect recovery is the next milestone.
 
+Bounded portable GLM learned-effect recovery/newdata prediction is now implemented
+behind `retain="prediction"`, with native retention off by default. The latest
+full local run passes **3,773 assertions**; package check has zero errors/warnings
+and the existing optional `binsreg` NOTE. New tests cover four GLM families,
+varying slopes, composite/three-way/disconnected effects, joint-design
+estimability, exact keys, serialization and extreme group-specific weights.
+The first native run passed 108 checks and failed eight analytic tiny-weight
+checks, exposing a fixed-decimal score floor. That summation path is corrected;
+the native rerun is in progress. Evidence: `_benchmarks/prediction_state_20261024/`.
+Do not describe that pending native run as a pass.
+
+A 60-fit warmed million-row follow-up verified coefficients, covariance and
+likelihood before timing comparisons. Portable prediction retention added about
+0.26s/14% to the two-FE cloglog fit (1.811s to 2.071s pooled medians); saved state
+was 107,896 bytes. Peak client RSS was about 15% higher during fitting. These
+are local measurements with material timing variation, not native guarantees.
+OLS recovery, database-backed large prediction state, original-sample/default
+prediction and post-fit inference remain unfinished.
+
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
 The next dependency is shared observation identity and fitted state. Use dbreg's

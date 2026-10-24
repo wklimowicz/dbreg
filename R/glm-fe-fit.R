@@ -159,7 +159,7 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
     history = c(history, current[["deviance"]])
     total_halvings = total_halvings + halvings
     if (isTRUE(verbose)) message("[dbglm] iteration ", iter, ": deviance=", signif(current[["deviance"]], 9), ", score=", signif(current[["score_max"]], 3))
-    if (step == 1 && relative <= control[["glm_tol"]] && current[["score_max"]] <= control[["score_tol"]]) {
+    if (step == 1 && (family[["link"]] == "identity" || relative <= control[["glm_tol"]]) && current[["score_max"]] <= control[["score_tol"]]) {
       if (dbglm_boundary(current, family[["link"]])) stop("GLM reached the numerical mean boundary.", call. = FALSE)
       final = solve_partial_wls(conn, working, x, fe, control, create, drop, response = FALSE, cache = cache,
         materialize = FALSE, scales = if (p) current[["scales"]][seq_len(p)] else numeric(),

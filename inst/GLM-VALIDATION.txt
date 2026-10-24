@@ -469,3 +469,45 @@ warmed/in-memory and too small to predict remote/disk-bound performance.
 Evidence: _benchmarks/linear_offset_20261024. Reference fixest 0.14.0; adjacent
 source 0.14.2 used only to resolve conventions. Entry points, subset/vector sample
 normalization, OLS singleton removal/varying slopes and final integration remain.
+
+Gaussian identity checkpoint, 2026-10-24
+--------------------------------------
+Native dbglm accepts the canonical Gaussian identity family. It reuses the same
+SQL working-state and FE projectors, with one certified linear WLS update rather
+than repeated IRLS deviance convergence. Supports offsets, categorical/composite
+FEs and existing varying slopes, compact/prediction/full retention, SQL output,
+recursive singleton pruning and one-way inference. Other Gaussian links remain
+unsupported. Native binomial-cloglog default and OLS strategies are unchanged.
+
+Gaussian IID dispersion, t tests, model/covariance/testing df and likelihood match
+fixest::feglm(), including Gaussian AIC's profile-likelihood-minus-one convention
+and parameter df excluding dispersion. logLik(type="weighted") returns the
+profile likelihood. Uniform small/large Gaussian weights are normalized; IID
+bread and dispersion combine internally to avoid reciprocal-scale overflow.
+A newly exposed OLS SSC edge is fixed: IID with K.adj=FALSE uses RSS/(N-1), not
+RSS/N. The ordinary adjusted IID result is unchanged.
+
+Focused local: 222 assertions; full source suite: 5,071, zero failures, 229.74s.
+Native: 204 assertions, zero failures, 458.90 seconds. Package check: zero errors/
+warnings, existing optional binsreg NOTE. All final source manifests match.
+Fixtures cover full covariance/coeftables/intervals under nine requests/policies,
+working/response/Pearson/deviance residuals, default/newdata/keyed SQL prediction,
+singleton identity, zero weights/missings, varying slopes, release/cleanup and
+uniform 1e-200/1/1e200 weights. Local checks also force SQL projections and cover
+FE-only zero-column and intercept-only models. Gaussian reference raw $coeftable
+can precede SSC and be a data.frame; tests compare public summary() output and
+convert reference tables explicitly. Reference fixest 0.14.0, adjacent 0.14.2.
+
+Million-row NoFE benchmark, five measured warmed fits per mode: native OLS moments
+median .017s (.017-.020); new Gaussian GLM path .257s (.252-.734), about 15.1x.
+Whole-process peak RSS 336,320 versus 463,256 KiB (+37.7%); model objects 9,560 versus
+62,272 bytes. Named slopes and covariance (including the Gaussian SSC factor)
+match before timing is accepted; all queries return at most one row and all
+fit-owned SQL tables are released. This is a real cost of the optional GLM
+snapshot/working-table pipeline, not a slowdown in existing OLS defaults. Do not
+claim Gaussian/OLS performance parity; preserve OLS fast paths in adapters.
+These warmed local measurements do not establish native or disk-bound performance.
+
+Evidence: _benchmarks/gaussian_20261024. Compatibility entry points, shared subset/
+vector normalization, native OLS singleton/varying-slope integration, formula i()
+normalization, extractor registrations and final integrated gates remain.

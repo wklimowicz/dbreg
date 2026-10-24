@@ -1,4 +1,4 @@
-#' Methods for database binomial and Poisson GLMs
+#' Methods for database binomial, Poisson and Gaussian GLMs
 #' @param object,x A `dbglm` model.
 #' @param ... Additional method arguments are not supported and produce an error.
 #'   New-row prediction with absorbed effects requires `retain = "prediction"`
@@ -13,7 +13,9 @@ NULL
 #' @param type For `logLik`, `"fixest"` reports the likelihood using the
 #'   `fixest::feglm()` convention (the default); `"weighted"` returns the
 #'   objective with unrounded observation weights. These differ for fractional
-#'   binomial weights. For `predict`, `"link"` returns the linear predictor and
+#'   binomial weights. Gaussian default likelihood is profile likelihood minus
+#'   one, following R's family AIC convention; `"weighted"` omits that constant.
+#'   For `predict`, `"link"` returns the linear predictor and
 #'   `"response"` returns the response mean.
 #' @export
 logLik.dbglm = function(object, type = c("fixest", "weighted"), ...) {
@@ -55,7 +57,8 @@ confint.dbglm = function(object, parm, level = 0.95, fe = FALSE,
   if (missing(parm)) parm = names(beta)
   if (is.numeric(parm)) parm = names(beta)[parm]
   if (anyNA(parm) || any(!parm %in% names(beta))) stop("Unknown coefficient in `parm`.", call. = FALSE)
-  critical = stats::qnorm(c((1 - level) / 2, (1 + level) / 2))
+  probabilities = c((1-level)/2, (1+level)/2)
+  critical = if (object[["family"]][["family"]] == "gaussian") stats::qt(probabilities, object[["df_t"]]) else stats::qnorm(probabilities)
   result = outer(sqrt(diag(stats::vcov(object)))[parm], critical) + beta[parm]
   colnames(result) = paste0(format(100 * c((1 - level) / 2, (1 + level) / 2)), " %")
   result

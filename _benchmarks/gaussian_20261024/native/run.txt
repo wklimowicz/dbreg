@@ -1,0 +1,11 @@
+ℹ Loading dbreg
+Starting native suite: test_gaussian_live.R
+[Gaussian] y ~ x + z
+[Gaussian] y ~ x + z | g
+[Gaussian] y ~ x + z | g + h
+[Gaussian] y ~ x + z | g[trend]
+
+test_gaussian_live.R..........  204 tests OK 7.6s
+All ok, 204 results (7.6s)
+                 suite assertions failures error elapsed_seconds
+1 test_gaussian_live.R        204        0              458.8968

@@ -233,3 +233,12 @@ compact path. retained-methods/extractors expose saved-sample operations and own
 obs(), using the same output leases as newdata prediction. NoFE inference-only
 state is excluded from learned-prediction consumers. See validation source scope
 and resource measurements in _benchmarks/retained_inference_20261024/results.txt.
+
+Gaussian identity uses the existing working-state/FE kernels with w=a,
+z=y-offset, score=a*(y-eta), dev=a*(y-eta)^2. A certified full Newton step meets
+linear convergence without requiring a second deviance-stationary iteration.
+Gaussian pruning maps perfect_fit to singletons and infinite_coef to none.
+Normalized Gaussian dispersion is separate from reported original-scale units;
+post-fit inference retains that internal dispersion. Gaussian family AIC includes
+an additive -1 in logLik, with df=K, matching the pinned reference. The IID OLS
+K.adj=FALSE denominator is N-1. See gaussian_20261024 for measured GLM setup cost.

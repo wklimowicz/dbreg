@@ -165,6 +165,15 @@ checks**, with the same package-check result. All existing strategies share a
 derived outcome; R/SQL prediction adds the offset once and full retention keeps
 original R positions. Evidence: `_benchmarks/linear_offset_20261024/`.
 
+Gaussian identity support now passes **5,071 full local assertions** and **204
+native checks**, with zero errors/warnings in package check and the existing
+binsreg NOTE. It reuses the shared FE/varying-slope solver with one certified
+WLS update and matches Gaussian feglm reporting. The OLS IID `K.adj=FALSE`
+denominator edge is also corrected. Evidence: `_benchmarks/gaussian_20261024/`;
+its no-FE GLM route is materially slower than OLS moments, so keep existing OLS
+fast paths. Compatibility entry points and shared subset/vector normalization
+are the next milestone; prototypes are in SCRATCH pending integration.
+
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
 Remaining dependencies include compatibility entry points/formula adapters,

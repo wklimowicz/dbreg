@@ -111,7 +111,7 @@ close_glm(coef(fit_glm), coef(ref_glm), 1e-7, 1e-6)
 close_glm(vcov(fit_glm), vcov(ref_glm), 1e-8, 1e-5)
 expect_identical(dbListTables(glm_con), before_glm)
 expect_error(predict(dbglm(y ~ x | grp, data = glm_dat), glm_dat), "absorbed")
-expect_error(dbglm(y ~ x, data = glm_dat, family = gaussian()), "binomial")
+expect_error(dbglm(y ~ x, data = glm_dat, family = gaussian("log")), "gaussian")
 expect_error(dbglm(y ~ x, data = transform(glm_dat, y = 2)), "zero or one")
 expect_error(dbglm(y ~ x, data = transform(glm_dat, a = -1), weights = "a"), "weights")
 expect_equal(coef(dbglm(y ~ x, data = transform(glm_dat, a = 0.5), weights = "a")),

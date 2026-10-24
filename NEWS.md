@@ -1,5 +1,11 @@
 # Fixest compatibility (development branch)
 
+- `dbglm(family=gaussian())` reuses the shared FE/varying-slope projectors with
+  one certified WLS update. Gaussian dispersion, t inference and likelihood
+  follow `fixest::feglm()`. Existing OLS and binomial-cloglog defaults are unchanged.
+- Post-fit OLS IID covariance with `ssc=list(K.adj=FALSE)` now uses the reference
+  `N-1` denominator. The default adjusted covariance is unchanged.
+
 - `dbreg(offset="column")` supports fixed-coefficient numeric offsets through
   the existing strategies on DuckDB/native Databricks. Saved-sample and newdata
   prediction add offsets once; compact offset models require explicit newdata.

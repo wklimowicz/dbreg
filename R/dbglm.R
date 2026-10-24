@@ -36,10 +36,11 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
   controls
 }
 
-#' Fit a binomial or Poisson GLM on a database relation
+#' Fit a binomial, Poisson or Gaussian GLM on a database relation
 #'
 #' Fits binomial logit, probit, complementary-log-log and log-link Poisson models
-#' using SQL-backed IRLS. Only bounded sufficient statistics are transferred to R.
+#' using SQL-backed IRLS. Gaussian identity models use one certified WLS update.
+#' Only bounded sufficient statistics are transferred to R.
 #' Supports additive and joint
 #' categorical fixed effects and group-specific linear/quadratic trends on native
 #' DuckDB and Databricks connections, with recursive fixed-effect sample exclusions.
@@ -54,7 +55,7 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   precedence as [dbreg()]. A default connection is in memory with spilling
 #'   disabled. Caller connections retain their settings and remain open.
 #' @param family A built-in `binomial("cloglog")` (default), `binomial("logit")`,
-#'   `binomial("probit")`, or `poisson("log")`. Poisson responses must be
+#'   `binomial("probit")`, `poisson("log")`, or `gaussian("identity")`. Poisson responses must be
 #'   nonnegative integer counts; binomial responses must be zero or one.
 #' @param weights Optional column of nonnegative observation weights, including
 #'   fractional weights. Zero weights are omitted. Weights multiply each row's
@@ -72,6 +73,7 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #' @param verbose Print iteration diagnostics?
 #' @param fixef_rm Recursive FE exclusion policy, using fixest conventions.
 #'   If perfect-prediction groups remain under the selected policy, fitting errors.
+#'   Gaussian `"perfect_fit"` removes singletons; `"infinite_coef"` removes none.
 #' @param row_id Optional character vector of unique, nonmissing source-key
 #'   columns. Otherwise opaque snapshot keys are assigned once.
 #' @param sample_table Optional new temporary table on a caller-supplied connection
@@ -115,12 +117,19 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   the unrounded weights. Use `logLik(model, type = "weighted")` for the
 #'   weighted Bernoulli objective actually optimized. For Poisson models and
 #'   integer-weight binomial models the two likelihoods coincide.
+#'   Gaussian models estimate dispersion using weighted RSS divided by model
+#'   residual df. Their IID covariance and t tests follow `fixest::feglm()`,
+#'   including its additional IID SSC factor. Gaussian default likelihood uses
+#'   R's Gaussian AIC convention (profile likelihood minus one); `type="weighted"`
+#'   returns the profile likelihood. Likelihood df excludes the dispersion,
+#'   matching fixest. These conventions differ from OLS [dbreg()].
 #'   If all retained weights are below one, fitting rescales them by a power
 #'   of two to avoid premature convergence and loss of precision for very small
 #'   weights. The divisor is recorded in `weight_scale`. Likelihood, deviance
 #'   and IID covariance are returned on the original weight scale; sandwich
 #'   covariances are invariant to this rescaling. Score diagnostics use the
-#'   internal scale.
+#'   internal scale. Gaussian models also normalize uniformly large weights and
+#'   combine dispersion and bread on the internal scale before restoring units.
 #'   With absorbed effects, expanded regressor columns are centered internally
 #'   before forming projection moments. Their slopes, units and covariance are
 #'   unchanged; the retained column centers are recorded in `design_center`.
@@ -173,7 +182,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   separation = match.arg(separation)
   retain = match.arg(retain)
   if (retain_prediction(retain)) prediction_state_limit()
-  if (family[["family"]] == "poisson" && separation == "prediction") {
+  if (family[["family"]] != "binomial" && separation == "prediction") {
     stop("Boundary prediction mode supports binomial families only.", call. = FALSE)
   }
   normalized = dbglm_formula(fml)
@@ -259,7 +268,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   elig_cond = paste(eligible, collapse = " AND ")
   outcome = quote_id(parsed[["yvar"]])
   invalid_y = if (family[["family"]] == "poisson") paste0("(", outcome, "<0 OR ", outcome, "!=FLOOR(", outcome, "))") else
-    paste(outcome, "NOT IN (0,1)")
+    if (family[["family"]] == "gaussian") "FALSE" else paste(outcome, "NOT IN (0,1)")
   invalid_message = if (family[["family"]] == "poisson") "Poisson outcomes must be nonnegative integers." else "Binomial outcomes must be zero or one."
   w_bad_sql = if (!is.null(weights)) {
     w = quote_id(weights)
@@ -281,9 +290,10 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   retained = create(paste("SELECT * FROM", snapshot, "WHERE", elig_cond), materialize = FALSE)
   drop(snapshot)
   prune_mode = fixef_rm
-  if (isTRUE(detect_backend(conn)[["is_databricks"]]) && length(fe) && fixef_rm != "none") {
+  if (family[["family"]] == "gaussian") prune_mode = if (fixef_rm %in% c("perfect_fit", "singletons")) "singletons" else "none"
+  if (isTRUE(detect_backend(conn)[["is_databricks"]]) && length(fe) && prune_mode != "none") {
     groups = lapply(parsed[["fe_components"]], function(g) quote_id(unique(g)))
-    if (!dbglm_databricks_pruning_needed(conn, retained, groups, outcome, fixef_rm, family[["family"]])) prune_mode = "none"
+    if (!dbglm_databricks_pruning_needed(conn, retained, groups, outcome, prune_mode, family[["family"]])) prune_mode = "none"
   }
   # Rank small category dictionaries, not the full N-row relation once per FE.
   if (length(fe)) {
@@ -309,7 +319,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   # the half-integer ties used only for binomial likelihood reporting. Scaling
   # before the first WLS solve also protects SQL aggregate/FE certification.
   weight_max = as.numeric(sample[["weight_max"]])
-  weight_scale = if (weight_max < 1) 2^floor(log2(weight_max)) else 1
+  weight_scale = if (weight_max < 1 || family[["family"]] == "gaussian" && weight_max > 2) 2^floor(log2(weight_max)) else 1
   if (sample[["bad"]] > 0) stop(invalid_message, call. = FALSE)
   if (has_intercept && (family[["family"]] == "poisson" && sample[["ymax"]] == 0 ||
     family[["family"]] == "binomial" && sample[["ymin"]] == sample[["ymax"]])) {
@@ -321,7 +331,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
       paste("SELECT", a, from, "GROUP BY", a, "ORDER BY", a, "LIMIT 1"))[[1]][1]
     factor_refs[[a]] = ref
   }
-  if (length(fe) && fixef_rm != "perfect_fit" && fixef_rm != "infinite_coef") {
+  if (family[["family"]] != "gaussian" && length(fe) && fixef_rm != "perfect_fit" && fixef_rm != "infinite_coef") {
     pure_condition = if (family[["family"]] == "poisson") paste0("MAX(", outcome, ")=0") else
       paste0("MIN(", outcome, ")=MAX(", outcome, ")")
     pure_queries = vapply(fe, function(f) {
@@ -350,6 +360,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   base = create(paste("SELECT", paste(fields, collapse = ", "), from))
   if (is.null(sample_table)) drop(retained)
   base_terms = c(
+    if (family[["family"]] == "gaussian") "SUM(LN(__dbglm_a)) AS log_weights",
     if (length(x)) paste0("SUM(CASE WHEN ", paste(paste0("NOT isfinite(", x, ")"), collapse = " OR "), " THEN 1 ELSE 0 END) AS nonfinite"),
     if (length(fe)) sprintf("COUNT(DISTINCT %s) AS fe_size_%d", fe, seq_along(fe)),
     if (length(fe) && length(x)) sprintf("AVG(%s) AS center_%d", x, seq_along(x)),
@@ -426,7 +437,9 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   public = display(public)
   all_names = display(all_names)
   V = covariance_result[["matrix"]]
-  if (covariance[["vcov_type"]] == "iid") V = V / weight_scale
+  dispersion_scaled = if (family[["family"]] == "gaussian") fit[["deviance"]]/max(n-counts[["model"]], 1) else 1
+  dispersion = if (family[["family"]] == "gaussian") dispersion_scaled*weight_scale else 1
+  if (covariance[["vcov_type"]] == "iid") V = V*(if (family[["family"]] == "gaussian") dispersion_scaled else 1/weight_scale)
   if (!isFALSE(fit[["finite_mle"]]) && (any(!is.finite(V)) || any(diag(V) < 0))) {
     stop("GLM covariance is invalid; check identification and weight scale.", call. = FALSE)
   }
@@ -434,8 +447,10 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   beta = stats::setNames(fit[["beta"]], public)
   se = sqrt(diag(V))
   z = beta / se
+  test_df = if (is.numeric(ssc[["t.df"]])) ssc[["t.df"]] else if (!is.null(covariance_result[["clusters"]]) && ssc[["t.df"]] == "min")
+    max(covariance_result[["clusters"]]-1, 1) else max(n-counts[["covariance"]], 1)
   coeftable = cbind(estimate = beta, std.error = se, statistic = z,
-    p.value = 2 * stats::pnorm(-abs(z)))
+    p.value = if (family[["family"]] == "gaussian") 2*stats::pt(-abs(z), test_df) else 2 * stats::pnorm(-abs(z)))
   full = stats::setNames(rep(NA_real_, length(all_names)), all_names)
   full[public] = beta
   saved_formula = Formula::Formula(stats::as.formula(paste(deparse(Formula::Formula(fml), width.cutoff = 500L), collapse = ""), env = baseenv()))
@@ -444,7 +459,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   # Build arguments as a list: removing an absent optional argument with
   # [[<- NULL is safe for lists, but not for language objects.
   call = as.list(call("dbglm", fml = saved_formula))
-  call[["family"]] = if (family[["family"]] == "poisson") quote(stats::poisson("log")) else
+  call[["family"]] = if (family[["family"]] == "gaussian") quote(stats::gaussian("identity")) else if (family[["family"]] == "poisson") quote(stats::poisson("log")) else
     substitute(stats::binomial(link), list(link = family[["link"]]))
   if (!setup[["own_conn"]]) call[["conn"]] = as.name(".connection")
   if (!is.null(data)) call[["data"]] = as.name(".data")
@@ -464,6 +479,11 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   saturated_loglik = if (family[["family"]] == "poisson") dbglm_saturated_loglik(conn, base) else 0
   weighted_loglik = (saturated_loglik - fit[["deviance"]] / 2) * weight_scale
   reported_loglik = weighted_loglik
+  if (family[["family"]] == "gaussian") {
+    log_weights = if (is.null(weights)) 0 else as.numeric(row[["log_weights"]])+n*log(weight_scale)
+    weighted_loglik = -n/2*(log(2*pi)+log(fit[["deviance"]]/n)+log(weight_scale)+1)+log_weights/2
+    reported_loglik = weighted_loglik-1
+  }
   if (family[["family"]] == "binomial" && isTRUE(snap_info[["fractional_w"]] > 0)) {
     working = if (length(fe)) fit[["working"]] else paste0("(",
       dbglm_working_sql(base, x, fit[["beta"]], family[["link"]]), "SELECT * FROM working)")
@@ -478,6 +498,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     df_residual = n - counts[["model"]], vcov_type = covariance[["vcov_type"]],
     cluster_var = covariance[["cluster_var"]], n_clusters = covariance_result[["clusters"]], ssc = ssc,
     loglik = reported_loglik, weighted_loglik = weighted_loglik, weight_scale = weight_scale,
+    dispersion = dispersion, dispersion_scaled = dispersion_scaled, df_t = test_df,
     deviance = fit[["deviance"]] * weight_scale, converged = !isFALSE(fit[["converged"]]),
     finite_mle = !isFALSE(fit[["finite_mle"]]), separation = separation,
     iterations = fit[["iterations"]], score_max = fit[["score_max"]],

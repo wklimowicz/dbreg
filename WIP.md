@@ -1,3 +1,5 @@
+> Historical exploratory notes, retained for provenance. These are not the current validation or timing report. Use `inst/WOJTEK-DEV.txt`, `inst/GLM-VALIDATION.txt`, and `_benchmarks/GLM-INDEX.txt` for the maintained implementation and synthetic benchmark evidence. The research specification below supplied design context; current validation uses synthetic data only.
+
 # Headline Cloglog Benchmark & Databricks Optimization Analysis (`WIP.md`)
 
 ## 1. The Headline Model (`~/research/teachers-leaving-wltl/`)

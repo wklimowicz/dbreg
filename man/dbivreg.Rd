@@ -21,6 +21,9 @@ dbivreg(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
+  diagnostics = FALSE,
   ...
 )
 }
@@ -65,7 +68,7 @@ excluded from K, matching the default behavior of \code{fixest::feols}. See
 \code{\link[=dbreg]{dbreg()}} for details.}
 
 \item{sql_only}{Logical indicating whether to return only the underlying SQL
-query.}
+query, or an iterative projection plan for multiway demeaning.}
 
 \item{data_only}{Logical indicating whether to return only the aggregated
 sufficient statistics.}
@@ -74,6 +77,13 @@ sufficient statistics.}
 dropped.}
 
 \item{verbose}{Logical indicating whether progress messages are printed.}
+
+\item{fe_tol}{Positive per-fit tolerance for the fixed-effect projection.}
+
+\item{fe_max_iter}{Positive maximum number of fixed-effect projection iterations.}
+
+\item{diagnostics}{Run an additional input scan for per-variable missingness
+and dropped-row counts? Default is \code{FALSE}. Counts may overlap across roles.}
 
 \item{...}{Additional unused arguments.}
 }

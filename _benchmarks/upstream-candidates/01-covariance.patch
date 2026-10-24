@@ -1,0 +1,88 @@
+--- a/R/stats-methods.R
++++ b/R/stats-methods.R
+@@ -210,7 +210,7 @@
+   }
+  
+   if (interval != "none") {
+-    vcovm = vcov(object)
++    vcovm = vcov(object, fe = TRUE)
+     dof = object[["df_residual"]]
+     if (interval == "confidence") {
+       ses = sqrt(Matrix::rowSums((mm %*% vcovm) * mm))
+@@ -236,11 +236,24 @@
+ #' Variance-covariance matrix for dbreg objects
+ #'
+ #' @param object A `dbreg` object.
++#' @param fe Include covariance rows and columns for explicit fixed effects?
++#'   Default is `FALSE`, matching [coef()].
+ #' @param ... Additional arguments (currently unused).
+ #' @inherit coef.dbreg examples
+ #' @export
+-vcov.dbreg = function(object, ...) {
+-  object[["vcov"]]
++vcov.dbreg = function(object, fe = FALSE, ...) {
++  out = object[["vcov"]]
++  metadata = lapply(c("type", "n_clusters", "n_params", "rss", "tss"), function(nm) attr(out, nm))
++  names(metadata) = c("type", "n_clusters", "n_params", "rss", "tss")
++  # The table already has public names (including interaction separators).
++  # Its rows and the stored covariance share the fitted parameter order.
++  dimnames(out) = rep(list(rownames(object[["coeftable"]])), 2L)
++  if (!isTRUE(fe) && length(object[["fe"]])) {
++    visible = names(coef(object, fe = fe))
++    out = out[visible, visible, drop = FALSE]
++  }
++  for (nm in names(metadata)) if (!is.null(metadata[[nm]])) attr(out, nm) = metadata[[nm]]
++  out
+ }
+ 
+ #' Confidence intervals for dbreg objects
+--- /dev/null
++++ b/inst/tinytest/test_vcov_methods.R
+@@ -0,0 +1,30 @@
++set.seed(810)
++dat = data.frame(x = rnorm(240), f = factor(rep(1:8, 30)), cl = rep(1:12, each = 20))
++dat[["y"]] = 2 * dat[["x"]] + as.numeric(dat[["f"]]) + rnorm(nrow(dat))
++for (kind in list("iid", "hc1", ~cl)) {
++  fit = dbreg(y ~ x | f, data = dat, strategy = "compress", vcov = kind)
++  full = fit[["vcov"]]
++  expect_equal(rownames(vcov(fit)), names(coef(fit)))
++  expect_equal(colnames(vcov(fit)), names(coef(fit)))
++  expect_equal(as.matrix(vcov(fit)), as.matrix(full["x", "x", drop = FALSE]), check.attributes = FALSE)
++  expect_equal(vcov(fit, fe = TRUE), full)
++  expect_equal(attr(vcov(fit), "rss"), attr(full, "rss"))
++  expect_equal(attr(vcov(fit), "type"), attr(full, "type"))
++}
++fit = dbreg(y ~ x | f, data = dat, strategy = "compress")
++ref = lm(y ~ x + f, dat)
++expect_equal(
++  as.matrix(predict(fit, dat, interval = "confidence")),
++  predict(ref, dat, interval = "confidence"), check.attributes = FALSE, tolerance = 1e-8
++)
++interaction_fit = dbreg(y ~ x * f, data = dat, strategy = "compress")
++expect_equal(rownames(vcov(interaction_fit)), names(coef(interaction_fit)))
++expect_equal(colnames(vcov(interaction_fit)), names(coef(interaction_fit)))
++
++# R permits a dummy label to coincide with a different raw regressor name.
++# With no FE to hide, covariance extraction must preserve parameter positions.
++dat[["grpb"]] = rnorm(nrow(dat))
++dat[["grp"]] = rep(c("a", "b"), length.out = nrow(dat))
++fit = dbreg(y ~ grp + grpb, data = dat, strategy = "moments")
++ref = lm(y ~ grp + grpb, dat)
++expect_equal(as.numeric(vcov(fit)), as.numeric(vcov(ref)), tolerance = 1e-8)
+--- a/man/vcov.dbreg.Rd
++++ b/man/vcov.dbreg.Rd
+@@ -4,10 +4,13 @@
+ \alias{vcov.dbreg}
+ \title{Variance-covariance matrix for dbreg objects}
+ \usage{
+-\method{vcov}{dbreg}(object, ...)
++\method{vcov}{dbreg}(object, fe = FALSE, ...)
+ }
+ \arguments{
+ \item{object}{A `dbreg` object.}
++
++\item{fe}{Include covariance rows and columns for explicit fixed effects?
++Default is `FALSE`, matching [coef()].}
+ 
+ \item{...}{Additional arguments (currently unused).}
+ }

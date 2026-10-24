@@ -14,9 +14,9 @@ The official Databricks ODBC driver (64-bit) must be installed. On this Linux sy
 Store credentials in `~/.Renviron` or export them in your shell:
 
 ```bash
-export DATABRICKS_HOST="dbc-b94e1830-43b0.cloud.databricks.com"
+export DATABRICKS_HOST="your-workspace.cloud.databricks.com"
 export DATABRICKS_TOKEN="dapi..."
-export DATABRICKS_SQL_PATH="/sql/1.0/warehouses/21a698b51d7989f0"
+export DATABRICKS_SQL_PATH="/sql/1.0/warehouses/YOUR_WAREHOUSE_ID"
 ```
 
 ---
@@ -76,13 +76,13 @@ To wake the warehouse before executing benchmarks:
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $DATABRICKS_TOKEN" \
-  "https://$DATABRICKS_HOST/api/2.0/sql/warehouses/21a698b51d7989f0/start"
+  "https://$DATABRICKS_HOST/api/2.0/sql/warehouses/YOUR_WAREHOUSE_ID/start"
 ```
 
 Check state:
 ```bash
 curl -s -H "Authorization: Bearer $DATABRICKS_TOKEN" \
-  "https://$DATABRICKS_HOST/api/2.0/sql/warehouses/21a698b51d7989f0" | jq .state
+  "https://$DATABRICKS_HOST/api/2.0/sql/warehouses/YOUR_WAREHOUSE_ID" | jq .state
 # Returns "STARTING" or "RUNNING"
 ```
 

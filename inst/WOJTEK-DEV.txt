@@ -1,0 +1,241 @@
+wojtek-dev: integration and upstream review
+=========================================
+Review date: 2026-10-24
+
+Purpose and branch contract
+---------------------------
+wojtek-dev is the maintained integration branch for the author's use. It is
+based on the exact head of upstream PR80, then carries GLM, the tested database
+performance work, and selected improvements from the older fork branches.
+It is not intended to be proposed upstream as one large pull request.
+
+PR80: https://github.com/grantmcdermott/dbreg/pull/80
+Base commit: 8a21a9dab083423f7578a56dc6855fa49360e5ab
+PR80 remains open and its branch has not been changed by this integration.
+
+The former feat/glm working tree was committed before rebasing. A verified,
+complete Git bundle preserves the original pre-rebase history through
+71a4859834d7efbeb1188b11bfacb69692ede311. The rebase applied without conflicts.
+Its only baseline source differences were PR80's final all-FE UNION ALL
+convergence check, AP option-restoration tests and contributor metadata.
+
+Review method
+-------------
+Compared each older branch with its immediate parent, then checked each
+capability against the rebased GLM implementation. Ran the old branch suites
+in isolated source archives, reproduced problems beyond their original tests,
+and integrated selected functionality through the current inputs/frame/moments
+architecture. The old branches were not merged wholesale.
+
+All new validation uses synthetic data. Historical benchmark files are retained
+as evidence; their timings are not new measurements of this integration.
+
+Branch-by-branch disposition
+---------------------------
+main (9d1472b): upstream baseline; retain as the tracking branch.
+
+perf/spark-window-ap (8a21a9d): authoritative PR80 branch. Retain unchanged.
+The integration descends directly from its final head, including the
+convergence fix missing from the old feat/glm ancestry.
+
+feat/glm (old remote tip 0424a68): superseded by wojtek-dev. Its GLM, bounded
+DuckDB PCG, joint FE moments, Databricks paths, tests, benchmark evidence and
+maintainer guides have been preserved. The local branch was renamed, and the fork branch is replaced by wojtek-dev.
+
+stack/01-compress-sql-fix (1849f8d): already covered upstream by PR69. No
+additional estimator work to import. Retained because it heads fork PR1 and
+is the base of fork PR3.
+
+stack/02-databricks-window-ap (301b49f): obsolete AP/backend prototype.
+Its useful temp-table and bounded-window ideas are covered by upstream and
+PR80/GLM. Retained as fork PR3's head and fork PR4's base, not as a competing
+implementation to maintain.
+
+stack/03-diagnostics-query-plans (2ded191): integrated optional sample audits,
+per-fit FE controls, collinearity-aware tidying, covariance visibility and SQL
+plans. Plans now share SQL helpers with actual execution. The old join plan
+used raw columns after initialization had renamed them to *_tilde and failed
+when executed. New tests execute both join and window plans through estimation.
+Missing-cluster filtering and unsupported-expression rejection already existed
+in the modern baseline. No duplicate implementations were imported.
+
+stack/04-composite-fixed-effects (eb536e8): integrated OLS tuple fixed effects
+(a^b), component-based missingness filtering, display labels and prediction
+metadata. Generated identifiers avoid source columns; length-prefixed tuple
+keys avoid delimiter collisions. This does not add composite formulas to IV.
+
+stack/05-formula-transformations (ca5b6ba): integrated OLS I(x^2), I(x^3),
+interactions and factor_refs, including numeric-coded categories. Restricted
+parsing is shared with GLM. Arbitrary transformations and transformed outcomes
+remain rejected. The old polynomial + clustered compression path could reference
+nonexistent aliases; the new score pass shares the expanded source.
+
+stack/06-shared-model-spec (abc7066): integrated stable factor levels/coding,
+compressed-cell prediction metadata, weighted Mundlak means, and weighted
+multiway conditional demeaning. Fixed missing-row preservation and integer64
+prediction. The old prediction rewrite incorrectly required weights for
+ordinary weighted predictions and stored compressed cells; it was not copied.
+The large replacement model-spec architecture was not imported: existing GLM
+metadata and shared formula helpers are reused instead.
+
+Two performance switches from stack/06 were deliberately not copied:
+* Batched Spark factor-level discovery is already used by GLM. OLS retains its
+  portable per-factor queries. Bringing the old code over would add type/order
+  semantics without a new native OLS performance case; it is a possible later
+  isolated optimization, not missing estimation functionality.
+* Optional AP source materialization is redundant with the modern bounded
+  moments path and the iterative path's materialized base table. Reintroducing
+  an additional user switch would add maintenance cost without demonstrated
+  benefit on the current implementation.
+
+minimal/01-temp-table-scope (b9ab947): already covered upstream by PR71.
+Retained only as the base of fork PR8.
+
+minimal/02-databricks-bounded-ap (b5412bb): superseded by PR80 and the current
+backend/resource managers, all-column convergence and numeric-moment handling.
+The older sum_w BIGINT patch is covered by current moment conversion. Native
+review also identified integer64 compressed observation counts; these are now
+normalized to numeric. The old benchmark used a persistent table and weaker
+parity checks; current synthetic benchmark scripts replace it. Retained as
+fork PR8's head pending retirement of that PR.
+
+benchmark-assets/spark-window-ap (551b421): chart assets linked from PR80.
+Retain; these are documentation assets, not missing estimator code.
+
+sql_model_matrix (c8fb7b5, local only): obsolete precursor of upstream PR49
+(c1bc58a). The later upstream implementation supersedes it; no unique useful
+feature was found to import.
+
+Branches removed in the earlier fork cleanup were upstream copies, already
+merged fixes, duplicate aliases or unused generated website output. Their
+classification and recovery bundles remain in the local cleanup archive.
+The seven open fork PRs have not been closed or retargeted. Once retired, their
+old stack/minimal branches can be removed without losing reviewed functionality;
+wojtek-dev is the sole integration target for new work.
+
+Small upstream candidates
+-------------------------
+These are concrete bugfixes, independently checked on a PR80-only source archive
+without GLM. Their combined focused suites passed 38 assertions, and the full
+PR80-plus-fixes suite passed 480. Ready-to-apply patches are in
+_benchmarks/upstream-candidates/; all three apply cleanly to upstream/main at
+9d1472b as well. For submission,
+start a fresh branch from upstream/main or PR80 and extract only the named fix,
+its regression tests and relevant documentation; do not use wojtek-dev as a PR
+head. Some surrounding lines differ between upstream and the integration branch.
+
+1. Covariance visibility and naming (d742346 plus 532e187).
+   vcov() now matches coef() by default, including interaction names; fe=TRUE
+   returns the explicit FE covariance. Prediction intervals request the full
+   matrix without reindexing repeated display labels. Tests cover IID, HC1,
+   cluster, repeated labels and confidence-interval values.
+   This is a public-method behavior correction and should explain fe=TRUE in
+   its release note. It does not require GLM or new fitting algorithms.
+
+2. Clustered compressed interactions (d813c4c; 2 files, +24/-0).
+   Compression and the score query read the same expanded source, avoiding
+   alias-not-found failures. Tests compare full covariance matrices with fixest,
+   with factors, quoted/spaced levels, weights and FEs. Extraction needs only a
+   context adjustment around register_factor_display() on PR80.
+
+3. Generated SQL alias collisions (0aa218e; 2 files, +12/-2).
+   Respect already-taken identifiers even when the proposed alias is itself
+   syntactically valid; handle all-generated names and case-insensitive clashes.
+   Extract the final implementation using utils::tail(), including the later
+   namespace qualification in 388736e. No new dependencies are required.
+
+These are ready to prepare as small PRs, not already submitted PRs. Full upstream
+CI should run after extraction. PR80 remains the first performance proposal.
+
+Medium-sized additions worth discussing before proposing
+-------------------------------------------------------
+* Optional diagnostics/per-fit controls (0695e8f): useful independently of GLM;
+  roughly 185 added lines across seven files before generated documentation.
+* Executable SQL plans/shared helpers (94e2553): roughly 117 added/41 removed
+  lines across seven files. Clearly documents that it describes the iterative
+  fallback; the automatic solver may choose bounded FE moments instead.
+* Restricted OLS formulas and prediction metadata (388736e): roughly 503 added/
+  127 removed lines across 17 files. Valuable, but changes a public API and
+  prediction behavior. Keep on wojtek-dev until there is upstream agreement on
+  scope. Do not present it as a tiny bugfix.
+
+Keep the complete GLM/solver integration out of a single upstream PR
+-----------------------------------------------------------------
+Before final documentation, the complete branch differs from PR80 in 259 files,
+with about 15,300 inserted lines. Source/tests/man alone account for about 6,500
+inserted lines. Benchmark scripts, logs and historical evidence make up much of
+the rest. GLM IRLS, FE projection/rank/separation handling, numerical safeguards,
+Databricks-specific transport/SQL and validation need their own design review.
+The benchmark archive should not be bundled into an unrelated upstream fix.
+
+Validation and limits
+---------------------
+See _benchmarks/branch_review_validation.csv and branch_review_check.log for
+final run results. The final committed implementation passed 2,839 local
+assertions in 43 nonempty files, with no failures or file errors, during a full
+R CMD check (--no-manual, --no-vignettes; tests included). Build/check reported
+zero errors/warnings and one NOTE for the unavailable optional binsreg
+documentation cross-reference. The rebased baseline passed 2,637 local assertions. Old
+stack/06 passed 314 and minimal/02 passed 232, despite the additional bugs found
+by this review: passing their original suites was insufficient for integration.
+
+New tests compare coefficients, complete covariance matrices and predictions
+against fixest/lm, exercise weighted/unweighted IID/HC1/cluster cases, and cover
+factor references, powers/interactions, composite tuples, unsafe names, alias
+collisions, missing rows, integer64 keys/regressors/weights, collinearity,
+no-intercept coding, stored compressed data and changed global contrasts.
+Selected native checks passed 454 distinct assertions: 96 shared OLS/IV
+projection, 124 FE edge cases, 216 GLM reference/transport and 18 new OLS
+formula assertions. They use synthetic session-temporary tables and actual
+Databricks SQL. The additional native stress/separation/wide suites remain
+available but were not rerun in this branch-integration review.
+The new OLS cases passed 18 assertions after the formula and count fixes
+(388736e); the final covariance follow-up is covered by the full package check. Existing native
+fitting suites began on a frozen integration snapshot; subsequent changes to
+missing-row prediction, integer64 prediction weights and compressed count types
+were exercised by the final local suite and the final native OLS rerun. The CSV
+records each source separately, and repeated assertions are not double-counted.
+The source manifests distinguish the native integration snapshot from the final
+source. No changes were made to GLM fitting or AP projection after the native
+suites began.
+
+The original long-running review process subsequently replayed the new OLS
+cases on its old snapshot, producing two integer64 count-type failures. These
+are superseded by the clean 18-assertion native run on 388736e. A trailing parse
+error in the temporary review driver occurred after the completed fitting
+suites because that script was edited during execution. This was an audit
+orchestration error, not a package error. The native total above combines the
+completed suite records and the corrected fresh OLS run; it does not claim a
+successful exit of the original omnibus command. The complete initial log is
+retained as _benchmarks/branch_review_native_initial.log.
+
+Prediction semantics remain important:
+* Absorbed OLS predictions use the supplied population's projection. With an
+  outcome column they are conditional level predictions; without it they are
+  within-group predictions. They are not out-of-sample predictions with saved
+  training FE coefficients. Changing the population changes these predictions.
+* Mundlak means also come from the supplied population, using model weights.
+* Compressed OLS fits retain explicit FE/cell metadata. Unseen categorical or
+  composite FE levels fail clearly. Missing prediction rows retain NA positions.
+* GLM prediction with absorbed FEs remains unsupported. Other GLM limits and
+  reference tolerances are documented in inst/GLM-VALIDATION.txt.
+
+No finite test suite establishes correctness for every dataset, identification
+problem or database release. No fresh 5M-row timing is claimed for this review;
+see _benchmarks/GLM-INDEX.txt for the existing synthetic 5M/ten-slope evidence.
+No external or private research data were used.
+
+Reproduce and maintain
+----------------------
+Development: pkgload::load_all(); tinytest::test_all(".")
+Native: make test-databricks (requires configured credentials and ODBC driver).
+The native runner now includes test_linear_design_live.R. Ordinary cross-platform
+R CMD check CI runs on pushes to wojtek-dev. Credentialed CI remains an explicit
+maintainer/default-branch workflow; pushing this branch does not configure
+GitHub secrets or establish a successful Actions run.
+
+Local recovery/audit locations (ignored by Git):
+SCRATCH/wojtek-dev-2026-10-24/ : original working tree, verified pre-rebase bundle.
+SCRATCH/extra-branch-review-2026-10-24/ : source archives, incremental diffs,
+reproduction probes, per-test results and native logs.
+SCRATCH/fork-cleanup-2026-10-24/ : earlier inventory and deleted-branch bundles.

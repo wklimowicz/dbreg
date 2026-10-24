@@ -4,10 +4,14 @@
 \alias{parse_regression_formula}
 \title{Parse regression formula}
 \usage{
-parse_regression_formula(fml, allow_empty = FALSE)
+parse_regression_formula(fml, allow_empty = FALSE, allow_extended = FALSE)
 }
 \arguments{
 \item{fml}{A formula object (will be converted to Formula)}
+
+\item{allow_empty}{Allow an intercept-only RHS (GLM).}
+
+\item{allow_extended}{Allow restricted powers and composite fixed effects.}
 }
 \value{
 A list containing:

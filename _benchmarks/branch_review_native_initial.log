@@ -1,0 +1,77 @@
+
+FILE test_ap_moments_live.R
+[AP moments] y ~ x + z | f + g ~cluster
+[AP moments] y ~ x + z | f + g + h ~cluster
+[AP moments] y ~ x + z | f + g + h + j + k + all ~cluster
+[AP moments] y ~ x + z + x2 | f + g + h "iid"
+[AP moments] y ~ x + z + x2 | f + g + h "hc1"
+[AP moments] y ~ x + z + x2 | f + g + h ~g
+[AP moments] y ~ x + z + x2 | f + g + h ~cluster
+[AP moments] y ~ z | f + g + h | endog ~ x ~cluster
+[AP moments] y ~ x + z + x2 | f + g + h ~cluster
+[AP moments] y ~ x + z | f + g ~cluster
+                        
+File                     Results fails passes
+  test_ap_moments_live.R      96     0     96
+  Total                       96     0     96
+
+FILE test_fe_edges_live.R
+[FE edge test] glm disconnected
+[FE edge test] glm unequal_weights
+[FE edge test] glm redundant_columns
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+[FE edge test] glm rare_correlated
+[FE edge test] ols disconnected
+[FE edge test] ols unequal_weights
+[FE edge test] ols redundant_columns
+[FE edge test] ols rare_correlated
+                      
+File                   Results fails passes
+  test_fe_edges_live.R     124     0    124
+  Total                    124     0    124
+
+FILE test_glm_databricks_live.R
+[Databricks test] binomial/cloglog iid
+[Databricks test] binomial/cloglog hc1
+[Databricks test] binomial/cloglog cluster
+[Databricks test] binomial/logit iid
+[Databricks test] binomial/logit hc1
+[Databricks test] binomial/logit cluster
+[Databricks test] binomial/probit iid
+[Databricks test] binomial/probit hc1
+[Databricks test] binomial/probit cluster
+[Databricks test] poisson/log iid
+[Databricks test] poisson/log hc1
+[Databricks test] poisson/log cluster
+                            
+File                         Results fails passes
+  test_glm_databricks_live.R     216     0    216
+  Total                          216     0    216
+
+FILE test_linear_design_live.R
+                           
+File                        Results fails passes
+  test_linear_design_live.R      18     2     16
+  Total                          18     2     16
+----- FAILED[data]: test_linear_design_live.R<1--9>
+ call| expect_equal(nobs(fit), nobs(ref))
+ diff| Attributes: < target is NULL, current is list >
+ diff| target is numeric, current is integer64
+ ----- FAILED[data]: test_linear_design_live.R<1--9>
+ call| expect_equal(fit[["nobs_dropped"]], n - nobs(ref))
+ diff| Attributes: < target is NULL, current is list >
+ diff| target is numeric, current is integer64
+ 
+Error: unexpected ')' in "sult)"
+Execution halted

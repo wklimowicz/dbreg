@@ -41,6 +41,9 @@
 #' or NULL (default) for unweighted regression. Weights must be non-negative;
 #' rows with zero weight are dropped. Weighted regressions support `"iid"`,
 #' `"hc1"`, and clustered SEs, and are compatible with all strategies.
+#' @param offset Optional numeric column added to the linear predictor with
+#'   coefficient one. Estimation uses outcome minus offset. Supported on DuckDB
+#'   and native Databricks; newdata predictions require the offset column.
 #' @param vcov Character string or formula denoting the desired type of variance-
 #' covariance correction / standard errors. Options are `"iid"` (default),
 #' `"hc1"` (heteroskedasticity-consistent), or a one-sided formula like
@@ -401,10 +404,12 @@ dbreg = function(
   row_id = NULL,
   sample_table = NULL,
   retain = c("none", "prediction", "all"),
+  offset = NULL,
   ...
 ) {
 
   verbose = isTRUE(verbose)
+  validate_linear_offset(offset)
   ssc = match.arg(ssc)
   vcov_parsed = parse_vcov_args(vcov, cluster)
   vcov_type_req = vcov_parsed[["vcov_type"]]
@@ -458,7 +463,7 @@ dbreg = function(
       "fml", "conn", "table", "data", "path", "weights", "vcov_type_req",
       "cluster_var", "ssc", "strategy", "sql_only", "data_only", "compress_ratio",
       "compress_nmax", "drop_missings", "verbose", "fe_tol", "fe_max_iter", "diagnostics", "factor_refs",
-      "row_id", "sample_table", "sample_resources", "retain"
+      "row_id", "sample_table", "sample_resources", "retain", "offset"
     )
   )
   # Release any connection/registration we create, including on errors during
@@ -530,7 +535,7 @@ process_dbreg_inputs = function(inputs) {
   any_continuous = any_continuous_vars(data, fml_parsed[["xvars"]])
   weights_display = weights
 
-  source_vars = c(model_vars(fml_parsed[["fml"]]), weights, cluster_var)
+  source_vars = c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]])
   from_statement = prepare_linear_sample(inputs, from_statement, source_vars)
 
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
@@ -551,6 +556,15 @@ process_dbreg_inputs = function(inputs) {
   from_statement = composite[["from_statement"]]
   fml_parsed = composite[["parsed"]]
   inputs[["composite_fes"]] = composite[["composites"]]
+  adjusted = linear_offset_frame(conn, from_statement, fml_parsed,
+    src[["to_safe"]](inputs[["offset"]]))
+  from_statement = adjusted[["from_statement"]]
+  fml_parsed = adjusted[["parsed"]]
+  if (!is.null(adjusted[["alias"]])) {
+    public_y = restore_names(adjusted[["outcome"]], source_map)
+    name_map[[adjusted[["alias"]]]] = public_y
+    source_map[[adjusted[["alias"]]]] = public_y
+  }
   weights = src[["to_safe"]](weights)
   cluster_var = src[["to_safe"]](cluster_var)
   fml = fml_parsed[["fml"]]
@@ -571,7 +585,11 @@ process_dbreg_inputs = function(inputs) {
   inputs[["weights"]] = weights
   inputs[["source_map"]] = source_map
   inputs[["sample_diagnostics"]] = sample_diagnostics(inputs, from_statement,
-    list(outcome = yvar, regressor = source_xvars, fixed_effect = source_fes, weight = weights, cluster = cluster_var))
+    list(outcome = yvar, regressor = source_xvars, fixed_effect = source_fes, weight = weights, cluster = cluster_var,
+      offset = src[["to_safe"]](inputs[["offset"]])))
+
+  if (!is.null(adjusted[["finite"]])) from_statement = paste0("FROM (SELECT * ", from_statement,
+    ") dbreg_finite_offset WHERE ", adjusted[["finite"]])
 
   from_statement = filter_estimation_sample(
     from_statement,

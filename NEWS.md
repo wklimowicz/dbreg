@@ -1,5 +1,9 @@
 # Fixest compatibility (development branch)
 
+- `dbreg(offset="column")` supports fixed-coefficient numeric offsets through
+  the existing strategies on DuckDB/native Databricks. Saved-sample and newdata
+  prediction add offsets once; compact offset models require explicit newdata.
+
 - Explicit `retain="all"` saves an immutable database sample and projected scores
   for default/original-sample prediction, fitted values, residuals and `dbreg::obs()`.
   SQL inputs return keyed relations; R inputs preserve original positions.

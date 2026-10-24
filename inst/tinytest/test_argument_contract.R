@@ -2,7 +2,7 @@
 local({
   conn = DBI::dbConnect(duckdb::duckdb(config = list(temp_directory = "")))
   on.exit(DBI::dbDisconnect(conn, shutdown = TRUE))
-  expect_error(dbreg(y ~ x, conn = conn, table = "absent", offset = ~o), "Unused arguments:.*offset")
+  expect_error(dbreg(y ~ x, conn = conn, table = "absent", offset = ~o), "offset.*must name")
   expect_error(dbreg(y ~ x, conn = conn, table = "absent", weigths = "w"), "Unused arguments:.*weigths")
   expect_identical(DBI::dbListTables(conn), character())
 

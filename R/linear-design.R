@@ -102,6 +102,7 @@ read_compressed_frame = function(inputs, sql, from_statement = inputs[["from_sta
 # Only compressed fits retain explicit FE coefficients. Their tuple-to-rank
 # mapping comes from cells already collected for estimation, with no extra scan.
 finalize_linear_design = function(result, inputs) {
+  result[["offset"]] = inputs[["offset"]]
   levels = inputs[["factor_levels"]]
   if (length(levels)) names(levels) = restore_names(names(levels), inputs[["source_map"]])
   result[["factor_levels"]] = levels

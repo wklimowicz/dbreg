@@ -1,0 +1,47 @@
+ℹ Loading dbreg
+test-ssc-native.R.............    0 tests    Error in `tinytest::run_test_file()`:
+! ODBC failed with error 00000 from
+  [Databricks][Hardy][DATATYPE_MISMATCH.BINARY_OP_DIFF_TYPES][DATATYPE_MISMATCH.BINARY_OP_DIFF_TYPES].
+✖  (80) Syntax or semantic analysis error thrown in server while executing
+  query. Error message from server:
+  org.apache.hive.service.cli.HiveSQLException: Error running query:
+  org.apache.spark.sql.catalyst.ExtendedAnalysisException: Cannot resolve "(1
+  AND (NOT ((h IS NULL) OR isnan
+• <SQL> 'SELECT * FROM (SELECT * FROM (SELECT * FROM
+  `dbreg_original_sample_90fe853e7fb7b`) dbreg_subset_source WHERE ((1 AND (NOT
+  (`h` IS NULL OR isnan(CAST(`h` AS DOUBLE))))))) AS subq
+• WHERE y IS NOT NULL AND x IS NOT NULL AND g IS NOT NULL AND w > 0 LIMIT 0'
+ℹ From 'nanodbc/nanodbc.cpp:1802'.
+Backtrace:
+     ▆
+  1. ├─tinytest::run_test_file("_benchmarks/compat_api_20261024/test-ssc-native.R")
+  2. │ └─base::eval(expr, envir = e)
+  3. │   └─base::eval(expr, envir = e)
+  4. │     ├─base::local(...)
+  5. │     │ └─base::eval.parent(substitute(eval(quote(expr), envir)))
+  6. │     │   └─base::eval(expr, p)
+  7. │     │     └─base::eval(expr, p)
+  8. │     └─base::eval(...)
+  9. │       └─base::eval(...)
+ 10. │         └─dbreg::feols(...) at test-ssc-native.R:13:2
+ 11. │           ├─dbreg:::compat_run(...) at dbreg/R/compat-api.R:167:3
+ 12. │           │ └─dbreg (local) run() at dbreg/R/compat-api.R:39:3
+ 13. │           │   └─base::force(expr) at dbreg/R/compat-api.R:38:9
+ 14. │           └─dbreg:::compat_fit(...)
+ 15. │             ├─base::do.call(dbreg, args) at dbreg/R/compat-api.R:79:5
+ 16. │             └─dbreg (local) `<fn>`(...)
+ 17. │               └─dbreg:::process_dbreg_inputs(inputs) at dbreg/R/dbreg.R:483:3
+ 18. │                 └─dbreg:::linear_prune_source(inputs, from_statement, fe, yvar) at dbreg/R/dbreg.R:612:5
+ 19. │                   ├─DBI::dbGetQuery(...) at dbreg/R/sample-filter.R:111:3
+ 20. │                   └─DBI::dbGetQuery(...)
+ 21. │                     └─odbc (local) .local(conn, statement, ...)
+ 22. │                       ├─DBI::dbSendQuery(...)
+ 23. │                       └─odbc::dbSendQuery(...)
+ 24. │                         └─odbc (local) .local(conn, statement, ...)
+ 25. │                           └─odbc:::OdbcResult(...)
+ 26. │                             └─odbc:::new_result(p = connection@ptr, sql = statement, immediate = immediate)
+ 27. └─odbc (local) `<fn>`("nanodbc/nanodbc.cpp:1802: 00000\n[Databricks][Hardy] (80) Syntax or semantic analysis error thrown in server while executing query. Error message from server: org.apache.hive.service.cli.HiveSQLException: Error running query: [DATATYPE_MISMATCH.BINARY_OP_DIFF_TYPES] org.apache.spark.sql.catalyst.ExtendedAnalysisException: [DATATYPE_MISMATCH.BINARY_OP_DIFF_TYPES] Cannot resolve \"(1 AND (NOT ((h IS NULL) OR isnan \n<SQL> 'SELECT * FROM (SELECT * FROM (SELECT * FROM `dbreg_original_sample_90fe853e7fb7b`) dbreg_subset_source WHERE ((1 AND (NOT (`h` IS NULL OR isnan(CAST(`h` AS DOUBLE))))))) AS subq\nWHERE y IS NOT NULL AND x IS NOT NULL AND g IS NOT NULL AND w > 0 LIMIT 0'")
+ 28.   └─cli::cli_abort(...)
+ 29.     └─rlang::abort(...)
+Error: external pointer is not valid
+Execution halted

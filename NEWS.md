@@ -1,5 +1,18 @@
 # Fixest compatibility (development branch)
 
+- Shared SQL Boolean literals now use `TRUE`/`FALSE`, avoiding native ODBC
+  numeric quoting in subset/cluster predicates. Exported SSC policies use the
+  reference `ssc_type` class for direct fixest interoperability.
+
+- Added fixest-shaped `feols()`/`feglm()` adapters with data as the second
+  argument, vector/column inputs, supported subsets, singleton policies, response
+  prediction defaults and fit-time two-way OLS inference. Native defaults remain
+  compact; adapter defaults retain sample/prediction state, and `lean=TRUE` releases it.
+- Added coefficient-table/SE/p-value/test-statistic/SSC/df helpers and conditional
+  fixest extraction methods. Adapter likelihood and AIC/BIC use reference conventions.
+- `retain="inference"` saves fitted rows/scores without recovering learned FE
+  dictionaries. It supports saved-sample operations and post-fit inference.
+
 - `dbglm(family=gaussian())` reuses the shared FE/varying-slope projectors with
   one certified WLS update. Gaussian dispersion, t inference and likelihood
   follow `fixest::feglm()`. Existing OLS and binomial-cloglog defaults are unchanged.

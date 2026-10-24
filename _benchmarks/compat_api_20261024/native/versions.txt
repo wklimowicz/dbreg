@@ -1,0 +1,4 @@
+dbreg revision: 1bedbdf31177f8d6bfbf789e2a04191d943b59e0
+fixest version: 0.14.0
+native statement timeout: 300
+Working-tree contents are identified by source-md5.csv; revision alone may include uncommitted changes.

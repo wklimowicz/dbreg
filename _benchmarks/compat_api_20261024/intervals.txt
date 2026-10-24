@@ -1,0 +1,7 @@
+ℹ Loading dbreg
+feols default max interval error: 1.110223e-15 
+Error: in vcov.fixest(object, vcov = vcov, ssc = ...:
+ The argument 'ssc' must be an object created by the function ssc().
+PROBLEM: the object is not of the appropriate class (instead it is of class
+ssc.type).
+Execution halted

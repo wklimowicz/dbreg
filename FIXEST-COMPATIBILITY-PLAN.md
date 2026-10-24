@@ -174,10 +174,33 @@ its no-FE GLM route is materially slower than OLS moments, so keep existing OLS
 fast paths. Compatibility entry points and shared subset/vector normalization
 are the next milestone; prototypes are in SCRATCH pending integration.
 
+Compatibility entry points now pass **5,215 full local assertions**, **99 native
+checks** and package check with zero errors/warnings plus the existing binsreg
+NOTE. They normalize vectors/subsets before filtering, preserve original IDs,
+support varying-slope OLS and fit-time two-way linear inference, use response
+prediction defaults, and expose selected extraction methods. Native defaults
+remain unchanged. Lean uses inference-only state transiently, avoiding learned
+effect recovery. The million-row TwoFE fixture takes 3.608s native compact,
+4.111s lean and 8.474s full retention; full compatibility has a real resource
+cost. Evidence: `_benchmarks/compat_api_20261024/`. The next major implementation
+is `i()` normalization, followed by integrated acceptance/support documentation.
+External new cluster mapping data and oversized 3+ FE/varying-slope prediction
+remain explicitly unsupported boundaries; original-source cluster columns work.
+
+Final adapter source passes **5,236 local**, **118 broad native** and **11
+focused native** checks, with zero package-check errors/warnings and the existing
+binsreg NOTE. Extra probes caught/fixed an SSC class-tag typo and ODBC Boolean
+literal typing in default cluster predicates. Exact earlier sources are archived;
+final manifests match and audit-source.R scopes historical performance evidence.
+The entry-point milestone is complete for its declared subset. `g[x]` supports
+group intercepts and slopes; slope-only `g[[x]]` remains explicitly unsupported.
+
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
-Remaining dependencies include compatibility entry points/formula adapters,
-fit-time two-way OLS covariance and validated external cluster key mapping. Three or more large FE blocks
+Remaining dependencies are `i()` formula support and final integrated
+acceptance/support documentation. Adapters provide fit-time two-way OLS; native
+compact fit-time clustering remains one-way. New external cluster mappings are
+explicitly unsupported; later original-source cluster columns work. Three or more large FE blocks
 and large varying-slope designs still need a supported recovery boundary. Use dbreg's
 existing conventions; consult fixest for unresolved user-facing compatibility
 choices. Concrete API/lifetime decisions are recorded in

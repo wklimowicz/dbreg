@@ -1,7 +1,9 @@
 retain_prediction = function(retain) length(retain) == 1L && !is.na(retain) && retain %in% c("prediction", "all")
 
+retain_sample = function(retain) length(retain) == 1L && !is.na(retain) && retain %in% c("inference", "all")
+
 prepare_retained_data = function(data, table, retain) {
-  r_input = identical(retain, "all") && is.null(table) && is.data.frame(data)
+  r_input = retain_sample(retain) && is.null(table) && is.data.frame(data)
   key = NULL
   if (r_input) {
     data = as.data.frame(data)

@@ -74,6 +74,8 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #' @param fixef_rm Recursive FE exclusion policy, using fixest conventions.
 #'   If perfect-prediction groups remain under the selected policy, fitting errors.
 #'   Gaussian `"perfect_fit"` removes singletons; `"infinite_coef"` removes none.
+#' @param subset Optional logical column or restricted one-sided predicate
+#'   formula, as in [dbreg()]. Original row identities precede this filter.
 #' @param row_id Optional character vector of unique, nonmissing source-key
 #'   columns. Otherwise opaque snapshot keys are assigned once.
 #' @param sample_table Optional new temporary table on a caller-supplied connection
@@ -97,6 +99,9 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   [residuals()] and post-fit covariance via [summary()]. It requires a finite
 #'   fit, adds row-sized backend storage/SQL work and needs its live owning session.
 #'   SQL inputs return keyed relations; R inputs preserve original positions.
+#'   `"inference"` saves rows/scores without learned-effect dictionaries. It
+#'   supports fitted-sample prediction and post-fit inference; learned-effect
+#'   newdata prediction needs `"prediction"` or `"all"`.
 #' @return A compact object of class `c("dbglm", "dbreg")`, containing slopes,
 #'   covariance, log likelihood, sample counts and convergence diagnostics. Compact
 #'   modes do not retain input rows. Database-backed retention keeps its owned
@@ -168,8 +173,9 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
                   control = dbglm_control(), verbose = FALSE,
                   fixef_rm = c("perfect_fit", "singletons", "infinite_coef", "none"),
                   row_id = NULL, sample_table = NULL, separation = c("error", "prediction"),
-                  retain = c("none", "prediction", "all")) {
+                  retain = c("none", "prediction", "inference", "all"), subset = NULL) {
   family = dbglm_family(family)
+  subset_variables(subset)
   if (is.character(fml) && length(fml) == 1 && !is.na(fml)) fml = stats::as.formula(fml, env = baseenv())
   if (!is.logical(verbose) || length(verbose) != 1 || is.na(verbose)) stop("`verbose` must be TRUE or FALSE.", call. = FALSE)
   if (!is.list(control) || is.null(names(control)) || anyDuplicated(names(control))) {
@@ -232,10 +238,10 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   setup = setup_db_connection(conn, table, data, path, caller = "dbglm", resources = resources,
     duckdb_config = list(temp_directory = ""))
   conn = setup[["conn"]]
-  retained_source = if (retain == "all") materialize_retained_source(conn, setup[["from_statement"]], resources,
+  retained_source = if (retain_sample(retain)) materialize_retained_source(conn, setup[["from_statement"]], resources,
     retained_data[["key"]], retained_data[["r_input"]]) else NULL
   source_from = if (is.null(retained_source)) setup[["from_statement"]] else paste("FROM", DBI::dbQuoteIdentifier(conn, retained_source[["table"]]))
-  resources[["retain_scores"]] = identical(retain, "all")
+  resources[["retain_scores"]] = retain_sample(retain)
   backend_info = detect_backend(conn)
   if (backend_info[["name"]] != "duckdb" && !isTRUE(backend_info[["is_databricks"]])) {
     stop("dbglm() supports native DuckDB or Databricks connections.", call. = FALSE)
@@ -247,7 +253,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   create = tables[["create"]]
   drop = tables[["drop"]]
   variables = unique(c(parsed[["yvar"]], parsed[["xvars"]], unlist(parsed[["fe_components"]]), weights, offset, covariance[["cluster_var"]], unlist(normalized[["slopes"]])))
-  real_vars = unique(c(setdiff(variables, names(normalized[["factors"]])), unlist(normalized[["factors"]]), row_id))
+  real_vars = unique(c(setdiff(variables, names(normalized[["factors"]])), unlist(normalized[["factors"]]), row_id, subset_variables(subset)))
   if (any(startsWith(real_vars, "__dbglm_")) || any(startsWith(real_vars, "dbglm_factor_"))) stop("Source names use a reserved GLM prefix.", call. = FALSE)
   snapshot = create(paste("SELECT", paste(c(quote_id(real_vars),
     vapply(names(normalized[["factors"]]), function(a) paste(quote_id(normalized[["factors"]][[a]]), "AS", a), character(1)),
@@ -264,6 +270,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   numeric_vars = variables[vapply(schema[variables], is.numeric, logical(1))]
   eligible = c(eligible, paste0("isfinite(", quote_id(numeric_vars), ")"))
   if (!length(numeric_vars)) eligible = paste0(quote_id(variables), " IS NOT NULL")
+  if (!is.null(subset)) eligible = c(eligible, sql_subset_predicate(conn, subset, schema))
   if (!is.null(weights)) eligible = c(eligible, paste(quote_id(weights), "> 0"))
   elig_cond = paste(eligible, collapse = " AND ")
   outcome = quote_id(parsed[["yvar"]])
@@ -475,6 +482,8 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   call[["row_id"]] = if (length(row_id)) as.character(row_id) else NULL
   call[["sample_table"]] = sample_table
   call[["retain"]] = retain
+  if (!is.null(subset)) call[["subset"]] = if (inherits(subset, "formula"))
+    stats::as.formula(paste(deparse(subset), collapse = ""), env = baseenv()) else subset
   call = as.call(call)
   saturated_loglik = if (family[["family"]] == "poisson") dbglm_saturated_loglik(conn, base) else 0
   weighted_loglik = (saturated_loglik - fit[["deviance"]] / 2) * weight_scale
@@ -521,7 +530,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
       dictionary_components = prediction_keys[["columns"]], fitted_beta = prediction_beta,
       recovery_control = list(tol = control[["fe_tol"]], max_iter = control[["fe_max_iter"]]))
   }
-  if (retain == "all") {
+  if (retain_sample(retain)) {
     result = retain_glm_score_frame(result, fit, conn, base, x, fe, retained_source, resources,
       parsed[["fe_components"]], row_id, weights, weight_scale, counts, ssc)
   }

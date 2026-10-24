@@ -242,3 +242,15 @@ Normalized Gaussian dispersion is separate from reported original-scale units;
 post-fit inference retains that internal dispersion. Gaussian family AIC includes
 an additive -1 in logLik, with df=K, matching the pinned reference. The IID OLS
 K.adj=FALSE denominator is N-1. See gaussian_20261024 for measured GLM setup cost.
+
+Compatibility entry points normalize R vectors into private columns before native
+snapshot/filtering. sample-filter.R compiles restricted typed predicates, including
+R's distinct NA/NaN %in% behavior, and reuses dbglm_prune for OLS singleton removal
+with collision-safe flags. Native retain=inference separates row-score retention
+from learned dictionaries; lean adapters use/release only that capability.
+compat-api.R routes ordinary OLS through existing strategies and special linear
+designs through Gaussian WLS with OLS reporting. compat-methods/extractors set
+response defaults, cached information criteria and conditional fixest generics.
+Wrapper SSC defaults differ intentionally from native OLS and are propagated to
+later summaries. The immutable original source supports later cluster columns;
+external new mapping data is explicitly unsupported. See compat_api_20261024.

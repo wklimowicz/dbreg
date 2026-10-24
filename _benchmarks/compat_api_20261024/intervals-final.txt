@@ -1,0 +1,5 @@
+ℹ Loading dbreg
+feols default max interval error: 1.110223e-15 
+feols numeric t.df max interval error: 1.110223e-15 
+feglm default max interval error: 1.566234e-10 
+feglm numeric t.df max interval error: 1.566234e-10 

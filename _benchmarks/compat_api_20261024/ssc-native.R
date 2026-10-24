@@ -1,0 +1,17 @@
+pkgload::load_all()
+Sys.setenv(DBREG_TEST_DATABRICKS='true')
+root='_benchmarks/compat_api_20261024/native-ssc'
+dir.create(root,recursive=TRUE,showWarnings=FALSE)
+files=c('DESCRIPTION','NAMESPACE',list.files('R',full.names=TRUE),list.files('inst/tinytest',full.names=TRUE),
+ '_benchmarks/compat_api_20261024/ssc-native.R','_benchmarks/compat_api_20261024/test-ssc-native.R')
+write.csv(data.frame(file=files,md5=unname(tools::md5sum(files))),file.path(root,'source-md5.csv'),row.names=FALSE)
+writeLines(c(paste('UTC:',format(Sys.time(),tz='UTC')),capture.output(sessionInfo())),file.path(root,'environment.txt'))
+started=Sys.time()
+result=tinytest::run_test_file('_benchmarks/compat_api_20261024/test-ssc-native.R')
+saveRDS(result,file.path(root,'results.rds'))
+print(result)
+assertions=as.data.frame(result)
+record=data.frame(assertions=nrow(assertions),failures=sum(is.na(assertions[['result']]) | !assertions[['result']]),elapsed_seconds=as.numeric(difftime(Sys.time(),started,units='secs')))
+write.csv(record,file.path(root,'summary.csv'),row.names=FALSE)
+print(record)
+stopifnot(record[['assertions']]>0,record[['failures']]==0)

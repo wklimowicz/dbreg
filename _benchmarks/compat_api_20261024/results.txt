@@ -1,0 +1,101 @@
+Compatibility entry-point checkpoint, 2026-10-24
+------------------------------------------------
+Exports feols(fml,data,...) and feglm(fml,data,family="gaussian",...), with named
+conn/table/path inputs following native conventions. Genuine native model classes
+inherit dbreg_fixest; no fake fixest fit class or fixest Imports dependency.
+Unknown/unsupported statistical arguments error. Supported simple column formulas
+and positional R weights/offset vectors normalize before filtering; SQL vectors
+are rejected. Restricted subset predicates and recursive OLS singleton removal
+share native helpers. Original R positions and typed SQL identities precede all
+filters. Positive R subset indices must be unique/increasing; negative exclusions
+are supported. Duplicate/reordered subsets and non-column weight/offset formulas
+are explicitly unsupported. Vector offsets require an explicit newdata offset.
+
+Native retain="inference" saves row/score state without learned-effect recovery.
+Adapters use it transiently for lean=TRUE, then release rows/dictionaries. Cached
+likelihood/covariance remain portable. Full retention is the adapter default,
+including learned effects; native compact defaults remain unchanged. Ordinary OLS
+keeps current strategies; factor-coercion/varying-slope/intercept-only OLS uses the
+shared Gaussian projector with OLS reporting. Linear models support fit-time and
+post-fit two-way covariance; nonlinear GLMs one-way. Native fit-time dbreg/dbglm
+clustering remains one-way; adapter two-way fitting uses the retained engine.
+
+Fit-time clusters contribute missing-value exclusions before estimation; later
+cluster requests use the immutable fitted rows and error on missing values.
+Wrapper SSC defaults use the fixest nonnested policy; later summary requests
+inherit their selected policy. Model K, covariance K and testing df stay distinct.
+Response is the adapter prediction default. feols logLik and AIC/BIC deliberately
+use fixest's differing likelihood-df/model-penalty conventions. Cached lean OLS
+likelihood and NoFE newdata prediction remain available, even where the pinned
+reference's lean methods lose data. Native methods keep native conventions.
+
+Own coeftable/se/pvalue/tstat/ssc/degrees_freedom and coefficient selectors cover
+supported extraction. Delayed S3 registrations also support fixest extraction
+generics, with both namespace-load orders checked. fixest::obs/degrees_freedom
+are not generic: use dbreg's versions. Extracted vectors consistently carry public
+names; comparisons ignore incidental reference vcov_type attributes. Some pinned
+Gaussian reference coeftables are data.frames. Reference fitting is independently
+refined from fixest's own estimates. In one small weighted cloglog case, native
+raw score is about 2.5e-8 while reference is about 2.1e-5; coefficients differ by
+about 5.9e-7, within the explicit absolute 1e-6 gate. No production solver was changed
+to match a less accurate reference stop.
+
+Focused local: 144 assertions. Full local: 5,215 assertions, zero failures, 208.34s.
+Native: 99 assertions, zero failures, 393.97s. Package check: zero errors/warnings,
+existing optional binsreg NOTE. Those gate source manifests precede the final corrections documented below.
+Tests cover offsets, weights, subset-only NaNs (comparison and %in% distinctions),
+singleton exclusions, covariance/coeftables/CIs, IDs, learned predictions,
+serialization, lean release, conditional extractors, unsupported requests and
+cleanup. SQL fixtures create true numeric NaNs independently of prediction-upload
+missing-value conversion. Early local fixtures exposed inherited SSC policy and
+S3 registration issues; these are fixed before the frozen final gates.
+
+Million-row warmed DuckDB fixture, three measured fits/mode, threads 2/memory 2GB:
+                 native compact       adapter lean        adapter full
+NoFE median      .081s                 .302s               .286s
+TwoFE median     3.608s                4.111s              8.474s
+NoFE peak RSS    390,840KiB            620,960KiB          620,196KiB
+TwoFE peak RSS   552,972KiB            749,648KiB          807,364KiB
+
+The fixture has 50,000/49,997 FE levels and explicit keys in every mode. Lean adds
+about 14% time for TwoFE; full adds about 135%. NoFE row retention/metadata adds
+about .20-.22s. Peak RSS includes embedded DuckDB and temporary fit state: lean
+still uses transient SQL row storage, not zero-row fitting. R object sizes range
+10,520-34,568 bytes; row capture returns at most one row/query (1,136 or 2,000 total
+R object bytes). Named slopes/full covariance/N/likelihood match native fits, and
+full TwoFE saved eta matches the analytical target to 1e-7. Each completed fit
+releases owned tables and preserves the caller connection. These local warmed
+results do not establish remote/disk-bound throughput or native resource/history
+cost. See performance-summary.csv and per-mode logs for variation and peak RSS.
+
+Remaining major implementation: i() normalization and final integrated acceptance/
+support documentation. Post-fit cluster columns must exist in the original source;
+new external key mappings remain unsupported. Large 3+ FE/varying-slope prediction
+retention still has explicit portable-budget boundaries. Full learned-FE intervals,
+multi-model/IV compatibility adapters and arbitrary R functions remain outside the
+supported regression subset.
+
+
+Final SSC/Boolean follow-up, 2026-10-24
+-------------------------------------
+An additional interval probe caught the exported SSC constructor's mistyped
+class tag (ssc.type versus the reference ssc_type). The policy values already
+worked inside dbreg, but fixest rejected direct use. Corrected the tag and added
+a direct local constructor/VCOV regression. The focused native check then caught
+ODBC quoting logical constants as 1/0, which Spark rejects inside AND. The shared
+SQL literal helper now emits TRUE/FALSE/NULL. Added a default-cluster/no-user-subset
+fit and a Boolean predicate value check to the shared suite. The initial focused
+failure log is retained; its fixture also now drops tables before disconnecting.
+
+Final local: 5,236 assertions, zero failures, 210.75 seconds. Final native broad:
+118 assertions, zero failures, 358.72 seconds. Final focused native: 11 assertions,
+zero failures, 17.56 seconds. Final package check: zero errors/warnings, existing
+optional binsreg NOTE. Final local/native/SSC source manifests match exactly.
+Additional OLS/GLM interval probes (default and numeric testing df) match within
+1.6e-10. Both namespace-load orders pass generic extraction/value probes.
+
+The earlier 5,215/99 and intermediate 5,217 local gates preceded the class/Boolean
+fixes and test expansion. Four exact originals are archived. Performance runs
+preceded those two R changes; their numeric IID paths/statistical calculations
+are unchanged. audit-source.R verifies final manifests and every archived source
+difference instead of claiming all historical gates tested the final source.

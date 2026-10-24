@@ -1,0 +1,5 @@
+ℹ Loading dbreg
+test-ssc-native.R.............    0 tests    test-ssc-native.R.............   11 tests OK 17.5s
+All ok, 11 results (17.5s)
+  assertions failures elapsed_seconds
+1         11        0         17.5586

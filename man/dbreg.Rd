@@ -27,8 +27,10 @@ dbreg(
   factor_refs = NULL,
   row_id = NULL,
   sample_table = NULL,
-  retain = c("none", "prediction", "all"),
+  retain = c("none", "prediction", "inference", "all"),
   offset = NULL,
+  subset = NULL,
+  fixef_rm = c("none", "singletons"),
   ...
 )
 }
@@ -178,11 +180,22 @@ prediction, \code{\link[=obs]{obs()}}, \code{\link[=residuals]{residuals()}} and
 This adds row-sized backend storage and SQL work; no panel is implicitly
 collected into R for SQL inputs. R inputs retain their original positions;
 SQL inputs use \code{row_id}, or snapshot-local generated keys when it is absent.
-Full state needs its live owning session and is released by \code{\link[=close]{close()}}.}
+Full state needs its live owning session and is released by \code{\link[=close]{close()}}.
+\code{"inference"} saves the same row/score state without recovering learned FE
+prediction dictionaries. Default fitted-sample prediction and inference are
+available; learned-effect newdata prediction needs \code{"prediction"} or \code{"all"}.}
 
 \item{offset}{Optional numeric column added to the linear predictor with
 coefficient one. Estimation uses outcome minus offset. Supported on DuckDB
 and native Databricks; newdata predictions require the offset column.}
+
+\item{subset}{Optional logical column name or restricted one-sided predicate
+formula, evaluated before missing-value/weight filtering. Supports column
+comparisons, arithmetic, boolean operators, \code{is.na()} and literal \code{\%in\%}.
+Supports DuckDB/native Databricks; positional vectors belong in adapters.}
+
+\item{fixef_rm}{Fixed-effect sample policy: \code{"none"} (native default) or
+recursive \code{"singletons"}, after other sample filters.}
 
 \item{...}{Only supported legacy aliases are accepted for backwards
 compatibility. Other arguments produce an error.}

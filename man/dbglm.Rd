@@ -23,7 +23,8 @@ dbglm(
   row_id = NULL,
   sample_table = NULL,
   separation = c("error", "prediction"),
-  retain = c("none", "prediction", "all")
+  retain = c("none", "prediction", "inference", "all"),
+  subset = NULL
 )
 }
 \arguments{
@@ -93,7 +94,13 @@ projection iteration limit and a tolerance at least as strict as `1e-10`.
 in an owned database relation, enabling default/sample prediction, [obs()],
 [residuals()] and post-fit covariance via [summary()]. It requires a finite
 fit, adds row-sized backend storage/SQL work and needs its live owning session.
-SQL inputs return keyed relations; R inputs preserve original positions.}
+SQL inputs return keyed relations; R inputs preserve original positions.
+`"inference"` saves rows/scores without learned-effect dictionaries. It
+supports fitted-sample prediction and post-fit inference; learned-effect
+newdata prediction needs `"prediction"` or `"all"`.}
+
+\item{subset}{Optional logical column or restricted one-sided predicate
+formula, as in [dbreg()]. Original row identities precede this filter.}
 }
 \value{
 A compact object of class `c("dbglm", "dbreg")`, containing slopes,

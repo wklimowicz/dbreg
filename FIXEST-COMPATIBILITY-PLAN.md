@@ -55,13 +55,43 @@ likelihood before timing comparisons. Portable prediction retention added about
 0.26s/14% to the two-FE cloglog fit (1.811s to 2.071s pooled medians); saved state
 was 107,896 bytes. Peak client RSS was about 15% higher during fitting. These
 are local measurements with material timing variation, not native guarantees.
-OLS recovery, database-backed large prediction state, original-sample/default
-prediction and post-fit inference remain unfinished.
+Database-backed large prediction state, original-sample/default prediction
+and post-fit inference remain unfinished; the OLS recovery checkpoint follows.
+
+Bounded portable OLS learned-effect prediction is now implemented behind the
+same explicit `retain="prediction"` option. It preserves the original estimator's
+slopes, recovers nuisance effects from the immutable fit frame, and certifies
+training RSS. Demean/compress/auto paths, exact BIGINT and adjacent-double keys,
+disconnected/collinear designs, source removal and serialization are covered.
+Mundlak retention is explicitly unsupported. The shared recovery and typed-key
+helpers also preserve GLM behavior.
+
+This checkpoint passes **4,087 full local assertions** and **149 native OLS
+assertions** (434.71 seconds). The native GLM regression run passes **118**
+prediction checks plus **3** snapshot checks. Its frozen source predates a final
+OLS-only compressed-aggregate conversion fix and local-runner expansion; those
+two file differences are documented in the evidence. Latest full/local/native
+OLS source manifests match. Package check has zero errors/warnings and the
+existing optional `binsreg` NOTE. Evidence: `_benchmarks/linear_prediction_20261024/`.
+
+New recovery checks exposed existing compressed-fit precision problems: numeric
+factor labels could merge adjacent doubles; default numeric DBI conversion could
+round BIGINT FE keys; integer64 sufficient statistics could truncate fractional
+RSS arithmetic. These are corrected, including exact compressed cluster-cell
+matching. Both DuckDB BIGINT conversion modes and native ODBC are validated.
+
+A 90-fit million-row follow-up matches names, coefficients, full covariance, N
+and strategy against the pre-compatibility baseline. Current default medians
+are 0.0905s for OLS, 0.171s for two-FE OLS and 0.0255s for compressed OLS.
+Explicit retained prediction raises the latter two to 0.422s and 0.1865s;
+portable dictionaries occupy 107,296 and 6,712 bytes. Peak process RSS rises
+about 25-30% with retention. These warmed local measurements do not establish
+native or disk-bound performance. Compact defaults remain unchanged.
 
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
-The next dependencies are OLS learned-effect recovery and database-backed large
-state, followed by formula adapters and post-fit inference. Use dbreg's
+The next dependencies are database-backed large state, followed by formula
+adapters and post-fit inference. Use dbreg's
 existing conventions; consult fixest for unresolved user-facing compatibility
 choices. Concrete API/lifetime decisions are recorded in
 `inst/FIXEST-COMPATIBILITY.txt`. The complete replacement remains unfinished.

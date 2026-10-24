@@ -1,0 +1,102 @@
+Portable OLS learned-effect prediction checkpoint, 2026-10-24
+============================================================
+
+Implementation is the commit containing this file, based on 1e29229.
+Working-tree source identities are recorded in each run; the revision field
+alone identifies the preceding commit, not uncommitted implementation content.
+No full fixest compatibility or full native package gate is claimed.
+
+Completed validation
+--------------------
+aggregate-fix/full: 4,087 assertions, zero failures, 204.8563 seconds.
+aggregate-fix/local: 298 assertions, zero failures (149 per DuckDB BIGINT mode).
+native-ols-final: 149 assertions, zero failures, 434.7089 seconds.
+native-glm: 118 prediction assertions, zero failures, 1,464.8443 seconds;
+            three snapshot assertions, zero failures, 86.4891 seconds.
+Package check: zero errors/warnings, existing optional binsreg reference NOTE.
+Check used --no-tests; the separate complete local source suite ran above.
+tinytest's printed time label can say seconds for minute-valued difftimes;
+the explicit elapsed_seconds fields above are authoritative.
+
+The aggregate-fix/full/local and native-ols-final source manifests match the
+frozen implementation. Native GLM was started before two OLS-only changes:
+R/linear-design.R converts known compressed sufficient statistics from integer64
+before fractional arithmetic; inst/tinytest/test_linear_prediction.R runs both
+DuckDB BIGINT modes. All other recorded files match. Neither difference changes
+GLM estimation/prediction. source-before-aggregate-conversion.tar.gz preserves
+the earlier R/test source, matching the GLM run and initial failed OLS run.
+The initial native-ols run aborted on the compressed RSS certificate; it is
+retained as failure evidence. The native-ols-final rerun verifies the correction.
+Earlier full/local artifacts at directory root are historical, not latest gates.
+
+Implementation/coverage
+-----------------------
+Native dbreg(..., retain="prediction") shares bounded portable learned-effect
+state with dbglm. It fixes the fitted slopes, solves nuisance effects and checks
+recovered training RSS; predictions preserve order, need no outcomes or weights,
+and survive disconnect/serialization. Demean/compress/auto, factors/references,
+composite/three-way/disconnected FEs, collinearity, zero weights, missing data,
+typed BIGINT/adjacent-double keys, source removal, and cleanup are covered.
+Mundlak retention, learned-effect intervals and oversized state explicitly error.
+Default retention is none; stored compressed-cell prediction remains unchanged.
+
+Recovery exposed and fixed pre-existing compressed-estimator precision issues:
+base factor labels merged adjacent doubles; numeric DBI conversion could round
+large integer FE keys; integer64 sufficient statistics truncated fractional RSS
+arithmetic. Exact typed cell/cluster keys also prevent separator collisions.
+Both DuckDB BIGINT modes and native ODBC validate these paths. Shared GLM tests
+also cover unknown FE keys overlapping absorbed regressor factors.
+
+Million-row performance evidence
+---------------------------------
+performance/summarize.R checks all 90 measured fits against baseline names,
+coefficients, full covariance, N and strategy before reporting medians.
+Absolute-plus-relative tolerances: beta 1e-7 + 1e-6*abs(reference), covariance
+1e-10 + 1e-5*abs(reference). All comparisons pass. Each configuration/model
+has ten measured fits across two batches; two warmups per batch are excluded.
+
+                       baseline        current      retained prediction
+OLS                    0.0900s         0.0905s      0.0825s
+two-FE OLS             0.1985s         0.1710s      0.4220s
+compressed OLS         0.0270s         0.0255s      0.1865s
+
+Retained state: 107,296 bytes (two-FE), 6,712 bytes (compressed); no-FE stays
+compact with no learned-effect dictionary. Whole-process maximum RSS:
+baseline 399,708-400,152 KiB; current 381,356-403,524 KiB;
+retention 495,220-510,924 KiB (about 25-30% higher).
+There is no substantial default slowdown in this fixture. Optional recovery
+adds database passes and an immutable required-column snapshot; compressed
+fits can have a large relative increase because their base fit is very cheap.
+State is bounded by FE/design size, but these optional fit passes still scan
+source rows. Only 100 newdata rows are fetched to verify serialized predictions,
+outside fit timing; no training panel is collected into R.
+
+Baseline: 00f2868a311a09517bc19b556d002118c610a757 (pre-compatibility).
+R 4.6.0, DuckDB 1.5.2, two DuckDB threads, 2GB memory limit, BLAS/OMP two
+threads; persisted deterministic synthetic million-row input. Linear benchmark
+connections use bigint="numeric", the ordinary DuckDB default, consistently
+for baseline and current. Initial integer64-mode performance runs are kept in
+performance-before-aggregate-fix as diagnostics: the old baseline suffered the
+RSS arithmetic issue, so those are not equivalent-fit timing comparisons.
+These are warmed local measurements with timing variation, not native,
+disk-bound, or large-FE guarantees. An external native validation client was
+active during early batches; rechecks were sequential after its completion.
+
+Reproduction (from repository root)
+-----------------------------------
+Rscript _benchmarks/check_glm_fractional.R local /tmp/ols-local linear_prediction
+Rscript _benchmarks/check_glm_fractional.R full /tmp/ols-full linear_prediction
+DBREG_TEST_DATABRICKS=true Rscript _benchmarks/check_glm_fractional.R native /tmp/ols-native linear_prediction
+DBREG_TEST_DATABRICKS=true Rscript _benchmarks/check_glm_fractional.R native /tmp/glm-native prediction
+DBREG_TEST_DATABRICKS=true Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_prediction_snapshot_live.R")'
+
+The performance runner's prepare/run usage is documented at the top of
+_benchmarks/check_fixest_compat_performance.R. Prepare a fresh 1,000,000-row
+database; run linear_default for baseline/current and linear_prediction for
+current, five measured repetitions per batch, twice sequentially. Each runner
+records runtime versions, source hashes and fit values. Use /usr/bin/time -v
+for process RSS. performance/summarize.R reproduces the saved comparisons.
+
+Remaining: database-backed large prediction state, original-sample/default
+prediction, retained post-fit score state, clustering/SSC/df, formula adapters,
+fixest-style entry points and broader end-to-end/resource acceptance gates.

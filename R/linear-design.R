@@ -30,6 +30,75 @@ validate_factor_refs = function(refs, variables) {
   refs
 }
 
+# Base factor() stringifies doubles before matching and can merge adjacent
+# representable keys. Match numeric values first, keeping ordinary labels when
+# they are unambiguous and using round-trip labels only when necessary.
+exact_numeric_factor = function(x) {
+  if (inherits(x, "integer64")) {
+    values = sort(unique(x))
+    result = factor(as.character(x), levels = as.character(values))
+    attr(result, "dbreg_key_values") = values
+    attr(result, "dbreg_key_type") = "integer"
+    return(result)
+  }
+  if (!is.numeric(x)) return(factor(x))
+  values = sort(unique(x))
+  labels = as.character(values)
+  if (anyDuplicated(labels)) labels = sprintf("%.17g", values)
+  codes = match(x, values)
+  names(codes) = names(x)
+  structure(codes, levels = labels, class = "factor", dbreg_key_values = values,
+    dbreg_key_type = if (is.integer(x)) "integer" else "numeric")
+}
+
+# Exact decimal integer labels can be sorted without a new runtime dependency.
+exact_integer_factor = function(x) {
+  values = unique(as.character(x[!is.na(x)]))
+  negative = startsWith(values, "-")
+  lo = values[negative]
+  hi = values[!negative]
+  levels = c(lo[order(nchar(lo), lo, decreasing = TRUE)], hi[order(nchar(hi), hi)])
+  result = factor(as.character(x), levels = levels)
+  attr(result, "dbreg_key_values") = levels
+  attr(result, "dbreg_key_type") = "integer"
+  result
+}
+
+# Re-read only an exceptional lossy BIGINT result. Ordinary compression keeps
+# its single query. Cast after SQL grouping, preserving both exact group keys
+# and numeric level ordering, without changing the caller's DBI configuration.
+read_compressed_frame = function(inputs, sql, from_statement = inputs[["from_statement"]], integer_keys = inputs[["fe"]]) {
+  conn = inputs[["conn"]]
+  data = DBI::dbGetQuery(conn, sql)
+  risky = integer_keys[vapply(integer_keys, function(f) {
+    value = data[[f]]
+    is.numeric(value) && !inherits(value, "integer64") && any(abs(value) >= 2^53, na.rm = TRUE)
+  }, logical(1))]
+  integers = character()
+  if (length(risky)) {
+    backend = detect_backend(conn)
+    if (backend[["name"]] == "duckdb" || isTRUE(backend[["is_databricks"]])) {
+      q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
+      types = DBI::dbGetQuery(conn, paste0("SELECT ", paste0("typeof(", q(risky), ") AS t", seq_along(risky), collapse = ","),
+        " ", from_statement, " LIMIT 1"))
+      integers = risky[vapply(types, function(type) grepl("^(u?(bigint|hugeint)|decimal\\([0-9]+,0\\))$", tolower(type[[1]])), logical(1))]
+      if (length(integers)) {
+        cast = if (backend[["name"]] == "duckdb") "VARCHAR" else "STRING"
+        fields = c(q(setdiff(names(data), integers)), paste0("CAST(", q(integers), " AS ", cast, ") AS ", q(integers)))
+        sql = paste0("SELECT ", paste(fields, collapse = ","), " FROM (", sql, ") dbreg_exact_cells")
+        data = DBI::dbGetQuery(conn, sql)
+      }
+    }
+  }
+  # Keep typed identifiers intact, but cross the same numeric boundary used by
+  # cross_moments() for sufficient statistics. integer64 arithmetic otherwise
+  # truncates fractional residuals, even when cell means/coefficients are doubles.
+  moments = intersect(c("sum_w", "sum_wy", "sum_wy_sq", "sum_w2", "sum_w2y", "sum_w2y_sq",
+    "sum_w_gc", "sum_wy_gc", "mean_Y", "wts"), names(data))
+  for (name in moments) data[[name]] = as.numeric(data[[name]])
+  list(data = data, sql = sql, integers = integers)
+}
+
 # Only compressed fits retain explicit FE coefficients. Their tuple-to-rank
 # mapping comes from cells already collected for estimation, with no extra scan.
 finalize_linear_design = function(result, inputs) {

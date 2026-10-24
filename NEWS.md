@@ -27,6 +27,15 @@
   remains off by default. Database-backed large state and OLS support are pending.
 - Absorbed GLMs also certify group equations relative to group information,
   preventing premature convergence for extremely small group-specific weights.
+- `dbreg(retain = "prediction")` supports bounded portable learned-effect
+  predictions for demean/compress fits, including typed composite keys and
+  estimability checks. Newdata need not include outcomes or fitting weights.
+  Existing stored-cell predictions for compression remain available. Mundlak
+  retention and intervals using learned effects remain unsupported.
+- Compression preserves exact large integer FE labels and adjacent double
+  levels. Cluster scores match typed cell tuples, including embedded delimiters,
+  and preserve precise cluster IDs. Only exceptional lossy integer results need
+  another SQL fetch; caller connection conversion settings are unchanged.
 
 # wojtek-dev integration (development branch)
 

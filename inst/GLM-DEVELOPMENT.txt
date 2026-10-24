@@ -161,3 +161,13 @@ contract for exact key, estimability and lifetime requirements.
 
 See _benchmarks/GLM-INDEX.txt in the repository for performance evidence and
 the distinction between production benchmarks and exploratory prototypes.
+
+The shared learned-effect builder now supports OLS with a fixed fitted slope
+vector and an RSS recovery certificate. dbreg uses retain="prediction" for
+bounded portable exact-FE prediction, sharing typed dictionaries, estimability
+and pure-R prediction with dbglm. The latest full gate is 4,087 local assertions;
+focused native gates pass 149 OLS, 118 GLM and three snapshot checks. See
+GLM-VALIDATION.txt for the exact source scope and preserved initial failure.
+The OLS compression path now preserves exact FE/cluster keys and converts only
+aggregate statistics from integer64 before fractional arithmetic. Required
+resource/state and adapter work remains as recorded in the compatibility plan.

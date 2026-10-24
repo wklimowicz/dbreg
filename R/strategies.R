@@ -479,7 +479,9 @@ execute_compress_strategy = function(inputs) {
   if (verbose) {
     message(if (!is.null(weights)) "[dbreg] Executing weighted compress strategy SQL\n" else "[dbreg] Executing compress strategy SQL\n")
   }
-  compressed_dat = dbGetQuery(conn, query_string)
+  compressed_frame = read_compressed_frame(inputs, query_string, from_statement)
+  compressed_dat = compressed_frame[["data"]]
+  query_string = compressed_frame[["sql"]]
   nobs_orig = as.numeric(sum(compressed_dat[["n"]]))
   nobs_comp = nrow(compressed_dat)
   compression_ratio = nobs_comp / max(nobs_orig, 1)
@@ -503,11 +505,17 @@ execute_compress_strategy = function(inputs) {
   }
   if (length(fe)) {
     for (f in fe) {
-      compressed_dat[[f]] = factor(compressed_dat[[f]])
+      compressed_dat[[f]] = if (f %in% compressed_frame[["integers"]]) exact_integer_factor(compressed_dat[[f]]) else
+        exact_numeric_factor(compressed_dat[[f]])
     }
   }
   for (nm in intersect(names(inputs[["factor_levels"]]), names(compressed_dat))) {
-    compressed_dat[[nm]] = factor(compressed_dat[[nm]], levels = inputs[["factor_levels"]][[nm]])
+    previous = compressed_dat[[nm]]
+    compressed_dat[[nm]] = factor(previous, levels = inputs[["factor_levels"]][[nm]])
+    if (!is.null(attr(previous, "dbreg_key_values"))) {
+      attr(compressed_dat[[nm]], "dbreg_key_values") = attr(previous, "dbreg_key_values")[match(levels(compressed_dat[[nm]]), levels(previous))]
+      attr(compressed_dat[[nm]], "dbreg_key_type") = attr(previous, "dbreg_key_type")
+    }
   }
   if (data_only) {
     return(compressed_dat)

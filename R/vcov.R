@@ -203,7 +203,8 @@ query_cluster_cells = function(inputs, from_statement, group_cols) {
     from_statement, "\n",
     "GROUP BY ", cluster_var, ", ", group_cols_sql
   )
-  dbGetQuery(conn, sql)
+  read_compressed_frame(inputs, sql, from_statement,
+    integer_keys = unique(c(inputs[["fe"]], cluster_var)))[["data"]]
 }
 
 #' Cluster meat from cluster-by-cell statistics
@@ -216,11 +217,27 @@ query_cluster_cells = function(inputs, from_statement, group_cols) {
 #'   IV), in which case `cells$sum_wy_gc` is not needed.
 #' @keywords internal
 cluster_meat_from_cells = function(cells, compressed_dat, group_cols, cluster_var, X, yhat, y_cell = NULL) {
-  # Cell keys for matching (pasted rather than interaction(), which
-  # enumerates every level combination)
-  cell_key = function(df) do.call(paste, c(unname(as.list(df[, group_cols, drop = FALSE])), sep = "\r"))
+  # Use fitted numeric FE values rather than their display labels. Length
+  # prefixes distinguish arbitrary string tuples, and double keys round-trip.
+  cell_key = function(df) {
+    values = df[, group_cols, drop = FALSE]
+    types = vapply(compressed_dat[, group_cols, drop = FALSE], function(value) {
+      type = attr(value, "dbreg_key_type")
+      if (!is.null(type)) return(type)
+      if (inherits(value, "integer64") || is.integer(value) && !is.factor(value)) "integer" else
+        if (is.numeric(value)) "numeric" else "character"
+    }, character(1))
+    for (name in group_cols) {
+      if (is.factor(values[[name]])) {
+        raw = attr(values[[name]], "dbreg_key_values")
+        values[[name]] = if (is.null(raw)) as.character(values[[name]]) else raw[as.integer(values[[name]])]
+      }
+    }
+    prediction_tuple_key(values, types)
+  }
   cell_to_row = setNames(seq_len(nrow(compressed_dat)), cell_key(compressed_dat))
   row = cell_to_row[cell_key(cells)]
+  if (anyNA(row)) stop("Cluster cells do not match the fitted compression sample.", call. = FALSE)
 
   # Summed residuals per (cluster, cell): sum_wy_gc - sum_w_gc * yhat
   sum_wy_gc = if (is.null(y_cell)) cells[["sum_wy_gc"]] else cells[["sum_w_gc"]] * y_cell[row]
@@ -229,7 +246,9 @@ cluster_meat_from_cells = function(cells, compressed_dat, group_cols, cluster_va
   # Cluster scores s_g = sum over the cluster's cells of X_cell * u_sum_gc,
   # for all clusters at once via a sparse cluster-indicator matrix (works for
   # dense and sparse X), then meat = sum_g s_g s_g'
-  cluster_id = as.integer(factor(cells[[cluster_var]], exclude = NULL))
+  cluster_factor = exact_numeric_factor(cells[[cluster_var]])
+  cluster_id = as.integer(cluster_factor)
+  if (anyNA(cluster_id)) cluster_id[is.na(cluster_id)] = nlevels(cluster_factor) + 1L
   indicator = Matrix::sparseMatrix(i = seq_along(cluster_id), j = cluster_id, x = 1)
   scores = crossprod(indicator, Diagonal(x = u_sum_gc) %*% X[row, , drop = FALSE])
   meat_mat = as.matrix(crossprod(scores))

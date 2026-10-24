@@ -1,0 +1,45 @@
+ℹ Loading dbreg
+Failed to connect to system scope bus via local transport: Operation not permitted (consider using --machine=<user>@.host --user to connect to bus of other user)
+Warning message:
+In system("timedatectl", intern = TRUE) :
+  running command 'timedatectl' had status 1
+
+test_linear_prediction.R......    0 tests
+test_linear_prediction.R......    0 tests    [OLS prediction] DBI bigint conversion: numeric
+[OLS prediction] demean: y ~ x + z + f + I(x^2) | g + h
+[OLS prediction] compress: y ~ x + z + f + I(x^2) | g + h
+[OLS prediction] auto: y ~ x + z + f + I(x^2) | g + h
+[OLS prediction] demean: y ~ x:f + z | g + h
+[OLS prediction] compress: y ~ x + f | g^h
+[OLS prediction] demean: y ~ x + f | g + h + k
+[OLS prediction keys] demean: y ~ x | big
+[OLS prediction keys] demean: y ~ x | close_key^part
+[OLS prediction keys] compress: y ~ x | big
+[OLS prediction keys] compress: y ~ x | close_key^part
+[OLS estimability] demean
+[OLS estimability] compress
+[OLS cluster keys] big_cluster
+[OLS cluster keys] close_cluster
+[OLS prediction] DBI bigint conversion: integer64
+[OLS prediction] demean: y ~ x + z + f + I(x^2) | g + h
+[OLS prediction] compress: y ~ x + z + f + I(x^2) | g + h
+[OLS prediction] auto: y ~ x + z + f + I(x^2) | g + h
+[OLS prediction] demean: y ~ x:f + z | g + h
+[OLS prediction] compress: y ~ x + f | g^h
+[OLS prediction] demean: y ~ x + f | g + h + k
+[OLS prediction keys] demean: y ~ x | big
+[OLS prediction keys] demean: y ~ x | close_key^part
+[OLS prediction keys] compress: y ~ x | big
+[OLS prediction keys] compress: y ~ x | close_key^part
+[OLS estimability] demean
+[OLS estimability] compress
+[OLS cluster keys] big_cluster
+[OLS cluster keys] close_cluster
+
+test_linear_prediction.R......  298 tests OK 6.2s
+
+File                       Results fails passes
+  test_linear_prediction.R     298     0    298
+  Total                        298     0    298
+   mode assertions failures elapsed_seconds error
+1 local        298        0        6.166666

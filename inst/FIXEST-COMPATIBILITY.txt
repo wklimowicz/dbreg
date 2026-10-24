@@ -26,8 +26,8 @@ Implementation sequence
 2. Shared fitted-state contract for learned effects, sample keys and resource
    ownership. OLS/GLM now share typed-key validation and retained-key exports;
    OLS exports use an immutable snapshot throughout fitting. Bounded portable
-   GLM learned-effect state is implemented behind explicit retention; database
-   resources, OLS recovery and post-fit scores remain pending.
+   OLS/GLM learned-effect state is implemented behind explicit retention; database
+   resources and post-fit scores remain pending.
 3. Supported formula/argument normalization: i()/references, public coefficient
    identities, OLS offsets and varying slopes, fixef.rm, weights and subset.
    Partial existing formula support remains; compatibility entry points pending.
@@ -36,9 +36,8 @@ Implementation sequence
    capture caller or strategy environments in compact results.
 4. Fitted link/response prediction with learned effects, including estimable
    zero-weight rows, without outcomes in newdata. Implemented for bounded GLM
-   state with retain="prediction"; 116 shared checks pass locally and natively.
-   Existing
-   OLS conditional-population prediction remains unchanged.
+   OLS/GLM state with retain="prediction"; 149 native OLS checks and 118 native
+   GLM checks pass. Existing compact OLS population prediction remains available.
 5. Two-way OLS cluster covariance and post-fit inference on the fitted sample.
    Not implemented. Include small-sample/FE-nesting policies and test df.
 6. Summary, se/coeftable, likelihood, sample and df extraction; convergence,
@@ -228,7 +227,7 @@ FE/regressor moments on both moment and SQL fitting paths, including varying
 slopes. Recovery must reproduce the fit's final eta before any fit-owned table
 is released. State is a versioned plain list, without resource handles, rows,
 outcomes or fitting weights. It does not provide training-row/default prediction
-or post-fit covariance. OLS and database-backed large state remain pending.
+or post-fit covariance. Database-backed large state remains pending.
 
 Typed dictionaries preserve BIGINT text exactly and encode double keys with
 17 significant digits, including composite tuples. Supported SQL key types are
@@ -252,3 +251,21 @@ both scales. FE nuisance right-hand sides are projected in information-scaled
 coordinates so SQL roundoff from a large group cannot swamp a small group's
 equation. Uniformly small original weights continue to use the earlier global
 power-of-two normalization. Keep this numerical safeguard when extending state.
+
+Portable OLS prediction checkpoint (2026-10-24): dbreg accepts the same explicit
+retain="prediction" option for exact demean/compress/auto fits. Recovery fixes
+the original fitted slope vector and solves only for nuisance effects, checking
+training RSS before releasing the immutable frame. It preserves row order and
+missing/nonestimable positions, needs no outcomes/weights in newdata, and works
+after serialization/disconnection. No-FE fits use the existing compact predictor.
+Mundlak retention and learned-FE prediction intervals explicitly error. Existing
+stored compressed-cell predictions remain available through the native API.
+
+Compression preserves exact double/BIGINT FE identities and typed cluster-cell
+matching. Only known sufficient statistics are converted from integer64 before
+fractional arithmetic; identifier columns retain their exact representation.
+Full local gate: 4,087 assertions. Native OLS: 149; native GLM: 118 plus three
+snapshot checks (see source-scope caveat in GLM-VALIDATION.txt). Million-row
+benchmarks show no substantial default regression; explicit retained prediction
+costs 0.171s to 0.422s for two-FE OLS and 0.0255s to 0.1865s for compressed OLS
+in this warmed local fixture. Evidence: _benchmarks/linear_prediction_20261024.

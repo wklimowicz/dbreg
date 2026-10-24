@@ -1,0 +1,2 @@
+"suite","assertions","failures","error","elapsed_seconds"
+"test_linear_prediction_live.R",0,1,"Recovered OLS effects do not reproduce the fitted residual sum of squares (recovered=0.798916166, fitted=10).",420.042285442352

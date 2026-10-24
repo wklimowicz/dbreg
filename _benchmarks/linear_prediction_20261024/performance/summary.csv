@@ -1,0 +1,10 @@
+"model","configuration","elapsed_seconds","repetitions","state_bytes"
+"ols","baseline",0.0899999999999996,10,0
+"ols_compress","baseline",0.0270000000000001,10,0
+"ols_fe","baseline",0.1985,10,0
+"ols","current",0.0905,10,0
+"ols_compress","current",0.0255000000000001,10,0
+"ols_fe","current",0.171000000000001,10,0
+"ols","prediction",0.0825,10,0
+"ols_compress","prediction",0.186499999999999,10,6712
+"ols_fe","prediction",0.421999999999999,10,107296

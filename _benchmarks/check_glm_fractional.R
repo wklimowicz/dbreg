@@ -1,10 +1,11 @@
 # Reproduce fractional-weight validation with durable results and source identity.
-# Rscript _benchmarks/check_glm_fractional.R local|full|native OUTPUT_DIRECTORY [fractional|prediction]
+# Rscript _benchmarks/check_glm_fractional.R local|full|native OUTPUT_DIRECTORY [fractional|prediction|linear_prediction]
 args = commandArgs(TRUE)
 if (!length(args) %in% 2:3 || !args[[1L]] %in% c("local", "full", "native")) {
-  stop("Usage: Rscript _benchmarks/check_glm_fractional.R local|full|native OUTPUT_DIRECTORY [fractional|prediction]")
+  stop("Usage: Rscript _benchmarks/check_glm_fractional.R local|full|native OUTPUT_DIRECTORY [fractional|prediction|linear_prediction]")
 }
-suite = if (length(args) == 3L) match.arg(args[[3L]], c("fractional", "prediction")) else "fractional"
+suite = if (length(args) == 3L) match.arg(args[[3L]], c("fractional", "prediction", "linear_prediction")) else "fractional"
+suite_file = switch(suite, fractional = "test_glm_fractional", prediction = "test_prediction_state", linear_prediction = "test_linear_prediction")
 mode = args[[1L]]
 out = args[[2L]]
 dir.create(out, recursive = TRUE, showWarnings = FALSE)
@@ -25,7 +26,7 @@ write.csv(data.frame(file = names(hashes), md5 = unname(hashes)),
 started = Sys.time()
 result = tryCatch({
   if (mode == "full") tinytest::test_all(".") else tinytest::run_test_file(
-    file.path("inst/tinytest", paste0(if (suite == "prediction") "test_prediction_state" else "test_glm_fractional",
+    file.path("inst/tinytest", paste0(suite_file,
       if (mode == "native") "_live", ".R")))
 }, error = identity)
 elapsed = as.numeric(difftime(Sys.time(), started, units = "secs"))

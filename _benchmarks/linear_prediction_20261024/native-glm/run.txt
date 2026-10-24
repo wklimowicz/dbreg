@@ -1,0 +1,12 @@
+ℹ Loading dbreg
+Starting native suite: test_prediction_state_live.R
+
+test_prediction_state_live.R..  118 tests OK 24.4s
+All ok, 118 results (24.4s)
+Starting native suite: test_prediction_snapshot_live.R
+
+test_prediction_snapshot_live.R    3 tests OK 1.4s
+All ok, 3 results (1.4s)
+                            suite assertions failures error elapsed_seconds
+1    test_prediction_state_live.R        118        0            1464.84432
+2 test_prediction_snapshot_live.R          3        0              86.48914

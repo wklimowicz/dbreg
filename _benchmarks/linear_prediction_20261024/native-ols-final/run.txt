@@ -1,0 +1,21 @@
+ℹ Loading dbreg
+Starting native suite: test_linear_prediction_live.R
+[OLS prediction] demean: y ~ x + z + f + I(x^2) | g + h
+[OLS prediction] compress: y ~ x + z + f + I(x^2) | g + h
+[OLS prediction] auto: y ~ x + z + f + I(x^2) | g + h
+[OLS prediction] demean: y ~ x:f + z | g + h
+[OLS prediction] compress: y ~ x + f | g^h
+[OLS prediction] demean: y ~ x + f | g + h + k
+[OLS prediction keys] demean: y ~ x | big
+[OLS prediction keys] demean: y ~ x | close_key^part
+[OLS prediction keys] compress: y ~ x | big
+[OLS prediction keys] compress: y ~ x | close_key^part
+[OLS estimability] demean
+[OLS estimability] compress
+[OLS cluster keys] big_cluster
+[OLS cluster keys] close_cluster
+
+test_linear_prediction_live.R.  149 tests OK 7.2s
+All ok, 149 results (7.2s)
+                          suite assertions failures error elapsed_seconds
+1 test_linear_prediction_live.R        149        0              434.7089

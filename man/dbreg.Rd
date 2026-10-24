@@ -27,6 +27,7 @@ dbreg(
   factor_refs = NULL,
   row_id = NULL,
   sample_table = NULL,
+  retain = c("none", "prediction"),
   ...
 )
 }
@@ -157,6 +158,14 @@ input columns for fitting and release that snapshot on success or failure.
 Cannot be combined with \code{sql_only} or \code{data_only}.
 Key SQL types are preserved; configure the DBI connection's integer64
 conversion when collecting BIGINT keys into R.}
+
+\item{retain}{Default \code{"none"} preserves compact native behavior.
+\code{"prediction"} saves bounded portable learned-effect state for newdata
+prediction with the demean/compress strategies on DuckDB or native
+Databricks. It snapshots required source columns during fitting, then releases
+private tables. Outcomes and fitting weights are not required in newdata.
+Cannot be combined with \code{sql_only}/\code{data_only}; Mundlak retention and
+learned-effect prediction intervals are not implemented.}
 
 \item{...}{Only supported legacy aliases are accepted for backwards
 compatibility. Other arguments produce an error.}

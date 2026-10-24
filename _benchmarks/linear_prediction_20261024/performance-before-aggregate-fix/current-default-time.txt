@@ -1,0 +1,23 @@
+	Command being timed: "env OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 Rscript _benchmarks/check_fixest_compat_performance.R run /home/wojtek/coding/R/dbreg/dbreg /tmp/dbreg-compat-perf-warm-1m.duckdb linear_default _benchmarks/linear_prediction_20261024/performance/current-default 5 linear-prediction-checkpoint"
+	User time (seconds): 11.60
+	System time (seconds): 0.50
+	Percent of CPU this job got: 115%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:10.49
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 406848
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 207037
+	Voluntary context switches: 353
+	Involuntary context switches: 224
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 368
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

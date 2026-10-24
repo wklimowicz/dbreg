@@ -277,3 +277,30 @@ the synthetic caller source after IRLS but before dictionary recovery, then
 checks fitted predictions and cleanup. Evidence:
 _benchmarks/prediction_key_frame_20261024. The full local/native totals above
 describe their frozen checkpoint, not a rerun of every suite for this follow-up.
+
+Shared OLS/GLM prediction checkpoint, 2026-10-24
+-----------------------------------------------
+Full local suite: 4,087 assertions, zero failures, 204.86 elapsed seconds.
+Focused OLS local checks: 298 (149 each under DuckDB bigint="numeric" and
+"integer64"). Native OLS: 149 assertions, zero failures, 434.71 seconds.
+Package check: zero errors/warnings, the existing optional binsreg NOTE;
+its tests were skipped because the separate full source suite above was run.
+Evidence: _benchmarks/linear_prediction_20261024/aggregate-fix and native-ols-final.
+
+Shared GLM helpers now match known FE keys before ordinary factor coding, so an
+unknown FE that is also an absorbed regressor returns NA. Native GLM passes
+118 prediction assertions in 1,464.84 seconds and three snapshot assertions in
+86.49 seconds. Its source manifest differs from the final OLS/full manifests
+only in R/linear-design.R and inst/tinytest/test_linear_prediction.R: the final
+change converts compressed sufficient statistics before fractional arithmetic
+and expands the OLS runner to both BIGINT modes. Neither file change affects
+GLM fitting/prediction. The frozen pre-conversion source is archived. This is
+focused native regression coverage, not a full native package run.
+
+Initial native OLS recovery exposed integer64 RSS truncation and aborted; that
+failed run and prior source archive are preserved. The rerun validates the fix.
+Other fixes preserve adjacent-double factor identities, BIGINT FE keys despite
+numeric DBI defaults, and exact typed cluster-cell matching. Newdata/source
+removal, serialization, compression and disconnected-design checks all pass.
+Default native resource behavior stays compact; large database-backed state,
+original-sample/default predictions and post-fit inference remain unfinished.

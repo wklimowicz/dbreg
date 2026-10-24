@@ -1,6 +1,8 @@
 # Same-data, same-runtime comparison of the pre-compatibility and current code.
 # prepare DBFILE N
-# run REPOSITORY DBFILE default|integer|row_id|sample|fraction|prediction OUTPUT_PREFIX REPEATS LABEL
+# run REPOSITORY DBFILE MODE OUTPUT_PREFIX REPEATS LABEL
+# Modes: default, integer, row_id, sample, fraction, prediction,
+# linear_default, linear_prediction.
 args = commandArgs(TRUE)
 if (length(args) < 1L) stop("Expected prepare or run.")
 if (args[[1L]] == "prepare") {
@@ -20,7 +22,7 @@ if (args[[1L]] == "prepare") {
 } else if (args[[1L]] == "run") {
   if (length(args) != 7L) stop("run REPOSITORY DBFILE MODE OUTPUT_PREFIX REPEATS LABEL")
   repo = normalizePath(args[[2L]])
-  mode = match.arg(args[[4L]], c("default", "integer", "row_id", "sample", "fraction", "prediction"))
+  mode = match.arg(args[[4L]], c("default", "integer", "row_id", "sample", "fraction", "prediction", "linear_default", "linear_prediction"))
   out = args[[5L]]
   repeats = as.integer(args[[6L]])
   # The final argument is a descriptive revision label, separate from HEAD.
@@ -28,8 +30,12 @@ if (args[[1L]] == "prepare") {
   stopifnot(repeats >= 1L)
   dir.create(dirname(out), recursive = TRUE, showWarnings = FALSE)
   pkgload::load_all(repo)
+  bigint = if (mode %in% c("linear_default", "linear_prediction")) "numeric" else "integer64"
   conn = DBI::dbConnect(duckdb::duckdb(config = list(threads = "2", memory_limit = "2GB")),
-    dbdir = args[[3L]], bigint = "integer64")
+    dbdir = args[[3L]], bigint = bigint)
+  if (mode %in% c("linear_default", "linear_prediction")) {
+    DBI::dbExecute(conn, "CREATE TEMP VIEW perf_discrete AS SELECT id,y_lin,CAST(MOD(id,3) AS INTEGER) AS x,CAST(MOD(id,7) AS INTEGER) AS z,MOD(g,20) AS g_small FROM perf_input")
+  }
   metrics = new.env(parent = emptyenv())
   metrics[["ll_seconds"]] = 0
   metrics[["ll_calls"]] = 0L
@@ -47,6 +53,7 @@ if (args[[1L]] == "prepare") {
   } else if (mode == "fraction") stop("Fractional weights are unsupported in this revision.")
   revision = system2("git", c("-C", shQuote(repo), "rev-parse", "HEAD"), stdout = TRUE)
   environment = c(paste("Label:", label), paste("Revision:", revision), paste("Mode:", mode),
+    paste("DBI bigint conversion:", bigint),
     "DuckDB threads=2; memory_limit=2GB; persisted synthetic input; no panel collected into R.",
     capture.output(DBI::dbGetQuery(conn, "SELECT current_setting('threads') AS threads,current_setting('memory_limit') AS memory_limit")),
     "Only the fractional likelihood reporter is timed in-process; numerical code is unchanged.",
@@ -59,25 +66,29 @@ if (args[[1L]] == "prepare") {
     paste0(out, "-source-md5.csv"), row.names = FALSE)
   models = c("ols", "ols_fe", "glm", "glm_fe")
   if (mode %in% c("fraction", "prediction")) models = c("glm", "glm_fe")
+  if (mode %in% c("linear_default", "linear_prediction")) models = c("ols", "ols_fe", "ols_compress")
   rows = list()
   run_one = function(model, repetition) {
     glm = startsWith(model, "glm")
-    fe = endsWith(model, "_fe")
-    fml = stats::as.formula(paste(if (glm) "y_bin" else "y_lin", "~x+z", if (fe) "|g+h" else ""))
-    fit_args = list(fml = fml, conn = conn, table = "perf_input")
+    compress = identical(model, "ols_compress")
+    fe = endsWith(model, "_fe") || compress
+    fml = stats::as.formula(paste(if (glm) "y_bin" else "y_lin", "~x+z", if (compress) "|g_small" else if (fe) "|g+h" else ""))
+    fit_args = list(fml = fml, conn = conn, table = if (compress) "perf_discrete" else "perf_input")
+    if (compress) fit_args[["strategy"]] = "compress"
     if (glm) fit_args[["family"]] = stats::binomial("cloglog")
     if (mode %in% c("row_id", "sample")) fit_args[["row_id"]] = "id"
     if (mode == "sample") fit_args[["sample_table"]] = "bench_retained"
     if (mode == "integer") fit_args[["weights"]] = "w_int"
     if (mode == "fraction") fit_args[["weights"]] = "w_frac"
-    if (mode == "prediction") fit_args[["retain"]] = "prediction"
+    if (mode %in% c("prediction", "linear_prediction")) fit_args[["retain"]] = "prediction"
     metrics[["ll_seconds"]] = 0
     metrics[["ll_calls"]] = 0L
     gc()
     elapsed = system.time({fit = do.call(if (glm) dbglm else dbreg, fit_args)})[["elapsed"]]
     if (glm && !isTRUE(fit[["converged"]])) stop("Only completed converged fits are benchmarked.")
-    if (mode == "prediction" && fe) {
-      newdata = DBI::dbGetQuery(conn, "SELECT x,z,g,h FROM perf_input ORDER BY id LIMIT 100")
+    if (mode %in% c("prediction", "linear_prediction") && fe) {
+      newdata = DBI::dbGetQuery(conn, if (compress) "SELECT x,z,g_small FROM perf_discrete ORDER BY id LIMIT 100" else
+        "SELECT x,z,g,h FROM perf_input ORDER BY id LIMIT 100")
       prediction = stats::predict(fit, newdata)
       stopifnot(all(is.finite(prediction)),
         identical(stats::predict(unserialize(serialize(fit, NULL)), newdata), prediction))
@@ -88,6 +99,7 @@ if (args[[1L]] == "prepare") {
       likelihood_seconds = metrics[["ll_seconds"]], likelihood_calls = metrics[["ll_calls"]],
       prediction_state_bytes = as.numeric(object.size(fit[["fitted_state"]])),
       prediction_recovery_error = if (is.null(fit[["fitted_state"]])) NA_real_ else fit[["fitted_state"]][["prediction"]][["recovery_error"]],
+      prediction_recovery_kind = if (is.null(fit[["fitted_state"]])) NA_character_ else fit[["fitted_state"]][["prediction"]][["recovery_kind"]],
       weighted_loglik = if (glm) as.numeric(if (mode == "fraction") logLik(fit, type = "weighted") else logLik(fit)) else NA_real_,
       coef_names = as.character(jsonlite::toJSON(names(coef(fit)), auto_unbox = FALSE)),
       coef_values = as.character(jsonlite::toJSON(unname(coef(fit)), digits = 17, auto_unbox = FALSE)),

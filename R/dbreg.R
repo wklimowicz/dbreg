@@ -109,6 +109,13 @@
 #'   Cannot be combined with `sql_only` or `data_only`.
 #'   Key SQL types are preserved; configure the DBI connection's integer64
 #'   conversion when collecting BIGINT keys into R.
+#' @param retain Default `"none"` preserves compact native behavior.
+#'   `"prediction"` saves bounded portable learned-effect state for newdata
+#'   prediction with the demean/compress strategies on DuckDB or native
+#'   Databricks. It snapshots required source columns during fitting, then releases
+#'   private tables. Outcomes and fitting weights are not required in newdata.
+#'   Cannot be combined with `sql_only`/`data_only`; Mundlak retention and
+#'   learned-effect prediction intervals are not implemented.
 #' @param fe_tol Positive per-fit tolerance for the fixed-effect projection.
 #' @param fe_max_iter Positive maximum number of fixed-effect projection iterations.
 #' @param diagnostics Run an additional input scan for per-variable missingness
@@ -381,6 +388,7 @@ dbreg = function(
   factor_refs = NULL,
   row_id = NULL,
   sample_table = NULL,
+  retain = c("none", "prediction"),
   ...
 ) {
 
@@ -390,6 +398,10 @@ dbreg = function(
   vcov_type_req = vcov_parsed[["vcov_type"]]
   cluster_var = vcov_parsed[["cluster_var"]]
   strategy = match.arg(strategy)
+  retain = match.arg(retain)
+  if (retain == "prediction") {
+    prediction_state_limit()
+  }
   if (strategy == "within") strategy = "demean"  # alias
 
   # superseded args handled through ...
@@ -405,6 +417,9 @@ dbreg = function(
     }
   }
 
+  if (retain == "prediction" && (isTRUE(sql_only) || isTRUE(data_only))) {
+    stop("Prediction retention cannot be combined with sql_only/data_only.", call. = FALSE)
+  }
   validate_row_id_arg(row_id)
   if (!is.null(sample_table)) {
     if (is.null(conn) || !is.character(sample_table) || length(sample_table) != 1L ||
@@ -416,7 +431,7 @@ dbreg = function(
       stop("`sample_table` cannot be combined with `sql_only` or `data_only`.", call. = FALSE)
     }
   }
-  sample_resources = if (!is.null(sample_table)) dbglm_resources() else NULL
+  sample_resources = if (!is.null(sample_table) || retain == "prediction") dbglm_resources() else NULL
 
   # Collect the (normalised) arguments into the `inputs` environment, which
   # the rest of the pipeline reads from and writes to (reference semantics)
@@ -428,7 +443,7 @@ dbreg = function(
       "fml", "conn", "table", "data", "path", "weights", "vcov_type_req",
       "cluster_var", "ssc", "strategy", "sql_only", "data_only", "compress_ratio",
       "compress_nmax", "drop_missings", "verbose", "fe_tol", "fe_max_iter", "diagnostics", "factor_refs",
-      "row_id", "sample_table", "sample_resources"
+      "row_id", "sample_table", "sample_resources", "retain"
     )
   )
   # Release any connection/registration we create, including on errors during
@@ -444,6 +459,9 @@ dbreg = function(
 
   # Choose strategy (mutates inputs[["is_balanced"]], inputs[["compression_ratio_est"]])
   chosen_strategy = choose_strategy(inputs)
+  if (retain == "prediction" && length(inputs[["fe"]]) && chosen_strategy == "mundlak") {
+    stop("Prediction retention for the Mundlak strategy is not implemented yet.", call. = FALSE)
+  }
 
   # Execute chosen strategy (see R/strategies.R)
   result = switch(
@@ -508,6 +526,7 @@ process_dbreg_inputs = function(inputs) {
   source_map = name_map
   inputs[["row_id_safe"]] = src[["to_safe"]](inputs[["row_id"]])
   fml_parsed = parse_regression_formula(src[["to_safe"]](fml), allow_extended = TRUE)
+  inputs[["prediction_fe_components"]] = fml_parsed[["fe_components"]]
   source_xvars = fml_parsed[["xvars"]]
   source_fes = unique(unlist(fml_parsed[["fe_components"]]))
   if (length(refs)) names(refs) = src[["to_safe"]](names(refs))
@@ -1134,6 +1153,7 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   }
   result = finalize_fit_diagnostics(result, inputs)
   result = finalize_linear_design(result, inputs)
+  result = finalize_linear_prediction(result, inputs)
   result = finalize_linear_sample(result, inputs)
   result[["strategy"]] = chosen_strategy
   # i() columns (display names), for predict()

@@ -1,0 +1,12 @@
+source(system.file("tinytest/helper_glm_validation.R", package = "dbreg"), local = TRUE)
+source(system.file("tinytest/helper_linear_prediction.R", package = "dbreg"), local = TRUE)
+for (bigint in c("numeric", "integer64")) local({
+  message("[OLS prediction] DBI bigint conversion: ", bigint)
+  conn = DBI::dbConnect(duckdb::duckdb(config = list(temp_directory = "", threads = "2")), bigint = bigint)
+  on.exit(DBI::dbDisconnect(conn, shutdown = TRUE))
+  dbreg_test_linear_prediction(conn)
+  dbreg_test_linear_prediction_keys(conn)
+  dbreg_test_linear_prediction_estimability(conn)
+  dbreg_test_cluster_key_precision(conn)
+  dbreg_test_linear_prediction_snapshot(conn)
+})

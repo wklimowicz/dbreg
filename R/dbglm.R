@@ -270,19 +270,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   }
   # Rank small category dictionaries, not the full N-row relation once per FE.
   if (length(fe)) {
-    # Rank each distinct FE key once, then join the small dictionaries back.
-    dictionaries = character()
-    conditions = character()
-    for (i in seq_along(fe)) {
-      components = quote_id(unique(parsed[["fe_components"]][[i]]))
-      key_columns = paste(components, collapse = ",")
-      alias = paste0("__dbglm_d", i)
-      dictionaries = c(dictionaries, paste0(" JOIN (SELECT ", key_columns, ", DENSE_RANK() OVER (ORDER BY ", key_columns,
-        ") AS ", fe[i], " FROM (SELECT DISTINCT ", key_columns, " FROM ", retained, ") __dbglm_k) ", alias, " ON ",
-        paste(sprintf("__dbglm_r.%s = %s.%s", components, alias, components), collapse = " AND ")))
-    }
-    next_retained = create(paste0("SELECT __dbglm_r.*, ", paste(sprintf("__dbglm_d%d.%s", seq_along(fe), fe), collapse = ", "),
-      " FROM ", retained, " __dbglm_r", paste(dictionaries, collapse = "")), materialize = FALSE)
+    next_retained = create(sql_rank_fixed_effects(conn, retained, parsed[["fe_components"]], fe), materialize = FALSE)
     drop(retained)
     retained = next_retained
   }

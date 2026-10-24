@@ -88,15 +88,27 @@ predict.dbglm = function(object, newdata, type = c("link", "response"), ...) {
   prediction = rep(NA_real_, nrow(newdata))
   if (!any(valid)) return(prediction)
   data = newdata[valid, , drop = FALSE]
+  positions = which(valid)
+  groups = NULL
+  if (!is.null(state)) {
+    groups = prediction_match_groups(state, data)
+    known = if (length(groups)) Reduce(`&`, lapply(groups, function(group) !is.na(group))) else rep(TRUE, nrow(data))
+    if (!any(known)) return(prediction)
+    if (!all(known)) {
+      data = data[known, , drop = FALSE]
+      groups = lapply(groups, function(group) group[known])
+      positions = positions[known]
+    }
+  }
   design = as.matrix(evaluate_model_spec(object[["model_spec"]], data))
   colnames(design) = object[["model_spec"]][["columns"]][["name"]]
   if (object[["has_intercept"]]) design = cbind("(Intercept)" = 1, design)
   beta = stats::coef(object)
   names(beta) = object[["design_names"]]
-  eta = if (!is.null(state)) predict_from_fitted_state(state, design, data) else
+  eta = if (!is.null(state)) predict_from_fitted_state(state, design, data, groups = groups) else
     as.vector(design[, names(beta), drop = FALSE] %*% beta)
   if (!is.null(object[["offset"]])) eta = eta + as.numeric(data[[object[["offset"]]]])
-  prediction[valid] = if (type == "link") eta else object[["family"]][["linkinv"]](eta)
+  prediction[positions] = if (type == "link") eta else object[["family"]][["linkinv"]](eta)
   prediction
 }
 

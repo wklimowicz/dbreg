@@ -49,6 +49,12 @@ dbglm_test_prediction_state = function(conn) {
   check(yp ~ x | g[t] + h, poisson())
   check(yb ~ x | g + h + k, binomial("logit"))
   check(yp ~ x | g^h, poisson())
+  overlap = dbglm(yp ~ x + cat | cat, conn = conn, table = source, family = poisson(),
+    weights = "w", offset = "off", retain = "prediction")
+  overlap_rows = d[1:2, c("x", "cat", "off")]
+  overlap_rows[["cat"]][2] = "unseen"
+  expect_true(is.finite(predict(overlap, overlap_rows)[1]) && is.na(predict(overlap, overlap_rows)[2]))
+  expect_identical(predict(overlap, overlap_rows[2, , drop = FALSE]), NA_real_)
   # Saved state is independent of later source mutation or a live connection.
   saved = fit
   input = d[1:4, setdiff(names(d), c("yb", "yp", "w")), drop = FALSE]

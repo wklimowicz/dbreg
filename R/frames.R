@@ -22,6 +22,22 @@ frame_select = function(y, x_sql, x_names, id_cols = NULL, extra = NULL) {
   )
 }
 
+# Rank distinct typed FE tuples, then join their IDs to the rows. Sorting the
+# bounded level dictionaries avoids a window sort over the full observation set.
+sql_rank_fixed_effects = function(conn, source, components, fe) {
+  q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
+  joins = vapply(seq_along(fe), function(i) {
+    columns = q(unique(components[[i]]))
+    keys = paste(columns, collapse = ",")
+    alias = paste0("__dbglm_d", i)
+    paste0(" JOIN (SELECT ", keys, ", DENSE_RANK() OVER (ORDER BY ", keys,
+      ") AS ", fe[i], " FROM (SELECT DISTINCT ", keys, " FROM ", source, ") __dbglm_k) ", alias, " ON ",
+      paste(sprintf("__dbglm_r.%s = %s.%s", columns, alias, columns), collapse = " AND "))
+  }, character(1))
+  paste0("SELECT __dbglm_r.*, ", paste(sprintf("__dbglm_d%d.%s", seq_along(fe), fe), collapse = ", "),
+    " FROM ", source, " __dbglm_r", paste(joins, collapse = ""))
+}
+
 #' Untransformed estimation frame
 #'
 #' Selects the outcome, regressors (aliased to `x_names`), weights and cluster

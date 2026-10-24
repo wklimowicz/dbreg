@@ -64,14 +64,15 @@ export_retained_sample = function(conn, table, keys, from_statement, public_name
 prepare_linear_sample = function(inputs, from_statement, variables) {
   keys = inputs[["row_id"]]
   table = inputs[["sample_table"]]
-  if (is.null(keys) && is.null(table)) return(from_statement)
+  prediction = identical(inputs[["retain"]], "prediction") && length(inputs[["fe_labels"]]) > 0L
+  if (is.null(keys) && is.null(table) && !prediction) return(from_statement)
   conn = inputs[["conn"]]
-  if (!is.null(table)) {
+  if (!is.null(table) || prediction) {
     backend = detect_backend(conn)
     if (backend[["name"]] != "duckdb" && !isTRUE(backend[["is_databricks"]])) {
-      stop("Sample exports currently support DuckDB and native Databricks.", call. = FALSE)
+      stop("Sample snapshots currently support DuckDB and native Databricks.", call. = FALSE)
     }
-    if (sample_table_exists(conn, table)) stop("Sample export table already exists.", call. = FALSE)
+    if (!is.null(table) && sample_table_exists(conn, table)) stop("Sample export table already exists.", call. = FALSE)
     resources = inputs[["sample_resources"]]
     resources[["conn"]] = conn
     columns = unique(c(variables, keys))

@@ -86,7 +86,12 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
 #' 
 #' @section Predicting on "demean" strategy objects:
 #' 
-#' Predictions from `"demean"` strategy models carry two important caveats:
+#' With `retain = "prediction"`, predictions use learned training effects,
+#' preserve newdata order and require neither outcomes nor fitting weights.
+#' Unknown FE keys and combinations outside the identified joint design span
+#' return `NA`. This bounded portable state supports `interval = "none"` only.
+#'
+#' Without prediction retention, `"demean"` models carry two caveats:
 #' 
 #' 1. Predictions require group means to transform back to the original scale.
 #' If `newdata` contains the outcome variable, group means are computed from
@@ -125,6 +130,9 @@ predict.dbreg = function(
 ) {
   check_unused_args(list(...))
   interval = match.arg(interval)
+  stored_compression = identical(object[["strategy"]], "compress") &&
+    (is.null(newdata) || identical(newdata, object[["data"]]))
+  if (!is.null(object[["fitted_state"]]) && !stored_compression) return(predict_linear_state(object, newdata, interval))
   strategy = object[["strategy"]] 
 
   # Demean strategy doesn't support intervals (FE uncertainty not available)

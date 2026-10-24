@@ -24,7 +24,8 @@ hashes = tools::md5sum(sources)
 write.csv(data.frame(file = names(hashes), md5 = unname(hashes)), file.path(out, "source-md5.csv"), row.names = FALSE)
 suites = c("test_glm_databricks_live.R", "test_glm_databricks_sample.R", "test_fe_edges_live.R",
   "test_ap_moments_live.R", "test_glm_stress_live.R", "test_glm_separation_live.R", "test_glm_wide_live.R", "test_linear_design_live.R",
-  "test_glm_fractional_live.R", "test_sample_identity_live.R", "test_prediction_state_live.R", "test_prediction_snapshot_live.R")
+  "test_glm_fractional_live.R", "test_sample_identity_live.R", "test_prediction_state_live.R", "test_prediction_snapshot_live.R",
+  "test_linear_prediction_live.R")
 if (length(args) > 1L) {
   requested = args[-1L]
   if (anyDuplicated(requested) || any(!requested %in% suites)) {

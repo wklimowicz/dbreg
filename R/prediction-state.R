@@ -59,7 +59,7 @@ prediction_fe_dictionary = function(conn, retained, fe, components, limit, publi
     " FROM ", retained, " LIMIT 1"))
   types = vapply(sql_types, function(type) {
     type = tolower(type[[1]])
-    if (grepl("^(tinyint|smallint|int|integer|bigint|hugeint|u(tinyint|smallint|integer|bigint))$", type)) "integer" else
+    if (grepl("^(tinyint|smallint|int|integer|bigint|hugeint|u(tinyint|smallint|integer|bigint|hugeint)|decimal\\([0-9]+,0\\))$", type)) "integer" else
     if (type %in% c("double", "double precision")) "numeric" else
     if (type %in% c("float", "real")) "float" else
     if (type %in% c("boolean", "bool")) "logical" else
@@ -71,9 +71,11 @@ prediction_fe_dictionary = function(conn, retained, fe, components, limit, publi
     if (types[i] == "integer") value = paste0("CAST(", value, " AS STRING)")
     paste(value, "AS", paste0("k", i))
   }, character(1))
+  max_rows = floor(limit / (length(components) + 1L))
+  if (max_rows < 1L) prediction_state_overflow()
   dictionary = dbglm_get_query(conn, paste0("SELECT DISTINCT ", fe, " AS id,", paste(fields, collapse = ","),
-    " FROM ", retained, " ORDER BY id LIMIT ", sprintf("%.0f", limit + 1)))
-  if (nrow(dictionary) * (length(components) + 1L) > limit) prediction_state_overflow()
+    " FROM ", retained, " ORDER BY id LIMIT ", sprintf("%.0f", max_rows + 1)))
+  if (nrow(dictionary) > max_rows) prediction_state_overflow()
   keys = prediction_tuple_key(dictionary[paste0("k", seq_along(components))], types)
   if (anyNA(keys) || anyDuplicated(keys) || anyDuplicated(dictionary[["id"]])) {
     stop("Could not preserve the fitted FE key dictionary exactly.", call. = FALSE)
@@ -81,9 +83,12 @@ prediction_fe_dictionary = function(conn, retained, fe, components, limit, publi
   list(columns = public_components, types = unname(types), key = keys, id = dictionary[["id"]])
 }
 
-dbglm_prediction_state = function(conn, working, retained, fe, components, x, design_names,
+dbglm_prediction_state = function(...) build_prediction_state(...)
+
+build_prediction_state = function(conn, working, retained, fe, components, x, design_names,
                                   center, trend_aliases, sizes, create, drop, n,
-                                  dictionary_components = components) {
+                                  dictionary_components = components, beta = NULL,
+                                  expected_rss = NULL, constant = 0) {
   limit = prediction_state_limit()
   max_rows = getOption("dbreg.duckdb_ap_max_edges", 1e6)
   dbglm_validate_moment_limits(max_rows, limit)
@@ -144,6 +149,7 @@ dbglm_prediction_state = function(conn, working, retained, fe, components, x, de
   cross = dbglm_read_information(global, length(columns))
   p = length(x)
   fe_n = sys[["n"]]
+  fe_system = sys
   if (p) {
     old_rest = sys[["rest"]]
     bx = B[, seq_len(p), drop = FALSE]
@@ -156,11 +162,24 @@ dbglm_prediction_state = function(conn, working, retained, fe, components, x, de
   }
   rhs = matrix(c(B[, p + 1L], if (p) cross[seq_len(p), p + 1L]), ncol = 1L)
   solver = dbglm_fe_solver(sys, new.env(parent = emptyenv()), retain_null = TRUE)
-  rhs = solver[["project"]](rhs)
-  coefficients = solver[["solve"]](rhs)
-  # Refine equations with the existing block operator, independently of which
-  # projector fitted the GLM (including forced SQL projection).
-  for (i in seq_len(3L)) coefficients = coefficients + solver[["solve"]](rhs - dbglm_fe_multiply(sys, coefficients))
+  if (is.null(beta)) {
+    rhs = solver[["project"]](rhs)
+    coefficients = solver[["solve"]](rhs)
+    # Recover the fitted GLM predictor, independently of its fitting projector.
+    for (i in seq_len(3L)) coefficients = coefficients + solver[["solve"]](rhs - dbglm_fe_multiply(sys, coefficients))
+  } else {
+    # OLS already supplies its fitted slopes. Solve only the nuisance equations
+    # for y-Xb, preserving those slopes and their original estimation strategy.
+    if (length(beta) != p || any(!is.finite(beta)) || is.null(expected_rss)) {
+      stop("OLS prediction recovery requires fitted slopes and residual sum of squares.", call. = FALSE)
+    }
+    fe_solver = dbglm_fe_solver(fe_system, new.env(parent = emptyenv()))
+    residual_rhs = matrix(B[, p + 1L] - B[, seq_len(p), drop = FALSE] %*% beta, ncol = 1L)
+    residual_rhs = fe_solver[["project"]](residual_rhs)
+    gamma = fe_solver[["solve"]](residual_rhs)
+    for (i in seq_len(3L)) gamma = gamma + fe_solver[["solve"]](residual_rhs - dbglm_fe_multiply(fe_system, gamma))
+    coefficients = matrix(c(gamma, beta), ncol = 1L)
+  }
   if (any(!is.finite(coefficients))) stop("Prediction coefficient recovery is nonfinite.", call. = FALSE)
   frame = dbglm_coefficient_frame(info, coefficients[seq_len(fe_n), , drop = FALSE])
   lookup = dbglm_coefficient_lookup(conn, frame, create)
@@ -168,12 +187,24 @@ dbglm_prediction_state = function(conn, working, retained, fe, components, x, de
   joins = vapply(seq_along(ops), function(i) paste0(" LEFT JOIN pred_g", i, " ON s.", ops[[i]][["f"]], "=pred_g", i, ".__glm_group"), character(1))
   terms = c(if (p) sprintf("(%s)*s.%s", dbglm_number(coefficients[fe_n + seq_len(p)]), x),
     vapply(seq_along(ops), function(i) sprintf("(%s)*pred_g%d.c1", if (ops[[i]][["v"]] == "1.0") "1.0" else paste0("s.", ops[[i]][["v"]]), i), character(1)))
-  error = dbglm_get_query(conn, paste0("WITH ", paste(ctes, collapse = ","), " SELECT MAX(ABS((",
-    paste(terms, collapse = "+"), ")-s.__dbglm_prediction_target)) AS error,MAX(ABS(s.__dbglm_prediction_target)) AS scale FROM ",
+  residual = paste0("((", paste(terms, collapse = "+"), ")-s.__dbglm_prediction_target)")
+  diagnostics = if (is.null(expected_rss)) paste0("MAX(ABS(", residual,
+    ")) AS error,MAX(ABS(s.__dbglm_prediction_target)) AS scale") else
+    paste0("FSUM(s.w*POWER(", residual, ",2)) AS rss")
+  error = dbglm_get_query(conn, paste0("WITH ", paste(ctes, collapse = ","), " SELECT ", diagnostics, " FROM ",
     source, " s", paste(joins, collapse = "")))
   for (table in lookup[["tables"]]) drop(table)
-  if (!is.finite(error[["error"]]) || error[["error"]] > 1e-7 * max(1, error[["scale"]])) {
-    stop("Recovered prediction state does not reproduce the fitted linear predictor.", call. = FALSE)
+  if (is.null(expected_rss)) {
+    recovery_error = error[["error"]]
+    if (!is.finite(recovery_error) || recovery_error > 1e-7 * max(1, error[["scale"]])) {
+      stop("Recovered prediction state does not reproduce the fitted linear predictor.", call. = FALSE)
+    }
+  } else {
+    recovery_error = abs(error[["rss"]] - expected_rss)
+    if (!is.finite(recovery_error) || recovery_error > 1e-6 * max(1, abs(expected_rss), cross[p + 1L, p + 1L])) {
+      stop("Recovered OLS effects do not reproduce the fitted residual sum of squares (recovered=",
+        signif(error[["rss"]], 9), ", fitted=", signif(expected_rss, 9), ").", call. = FALSE)
+    }
   }
   dictionaries = lapply(seq_along(fe), function(i) {
     prediction_fe_dictionary(conn, retained, fe[i], unique(dictionary_components[[i]]),
@@ -184,17 +215,23 @@ dbglm_prediction_state = function(conn, working, retained, fe, components, x, de
     coefficients = list(joint = as.numeric(coefficients), starts = sys[["starts"]],
       ids = lapply(info, `[[`, "id"), fe_n = fe_n),
     sample = list(nobs = n), inference = NULL, resources = NULL,
-    prediction = list(null_basis = solver[["null_basis"]], tolerance = 1e-7, recovery_error = error[["error"]]))
+    prediction = list(null_basis = solver[["null_basis"]], tolerance = 1e-7,
+      recovery_error = recovery_error, recovery_kind = if (is.null(expected_rss)) "linear_predictor" else "rss", constant = constant))
 }
 
-predict_from_fitted_state = function(state, design, data) {
+prediction_match_groups = function(state, data) {
+  if (!identical(state[["version"]], 1L)) stop("Unsupported fitted-state version.", call. = FALSE)
+  lapply(state[["specification"]][["dictionaries"]], function(dictionary) {
+    match(prediction_tuple_key(data[dictionary[["columns"]]], dictionary[["types"]]), dictionary[["key"]])
+  })
+}
+
+predict_from_fitted_state = function(state, design, data, groups = NULL) {
   if (!identical(state[["version"]], 1L)) stop("Unsupported fitted-state version.", call. = FALSE)
   specification = state[["specification"]]
   coef = state[["coefficients"]]
   x = sweep(design[, specification[["design_names"]], drop = FALSE], 2L, specification[["design_center"]], "-")
-  groups = lapply(specification[["dictionaries"]], function(dictionary) {
-    match(prediction_tuple_key(data[dictionary[["columns"]]], dictionary[["types"]]), dictionary[["key"]])
-  })
+  if (is.null(groups)) groups = prediction_match_groups(state, data)
   ops = specification[["operations"]]
   indices = values = vector("list", length(ops))
   for (i in seq_along(ops)) {
@@ -204,6 +241,7 @@ predict_from_fitted_state = function(state, design, data) {
     values[[i]] = if (is.null(ops[[i]][["variable"]])) rep(1, nrow(data)) else as.numeric(data[[ops[[i]][["variable"]]]])
   }
   prediction = as.vector(x %*% coef[["joint"]][coef[["fe_n"]] + seq_len(ncol(x))])
+  if (!is.null(state[["prediction"]][["constant"]])) prediction = prediction + state[["prediction"]][["constant"]]
   norm = rowSums(x * x)
   for (i in seq_along(ops)) {
     prediction = prediction + values[[i]] * coef[["joint"]][indices[[i]]]

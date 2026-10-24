@@ -120,6 +120,7 @@ execute_demean_strategy = function(inputs) {
   register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]])
   
   frame = build_demean_frame(inputs, xvars_sql, xvar_names)
+  if (inherits(frame, "dbreg_query_plan")) return(frame)
   on.exit(frame[["cleanup"]](), add = TRUE)
   demean_sql = frame_moments_sql(frame, yvar, xvar_names, conn)
   if (sql_only) {

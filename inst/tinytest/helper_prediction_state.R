@@ -137,3 +137,28 @@ dbglm_test_prediction_weight_scale = function(conn) {
     }
   }
 }
+
+# Remove the caller's source after IRLS and before dictionary recovery. The
+# typed keys must come from the very same owned frame that supplied fitting.
+dbglm_test_prediction_snapshot = function(conn) {
+  before = dbglm_validation_tables(conn)
+  d = data.frame(g = rep(1:4, each = 40), x = rep(c(-1, 0, 1, 2), 40),
+    y = rep(c(0, 1, 2, 1), 40))
+  d[["y"]] = d[["y"]] + d[["g"]] - 1
+  table = dbglm_validation_upload(conn, d)
+  on.exit(dbglm_validation_drop(conn, table), add = TRUE)
+  original = get("dbglm_prediction_state", asNamespace("dbreg"))
+  recover = function(...) {
+    dbglm_validation_drop(conn, table)
+    original(...)
+  }
+  assignInNamespace("dbglm_prediction_state", recover, "dbreg")
+  on.exit(assignInNamespace("dbglm_prediction_state", original, "dbreg"), add = TRUE)
+  fit = dbglm(y ~ x | g, conn = conn, table = table, family = poisson(), retain = "prediction", fixef_rm = "none")
+  assignInNamespace("dbglm_prediction_state", original, "dbreg")
+  newdata = d[c(1, 41, 81, 121), c("g", "x")]
+  ref = fixest::feglm(y ~ x | g, d, family = poisson(), fixef.rm = "none", notes = FALSE)
+  expect_equal(predict(fit, newdata), unname(predict(ref, newdata, type = "link")), tolerance = 1e-6)
+  expect_identical(dbglm_validation_tables(conn), before)
+  expect_true(DBI::dbIsValid(conn))
+}

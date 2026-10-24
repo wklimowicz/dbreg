@@ -44,7 +44,16 @@ prediction_tuple_key = function(data, types) {
   key
 }
 
-prediction_fe_dictionary = function(conn, retained, fe, components, limit) {
+prediction_key_fields = function(conn, components) {
+  components = lapply(components, unique)
+  columns = lapply(seq_along(components), function(i) paste0("__dbglm_key_fe", i, "_", seq_along(components[[i]])))
+  fields = unlist(lapply(seq_along(components), function(i) {
+    paste(as.character(DBI::dbQuoteIdentifier(conn, components[[i]])), "AS", columns[[i]])
+  }), use.names = FALSE)
+  list(fields = fields, columns = columns)
+}
+
+prediction_fe_dictionary = function(conn, retained, fe, components, limit, public_components = components) {
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
   sql_types = dbglm_get_query(conn, paste0("SELECT ", paste0("typeof(", q(components), ") AS t", seq_along(components), collapse = ","),
     " FROM ", retained, " LIMIT 1"))
@@ -69,11 +78,12 @@ prediction_fe_dictionary = function(conn, retained, fe, components, limit) {
   if (anyNA(keys) || anyDuplicated(keys) || anyDuplicated(dictionary[["id"]])) {
     stop("Could not preserve the fitted FE key dictionary exactly.", call. = FALSE)
   }
-  list(columns = components, types = unname(types), key = keys, id = dictionary[["id"]])
+  list(columns = public_components, types = unname(types), key = keys, id = dictionary[["id"]])
 }
 
 dbglm_prediction_state = function(conn, working, retained, fe, components, x, design_names,
-                                  center, trend_aliases, sizes, create, drop, n) {
+                                  center, trend_aliases, sizes, create, drop, n,
+                                  dictionary_components = components) {
   limit = prediction_state_limit()
   max_rows = getOption("dbreg.duckdb_ap_max_edges", 1e6)
   dbglm_validate_moment_limits(max_rows, limit)
@@ -166,7 +176,8 @@ dbglm_prediction_state = function(conn, working, retained, fe, components, x, de
     stop("Recovered prediction state does not reproduce the fitted linear predictor.", call. = FALSE)
   }
   dictionaries = lapply(seq_along(fe), function(i) {
-    prediction_fe_dictionary(conn, retained, fe[i], unique(components[[i]]), floor(limit / length(fe)))
+    prediction_fe_dictionary(conn, retained, fe[i], unique(dictionary_components[[i]]),
+      floor(limit / length(fe)), public_components = unique(components[[i]]))
   })
   list(version = 1L, specification = list(design_names = design_names, design_center = unname(center),
       dictionaries = dictionaries, operations = lapply(ops, function(op) op[c("group", "variable")])),

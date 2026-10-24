@@ -52,6 +52,7 @@
 #' @param drop_missings Logical indicating whether incomplete cases should be
 #'   dropped.
 #' @param verbose Logical indicating whether progress messages are printed.
+#' @inheritParams dbreg
 #' @param ... Additional unused arguments.
 #'
 #' @return A list of class `"dbivreg"` and `"dbreg"`.
@@ -73,6 +74,9 @@ dbivreg = function(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
+  diagnostics = FALSE,
   ...
 ) {
   verbose = isTRUE(verbose)
@@ -113,7 +117,7 @@ dbivreg = function(
     c(
       "fml", "conn", "table", "data", "path", "weights", "vcov_type_req",
       "cluster_var", "ssc", "strategy", "compress_ratio", "compress_nmax",
-      "sql_only", "data_only", "drop_missings", "verbose"
+      "sql_only", "data_only", "drop_missings", "verbose", "fe_tol", "fe_max_iter", "diagnostics"
     )
   )
   # Release any connection/registration we create, including on errors during
@@ -121,6 +125,7 @@ dbivreg = function(
   on.exit(release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]]), add = TRUE)
 
   # Process and validate inputs (writes parsed/derived fields into `inputs`)
+  validate_fit_diagnostics(inputs)
   process_dbivreg_inputs(inputs)
 
   chosen_strategy = choose_dbivreg_strategy(inputs)
@@ -186,6 +191,11 @@ process_dbivreg_inputs = function(inputs) {
   # In-memory data are checked by (display) column name; otherwise the database
   # is probed using the (safe) source names
   validate_weights(if (is.null(data)) weights else weights_display, data, conn, from_statement)
+  inputs[["weights"]] = weights
+  inputs[["sample_diagnostics"]] = sample_diagnostics(inputs, from_statement,
+    list(outcome = yvar, regressor = parsed_fml[["exog_vars"]],
+      endogenous = parsed_fml[["endog_vars"]], instrument = parsed_fml[["instr_vars"]],
+      fixed_effect = fe, weight = weights, cluster = cluster_var))
   from_statement = filter_estimation_sample(
     from_statement,
     vars = c(

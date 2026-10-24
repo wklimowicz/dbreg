@@ -1,3 +1,13 @@
+# Fixest compatibility (development branch)
+
+- `dbglm()` accepts nonnegative fractional observation weights for all supported
+  families. Fitting and inference use the original weights; `nobs()` counts
+  retained observations. For fractional binomial weights, `logLik()` matches
+  fixest/R's rounded-weight reporting convention. Use
+  `logLik(model, type = "weighted")` for the unrounded objective.
+- See `inst/FIXEST-COMPATIBILITY.txt` for the staged compatibility contract and
+  outstanding prediction, formula, inference and fitted-state work.
+
 ## Additional linear-model improvements
 
 - OLS supports restricted square/cube terms, explicit factor references and

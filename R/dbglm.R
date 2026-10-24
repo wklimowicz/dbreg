@@ -56,8 +56,10 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #' @param family A built-in `binomial("cloglog")` (default), `binomial("logit")`,
 #'   `binomial("probit")`, or `poisson("log")`. Poisson responses must be
 #'   nonnegative integer counts; binomial responses must be zero or one.
-#' @param weights Optional column of nonnegative integer frequency weights.
-#'   Zero weights are omitted. Fractional original weights are not yet supported.
+#' @param weights Optional column of nonnegative observation weights, including
+#'   fractional weights. Zero weights are omitted. Weights multiply each row's
+#'   log likelihood and score; observation counts are counts of retained rows,
+#'   not sums of weights. See the likelihood conventions below.
 #' @param offset Optional numeric column entering the predictor with coefficient one.
 #' @param factor_refs Optional named categorical reference levels, as in [dbreg()].
 #' @param vcov `"iid"`, `"hc1"`, or a one-sided formula naming one cluster column.
@@ -87,8 +89,20 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   error rather than returning ordinary successful inference. These checks
 #'   do not constitute a complete general separation detector. Absorbed fits
 #'   support coefficients and inference; new-row prediction with absorbed effects
-#'   is not yet implemented. Grouped binomial responses, fractional original
-#'   weights and categorical no-intercept models remain unsupported.
+#'   is not yet implemented. Grouped binomial responses and categorical
+#'   no-intercept models remain unsupported.
+#'   For binomial models, [logLik()] follows the `fixest::feglm()` / R binomial
+#'   AIC convention: original weights are rounded to integers (ties to even)
+#'   when reporting the likelihood. Fitting, deviance and covariance always use
+#'   the unrounded weights. Use `logLik(model, type = "weighted")` for the
+#'   weighted Bernoulli objective actually optimized. For Poisson models and
+#'   integer-weight binomial models the two likelihoods coincide.
+#'   If all retained weights are below one, fitting rescales them by a power
+#'   of two to avoid premature convergence and loss of precision for very small
+#'   weights. The divisor is recorded in `weight_scale`. Likelihood, deviance
+#'   and IID covariance are returned on the original weight scale; sandwich
+#'   covariances are invariant to this rescaling. Score diagnostics use the
+#'   internal scale.
 #'   With absorbed effects, expanded regressor columns are centered internally
 #'   before forming projection moments. Their slopes, units and covariance are
 #'   unchanged; the retained column centers are recorded in `design_center`.
@@ -229,17 +243,19 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   invalid_message = if (family[["family"]] == "poisson") "Poisson outcomes must be nonnegative integers." else "Binomial outcomes must be zero or one."
   w_bad_sql = if (!is.null(weights)) {
     w = quote_id(weights)
-    paste0("SUM(CASE WHEN ", w, " < 0 OR (isfinite(", w, ") AND ", w, " != FLOOR(", w, ")) THEN 1 ELSE 0 END) AS bad_w, ")
-  } else "0 AS bad_w, "
+    paste0("SUM(CASE WHEN ", w, " < 0 THEN 1 ELSE 0 END) AS bad_w, ",
+      "SUM(CASE WHEN ", elig_cond, " AND ", w, " != FLOOR(", w, ") THEN 1 ELSE 0 END) AS fractional_w, ")
+  } else "0 AS bad_w, 0 AS fractional_w, "
   snap_info = dbglm_get_query(conn, paste0(
     "SELECT COUNT(*) AS n_input, ", w_bad_sql,
+    "MAX(CASE WHEN ", elig_cond, " THEN ", if (is.null(weights)) "1.0" else quote_id(weights), " END) AS weight_max, ",
     "SUM(CASE WHEN ", elig_cond, " THEN 1 ELSE 0 END) AS n_elig, ",
     "SUM(CASE WHEN (", elig_cond, ") AND (", invalid_y, ") THEN 1 ELSE 0 END) AS bad_y, ",
     "MIN(CASE WHEN ", elig_cond, " THEN ", outcome, " END) AS ymin, ",
     "MAX(CASE WHEN ", elig_cond, " THEN ", outcome, " END) AS ymax FROM ", snapshot
   ))
   count_input = as.numeric(snap_info[["n_input"]])
-  if (!is.na(snap_info[["bad_w"]]) && snap_info[["bad_w"]] > 0) stop("Original weights must be nonnegative integer frequency weights.", call. = FALSE)
+  if (!is.na(snap_info[["bad_w"]]) && snap_info[["bad_w"]] > 0) stop("Original weights must be nonnegative.", call. = FALSE)
   n_eligible = if (is.na(snap_info[["n_elig"]])) 0 else as.numeric(snap_info[["n_elig"]])
   if (!is.na(snap_info[["bad_y"]]) && snap_info[["bad_y"]] > 0) stop(invalid_message, call. = FALSE)
   retained = create(paste("SELECT * FROM", snapshot, "WHERE", elig_cond), materialize = FALSE)
@@ -271,14 +287,21 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   retained = pruning[["table"]]
   from = paste("FROM", retained)
   if (pruning[["rounds"]] == 0L) {
-    sample = list(n = n_eligible, ymin = snap_info[["ymin"]], ymax = snap_info[["ymax"]], bad = 0)
+    sample = list(n = n_eligible, ymin = snap_info[["ymin"]], ymax = snap_info[["ymax"]],
+      weight_max = snap_info[["weight_max"]], bad = 0)
   } else {
     sample = dbglm_get_query(conn, paste("SELECT COUNT(*) AS n, MIN(", quote_id(parsed[["yvar"]]),
       ") AS ymin, MAX(", quote_id(parsed[["yvar"]]), ") AS ymax, SUM(CASE WHEN",
-      invalid_y, "THEN 1 ELSE 0 END) AS bad", from))
+      invalid_y, "THEN 1 ELSE 0 END) AS bad, MAX(",
+      if (is.null(weights)) "1.0" else quote_id(weights), ") AS weight_max", from))
   }
   n = as.numeric(sample[["n"]])
   if (n == 0) stop("No complete positive-weight observations remain.", call. = FALSE)
+  # A binary power preserves representable input weights exactly, including
+  # the half-integer ties used only for binomial likelihood reporting. Scaling
+  # before the first WLS solve also protects SQL aggregate/FE certification.
+  weight_max = as.numeric(sample[["weight_max"]])
+  weight_scale = if (weight_max < 1) 2^floor(log2(weight_max)) else 1
   if (sample[["bad"]] > 0) stop(invalid_message, call. = FALSE)
   if (has_intercept && (family[["family"]] == "poisson" && sample[["ymax"]] == 0 ||
     family[["family"]] == "binomial" && sample[["ymin"]] == sample[["ymax"]])) {
@@ -309,7 +332,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   if (!length(x) && !length(fe)) stop("No GLM design columns were specified.", call. = FALSE)
   trend_fields = vapply(trend_sources, function(v) paste0("CAST(", quote_id(v), " AS DOUBLE) AS ", trend_aliases[[v]]), character(1))
   fields = c("__dbglm_key", fe, trend_fields, sprintf("CAST((%s) AS DOUBLE) AS %s", quote_id(parsed[["yvar"]]), "__dbglm_y"),
-    sprintf("CAST((%s) AS DOUBLE) AS __dbglm_a", if (is.null(weights)) "1.0" else quote_id(weights)),
+    sprintf("CAST((%s) AS DOUBLE)/(%s) AS __dbglm_a", if (is.null(weights)) "1.0" else quote_id(weights), dbglm_number(weight_scale)),
     sprintf("CAST((%s) AS DOUBLE) AS __dbglm_o", if (is.null(offset)) "0.0" else quote_id(offset)),
     if (has_intercept) "CAST(1.0 AS DOUBLE) AS __dbglm_intercept",
     sprintf("CAST((%s) AS DOUBLE) AS %s", spec[["columns"]][["sql"]], spec[["columns"]][["alias"]]),
@@ -392,6 +415,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   public = display(public)
   all_names = display(all_names)
   V = covariance_result[["matrix"]]
+  if (covariance[["vcov_type"]] == "iid") V = V / weight_scale
   if (!isFALSE(fit[["finite_mle"]]) && (any(!is.finite(V)) || any(diag(V) < 0))) {
     stop("GLM covariance is invalid; check identification and weight scale.", call. = FALSE)
   }
@@ -426,6 +450,13 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   call[["sample_table"]] = sample_table
   call = as.call(call)
   saturated_loglik = if (family[["family"]] == "poisson") dbglm_saturated_loglik(conn, base) else 0
+  weighted_loglik = (saturated_loglik - fit[["deviance"]] / 2) * weight_scale
+  reported_loglik = weighted_loglik
+  if (family[["family"]] == "binomial" && isTRUE(snap_info[["fractional_w"]] > 0)) {
+    working = if (length(fe)) fit[["working"]] else paste0("(",
+      dbglm_working_sql(base, x, fit[["beta"]], family[["link"]]), "SELECT * FROM working)")
+    reported_loglik = dbglm_binomial_loglik(conn, working, weight_scale)
+  }
   result = list(coeftable = coeftable, vcov = V, collin.coef = full,
     collin.var = setdiff(all_names, public), coef_names = public, coef_names_all = all_names,
     family = family, fml = saved_formula, model_spec = spec, has_intercept = has_intercept,
@@ -434,10 +465,11 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     n_params_model = counts[["model"]], n_params_vcov = counts[["covariance"]], n_slopes = sum(public != "(Intercept)"),
     df_residual = n - counts[["model"]], vcov_type = covariance[["vcov_type"]],
     cluster_var = covariance[["cluster_var"]], n_clusters = covariance_result[["clusters"]], ssc = ssc,
-    loglik = saturated_loglik - fit[["deviance"]] / 2, deviance = fit[["deviance"]], converged = !isFALSE(fit[["converged"]]),
+    loglik = reported_loglik, weighted_loglik = weighted_loglik, weight_scale = weight_scale,
+    deviance = fit[["deviance"]] * weight_scale, converged = !isFALSE(fit[["converged"]]),
     finite_mle = !isFALSE(fit[["finite_mle"]]), separation = separation,
     iterations = fit[["iterations"]], score_max = fit[["score_max"]],
-    deviance_history = fit[["deviance_history"]], step_halvings = fit[["step_halvings"]],
+    deviance_history = fit[["deviance_history"]] * weight_scale, step_halvings = fit[["step_halvings"]],
     control = control, strategy = "irls", fe = if (length(fe)) display(parsed[["fe_labels"]]) else NULL,
     n_fe_levels = stats::setNames(counts[["sizes"]], display(parsed[["fe_labels"]])), fe_nested = counts[["nested"]],
     design_center = stats::setNames(unname(design_center[keep]), public),

@@ -1,0 +1,10 @@
+source(system.file("tinytest/helper_glm_reference.R", package = "dbreg"), local = TRUE)
+source(system.file("tinytest/helper_glm_validation.R", package = "dbreg"), local = TRUE)
+source(system.file("tinytest/helper_glm_fractional.R", package = "dbreg"), local = TRUE)
+local({
+  conn = dbglm_validation_connection()
+  on.exit(DBI::dbDisconnect(conn, shutdown = TRUE))
+  dbglm_test_fractional_weights(conn)
+  dbglm_test_fractional_scale(conn)
+  dbglm_test_fractional_mutation(conn)
+})

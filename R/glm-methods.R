@@ -37,10 +37,17 @@ df.residual.dbglm = function(object, ...) object[["df_residual"]]
 #' @param level Confidence level.
 #' @param fe Must be `FALSE` for GLM confidence intervals. This argument is
 #'   accepted for shared tidying; absorbed-effect intervals are not supported.
+#' @param vcov,cluster,ssc,vcov_fix Optional post-fit covariance controls, as in
+#'   [summary.dbreg()]. New requests require `retain="all"`.
 #' @export
-confint.dbglm = function(object, parm, level = 0.95, fe = FALSE, ...) {
+confint.dbglm = function(object, parm, level = 0.95, fe = FALSE,
+  vcov = NULL, cluster = NULL, ssc = NULL, vcov_fix = TRUE, ...) {
   check_unused_args(list(...))
   if (!identical(fe, FALSE)) stop("Absorbed-effect confidence intervals are not supported; use `fe = FALSE`.", call. = FALSE)
+  if (!is.null(vcov) || !is.null(cluster) || !is.null(ssc) || !identical(vcov_fix, TRUE) || isTRUE(object[["postfit_covariance"]])) {
+    V = vcov.dbreg(object, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)
+    return(inference_confint(object, V, if (missing(parm)) NULL else parm, level))
+  }
   if (!is.numeric(level) || length(level) != 1 || !is.finite(level) || level <= 0 || level >= 1) {
     stop("`level` must lie strictly between zero and one.", call. = FALSE)
   }
@@ -64,16 +71,21 @@ confint.dbglm = function(object, parm, level = 0.95, fe = FALSE, ...) {
 #'   argument selects keyed database output; see [dbreg-prediction].
 #' @param prediction_table Optional caller-named output session table. Requires
 #'   a caller-owned connection and must not already exist.
+#' @param sample Without `newdata`, returns fitted estimation rows or original
+#'   rows with omitted positions missing; requires `retain="all"`.
 #' @export
 predict.dbglm = function(object, newdata = NULL, type = c("link", "response"),
-  conn = NULL, table = NULL, path = NULL, row_id = NULL, prediction_table = NULL, ...) {
+  conn = NULL, table = NULL, path = NULL, row_id = NULL, prediction_table = NULL,
+  sample = c("estimation", "original"), ...) {
   check_unused_args(list(...))
   type = match.arg(type)
+  sample = match.arg(sample)
   if (any(!vapply(list(conn, table, path, row_id, prediction_table), is.null, logical(1)))) {
     return(predict_sql(object, newdata, conn, table, path, row_id, prediction_table, type))
   }
+  if (is.null(newdata) && !is.null(object[["fitted_state"]][["inference"]])) return(predict_retained_sample(object, type, sample))
   if (is.null(newdata)) stop("`newdata` is required; dbglm does not retain input rows.", call. = FALSE)
-  if (length(object[["fe"]]) && is.null(object[["fitted_state"]])) {
+  if (length(object[["fe"]]) && is.null(object[["fitted_state"]][["prediction"]])) {
     stop("New-row prediction for absorbed GLMs requires fitting with retain='prediction'.", call. = FALSE)
   }
   newdata = as.data.frame(newdata)
@@ -83,6 +95,7 @@ predict.dbglm = function(object, newdata = NULL, type = c("link", "response"),
     newdata[[a]] = newdata[[source]]
   }
   state = object[["fitted_state"]]
+  if (is.null(state[["prediction"]])) state = NULL
   database = identical(state[["prediction"]][["storage"]], "database")
   if (database) fitted_resource_connection(object[["resource_state"]])
   required = unique(c(object[["model_spec"]][["source_vars"]], object[["offset"]],

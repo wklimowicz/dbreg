@@ -34,6 +34,7 @@ prediction_dataframe_source = function(object, data, required) {
 
 sql_prediction_context = function(object, conn, dataframe_labels = NULL) {
   state = object[["fitted_state"]]
+  if (is.null(state[["prediction"]])) state = NULL
   if (length(object[["fe"]]) && is.null(state)) {
     stop("Database prediction with fixed effects requires fitting with retain='prediction'.", call. = FALSE)
   }

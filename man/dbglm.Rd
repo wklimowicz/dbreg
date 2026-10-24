@@ -23,7 +23,7 @@ dbglm(
   row_id = NULL,
   sample_table = NULL,
   separation = c("error", "prediction"),
-  retain = c("none", "prediction")
+  retain = c("none", "prediction", "all")
 )
 }
 \arguments{
@@ -87,12 +87,17 @@ without varying slopes can keep oversized dictionaries in SQL instead.
 That state needs its live owning session, cannot be restored with
 `saveRDS()`, and can be released with [close()]. Other oversized designs
 error instead of collecting the panel. Two-FE recovery uses the fitted
-projection iteration limit and a tolerance at least as strict as `1e-10`.}
+projection iteration limit and a tolerance at least as strict as `1e-10`.
+`"all"` also saves original rows, fitted predictors, residuals and scores
+in an owned database relation, enabling default/sample prediction, [obs()],
+[residuals()] and post-fit covariance via [summary()]. It requires a finite
+fit, adds row-sized backend storage/SQL work and needs its live owning session.
+SQL inputs return keyed relations; R inputs preserve original positions.}
 }
 \value{
 A compact object of class `c("dbglm", "dbreg")`, containing slopes,
-  covariance, log likelihood, sample counts and convergence diagnostics. Input
-  rows are not retained. Database-backed prediction retention keeps its owned
+  covariance, log likelihood, sample counts and convergence diagnostics. Compact
+  modes do not retain input rows. Database-backed retention keeps its owned
   dictionary and live connection until [close()] or garbage collection.
 }
 \description{

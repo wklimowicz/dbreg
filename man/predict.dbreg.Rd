@@ -14,6 +14,7 @@
   path = NULL,
   row_id = NULL,
   prediction_table = NULL,
+  sample = c("estimation", "original"),
   ...
 )
 }
@@ -42,6 +43,10 @@ Supplying database arguments or `row_id` selects keyed database output.}
 \item{prediction_table}{Optional caller-named session table receiving output.
 Requires a caller-owned connection and must not already exist. Otherwise
 the result owns its temporary table; see [dbreg-prediction].}
+
+\item{sample}{Without `newdata`, `"estimation"` returns the fitted rows and
+`"original"` includes omitted original rows as missing. Requires `retain="all"`;
+R inputs return ordered vectors and SQL inputs return keyed relations.}
 
 \item{...}{Additional arguments are not supported and produce an error.}
 }

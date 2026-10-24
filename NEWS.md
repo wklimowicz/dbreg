@@ -1,5 +1,14 @@
 # Fixest compatibility (development branch)
 
+- Explicit `retain="all"` saves an immutable database sample and projected scores
+  for default/original-sample prediction, fitted values, residuals and `dbreg::obs()`.
+  SQL inputs return keyed relations; R inputs preserve original positions.
+- `vcov()`, `summary()` and `confint()` can recompute IID, HC1, one-/two-way OLS
+  and one-way GLM covariance on the retained sample, with supported SSC controls.
+  Weighted OLS likelihood matches fixest's unweighted residual-RSS convention.
+  Compact native defaults remain unchanged; full retention uses row-sized SQL
+  storage and requires its owning session for sample-dependent operations.
+
 - `predict()` can return keyed database output on DuckDB/native Databricks using
   `row_id` and `conn`/`table`/`path` or `newdata`. OLS and all four GLM families
   use saved factor coding and learned effects. `head()` previews output and

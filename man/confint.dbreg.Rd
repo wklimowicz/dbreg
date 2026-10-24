@@ -4,7 +4,17 @@
 \alias{confint.dbreg}
 \title{Confidence intervals for dbreg objects}
 \usage{
-\method{confint}{dbreg}(object, parm, level = 0.95, fe = FALSE, ...)
+\method{confint}{dbreg}(
+  object,
+  parm,
+  level = 0.95,
+  fe = FALSE,
+  vcov = NULL,
+  cluster = NULL,
+  ssc = NULL,
+  vcov_fix = TRUE,
+  ...
+)
 }
 \arguments{
 \item{object}{A `dbreg` object.}
@@ -16,6 +26,9 @@ all parameters are considered.}
 \item{level}{the confidence level required. Default is 0.95.}
 
 \item{fe}{Should the fixed effects be included? Default is `FALSE`.}
+
+\item{vcov, cluster, ssc, vcov_fix}{Optional post-fit covariance controls, as in
+[summary.dbreg()]. New requests require `retain="all"` and `fe=FALSE`.}
 
 \item{...}{Only the superseded `fes` argument is accepted. Other arguments
 produce an error.}

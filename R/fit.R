@@ -186,5 +186,6 @@ fit_meats = function(fits, frame, ys, inputs) {
 #' @rdname fit_meats
 #' @param fit,y A single fit and its outcome name.
 fit_meat = function(fit, frame, y, inputs) {
+  retain_linear_score_frame(fit, frame, y, inputs)
   fit_meats(list(fit), frame, y, inputs)[[1]]
 }

@@ -27,7 +27,8 @@ format_vcov_label = function(vcov_type, n_clusters = NULL) {
     vcov_type,
     "iid" = "IID",
     "hc1" = "Heteroskedasticity-robust",
-    "cluster" = if (!is.null(n_clusters)) sprintf("Clustered (%d clusters)", n_clusters) else "Clustered",
+    "cluster" = if (length(n_clusters) > 1L) paste0("Clustered (", paste(n_clusters, collapse = " and "), " clusters)") else
+      if (!is.null(n_clusters)) sprintf("Clustered (%d clusters)", n_clusters) else "Clustered",
     vcov_type
   )
 }

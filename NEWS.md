@@ -14,6 +14,12 @@
 - Saved linear-model formulas and compressed prediction formulas no longer
   capture the caller's data or fit-time connection environment. Existing fitted
   coding and predictions are preserved when serializing compact objects.
+- OLS now supports `row_id` and `sample_table` for retained-key exports on
+  DuckDB and native Databricks. Requested exports fit from an owned snapshot,
+  preserve typed composite/integer64 keys and release temporary fit resources.
+  OLS and GLM share key validation and export helpers. Databricks exports retain
+  nonstandard key names through scoped column mapping and recognize existing
+  session tables before fitting.
 
 ## Additional linear-model improvements
 

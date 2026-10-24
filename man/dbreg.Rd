@@ -25,6 +25,8 @@ dbreg(
   fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   diagnostics = FALSE,
   factor_refs = NULL,
+  row_id = NULL,
+  sample_table = NULL,
   ...
 )
 }
@@ -145,6 +147,17 @@ and dropped-row counts? Default is \code{FALSE}. Counts may overlap across roles
 
 \item{factor_refs}{Named categorical reference levels. Numeric-coded columns
 named here are treated as factors.}
+
+\item{row_id}{Optional character vector naming nonmissing unique source key
+columns. Composite keys are checked as typed tuples before filtering.}
+
+\item{sample_table}{Optional new temporary table to receive retained source
+keys. Requires a caller connection and \code{row_id}; supports DuckDB and native
+Databricks. The table is caller-owned. Explicit exports snapshot the required
+input columns for fitting and release that snapshot on success or failure.
+Cannot be combined with \code{sql_only} or \code{data_only}.
+Key SQL types are preserved; configure the DBI connection's integer64
+conversion when collecting BIGINT keys into R.}
 
 \item{...}{Only supported legacy aliases are accepted for backwards
 compatibility. Other arguments produce an error.}

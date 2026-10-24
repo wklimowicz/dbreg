@@ -100,6 +100,15 @@
 #'   `options(dbreg.verbose = TRUE)`.
 #' @param factor_refs Named categorical reference levels. Numeric-coded columns
 #'   named here are treated as factors.
+#' @param row_id Optional character vector naming nonmissing unique source key
+#'   columns. Composite keys are checked as typed tuples before filtering.
+#' @param sample_table Optional new temporary table to receive retained source
+#'   keys. Requires a caller connection and `row_id`; supports DuckDB and native
+#'   Databricks. The table is caller-owned. Explicit exports snapshot the required
+#'   input columns for fitting and release that snapshot on success or failure.
+#'   Cannot be combined with `sql_only` or `data_only`.
+#'   Key SQL types are preserved; configure the DBI connection's integer64
+#'   conversion when collecting BIGINT keys into R.
 #' @param fe_tol Positive per-fit tolerance for the fixed-effect projection.
 #' @param fe_max_iter Positive maximum number of fixed-effect projection iterations.
 #' @param diagnostics Run an additional input scan for per-variable missingness
@@ -370,6 +379,8 @@ dbreg = function(
   fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   diagnostics = FALSE,
   factor_refs = NULL,
+  row_id = NULL,
+  sample_table = NULL,
   ...
 ) {
 
@@ -394,6 +405,19 @@ dbreg = function(
     }
   }
 
+  validate_row_id_arg(row_id)
+  if (!is.null(sample_table)) {
+    if (is.null(conn) || !is.character(sample_table) || length(sample_table) != 1L ||
+      is.na(sample_table) || !nzchar(sample_table)) {
+      stop("`sample_table` requires a caller connection and one new table name.", call. = FALSE)
+    }
+    if (is.null(row_id)) stop("`sample_table` requires explicit `row_id` columns.", call. = FALSE)
+    if (isTRUE(sql_only) || isTRUE(data_only)) {
+      stop("`sample_table` cannot be combined with `sql_only` or `data_only`.", call. = FALSE)
+    }
+  }
+  sample_resources = if (!is.null(sample_table)) dbglm_resources() else NULL
+
   # Collect the (normalised) arguments into the `inputs` environment, which
   # the rest of the pipeline reads from and writes to (reference semantics)
   inputs = new.env(parent = emptyenv())
@@ -403,12 +427,16 @@ dbreg = function(
     c(
       "fml", "conn", "table", "data", "path", "weights", "vcov_type_req",
       "cluster_var", "ssc", "strategy", "sql_only", "data_only", "compress_ratio",
-      "compress_nmax", "drop_missings", "verbose", "fe_tol", "fe_max_iter", "diagnostics", "factor_refs"
+      "compress_nmax", "drop_missings", "verbose", "fe_tol", "fe_max_iter", "diagnostics", "factor_refs",
+      "row_id", "sample_table", "sample_resources"
     )
   )
   # Release any connection/registration we create, including on errors during
   # input processing (process_dbreg_inputs() records them in `inputs` first)
-  on.exit(release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]]), add = TRUE)
+  on.exit({
+    dbglm_release_resources(inputs[["sample_resources"]])
+    release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]])
+  }, add = TRUE)
 
   # Process and validate inputs (writes parsed/derived fields into `inputs`)
   validate_fit_diagnostics(inputs)
@@ -469,12 +497,16 @@ process_dbreg_inputs = function(inputs) {
   any_continuous = any_continuous_vars(data, fml_parsed[["xvars"]])
   weights_display = weights
 
+  source_vars = c(model_vars(fml_parsed[["fml"]]), weights, cluster_var)
+  from_statement = prepare_linear_sample(inputs, from_statement, source_vars)
+
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
   # results are mapped back to display names at the end
-  src = safe_source(conn, from_statement, c(model_vars(fml_parsed[["fml"]]), weights, cluster_var))
+  src = safe_source(conn, from_statement, c(source_vars, inputs[["row_id"]]))
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
   source_map = name_map
+  inputs[["row_id_safe"]] = src[["to_safe"]](inputs[["row_id"]])
   fml_parsed = parse_regression_formula(src[["to_safe"]](fml), allow_extended = TRUE)
   source_xvars = fml_parsed[["xvars"]]
   source_fes = unique(unlist(fml_parsed[["fe_components"]]))
@@ -1102,6 +1134,7 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   }
   result = finalize_fit_diagnostics(result, inputs)
   result = finalize_linear_design(result, inputs)
+  result = finalize_linear_sample(result, inputs)
   result[["strategy"]] = chosen_strategy
   # i() columns (display names), for predict()
   result[["i_columns"]] = inputs[["i_columns"]]

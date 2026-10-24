@@ -1,0 +1,6 @@
+ℹ Loading dbreg
+
+test_database_prediction.R....    0 tests
+test_database_prediction.R....    0 tests
+test_database_prediction.R....   60 tests OK 3.9s
+All ok, 60 results (3.9s)

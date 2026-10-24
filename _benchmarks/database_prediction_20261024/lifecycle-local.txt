@@ -1,0 +1,7 @@
+ℹ Loading dbreg
+
+test_fitted_resources.R.......   16 tests OK
+test_fitted_resources.R.......   21 tests OK
+test_fitted_resources.R.......   23 tests OK
+test_fitted_resources.R.......   27 tests OK 0.9s
+All ok, 27 results (0.9s)

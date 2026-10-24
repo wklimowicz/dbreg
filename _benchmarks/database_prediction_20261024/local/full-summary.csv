@@ -1,0 +1,2 @@
+"mode","assertions","failures","elapsed_seconds","error"
+"full",0,1,20.0752196311951,"error in evaluating the argument 'dbObj' in selecting a method for function 'dbIsValid': Retained database state has been released."

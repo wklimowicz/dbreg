@@ -26,8 +26,9 @@ Implementation sequence
 2. Shared fitted-state contract for learned effects, sample keys and resource
    ownership. OLS/GLM now share typed-key validation and retained-key exports;
    OLS exports use an immutable snapshot throughout fitting. Bounded portable
-   OLS/GLM learned-effect state is implemented behind explicit retention; database
-   resources and post-fit scores remain pending.
+   OLS/GLM learned-effect state is implemented behind explicit retention. Large
+   single-FE dictionaries and resource leases can stay in SQL; multi-FE SQL
+   recovery, database prediction outputs and post-fit scores remain pending.
 3. Supported formula/argument normalization: i()/references, public coefficient
    identities, OLS offsets and varying slopes, fixef.rm, weights and subset.
    Partial existing formula support remains; compatibility entry points pending.
@@ -227,7 +228,7 @@ FE/regressor moments on both moment and SQL fitting paths, including varying
 slopes. Recovery must reproduce the fit's final eta before any fit-owned table
 is released. State is a versioned plain list, without resource handles, rows,
 outcomes or fitting weights. It does not provide training-row/default prediction
-or post-fit covariance. Database-backed large state remains pending.
+or post-fit covariance. The single-FE database-backed extension follows below.
 
 Typed dictionaries preserve BIGINT text exactly and encode double keys with
 17 significant digits, including composite tuples. Supported SQL key types are
@@ -240,9 +241,10 @@ regressor factor levels keep the existing explicit error behavior.
 
 Portable recovery is limited by dbreg.prediction_max_entries (default 2e6), the
 FE moment row limit, and the existing dense/cross-product feasibility gates.
-The limits bound transfers and dense/null matrices. An oversized request errors
-and cleans up rather than collecting the panel; selecting owned database state
-at that boundary is still required by the full target above. Dictionary creation
+The limits bound transfers and dense/null matrices. Oversized single-FE
+requests without varying slopes select owned database state when the bounded
+slope system fits the budget. Other oversized requests error and clean up;
+large multi-FE/varying-slope recovery remains required by the full target above. Dictionary creation
 adds explicit SQL work; native default fitting does not create these dictionaries.
 
 Tiny group-specific weights require a relative group-equation certificate as
@@ -269,3 +271,30 @@ snapshot checks (see source-scope caveat in GLM-VALIDATION.txt). Million-row
 benchmarks show no substantial default regression; explicit retained prediction
 costs 0.171s to 0.422s for two-FE OLS and 0.0255s to 0.1865s for compressed OLS
 in this warmed local fixture. Evidence: _benchmarks/linear_prediction_20261024.
+
+Database-backed single-FE prediction (2026-10-24)
+------------------------------------------------
+When portable recovery exceeds its budget, one absorbed FE (including a typed
+composite key) without varying slopes can retain its dictionary in SQL. The
+original fitted slopes stay fixed. Weighted group residual means recover the
+learned effect; a bounded within-X Gram/null system checks new-row estimability.
+Recovery certifies the fitted predictor or OLS RSS before any source is released.
+Only requested prediction keys are queried, in bounded batches. Typed joins
+preserve integer text, nearby doubles, arbitrary strings, dates and logical keys;
+native text keys use the existing bounded JSON transport to preserve quoting.
+No outcomes, fitting weights or source query are needed for later prediction.
+
+Mathematical state and resource ownership remain separate: fitted_state contains
+values and table metadata; resource_state is a versioned environment lease with
+a namespace finalizer. close(model) drops only that lease's owned tables, is
+idempotent, and leaves caller connections/explicit exports intact. Copies share
+the lease. A model-owned connection closes after its last model/output lease;
+failed drops remain tracked and retryable. Garbage collection attempts cleanup.
+Prediction checks the live handle before SQL; saved/reloaded or disconnected
+handles cannot reconnect, refit, or silently reread mutable source data.
+Portable small dictionaries retain their existing disconnect/saveRDS behavior.
+
+This implements single-FE database dictionaries and in-memory newdata matching.
+Database newdata/keyed output relations, large multi-FE/varying-slope state and
+post-fit inference remain pending. Resource sharing for future output relations
+is tested internally; this checkpoint does not expose a database output API.

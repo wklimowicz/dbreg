@@ -7,7 +7,9 @@ prediction_state_limit = function() {
 }
 
 prediction_state_overflow = function() {
-  stop("Portable prediction state exceeds its transfer or matrix limit; use retain='none' for a compact fit. Database-backed prediction state is not implemented yet.", call. = FALSE)
+  stop(structure(list(message = paste0("Portable prediction state exceeds its transfer or matrix limit; ",
+    "database-backed recovery is unavailable for this design or budget. Use retain='none' for a compact fit."),
+    call = NULL), class = c("dbreg_prediction_overflow", "error", "condition")))
 }
 
 prediction_key_part = function(value, type) {
@@ -53,7 +55,7 @@ prediction_key_fields = function(conn, components) {
   list(fields = fields, columns = columns)
 }
 
-prediction_fe_dictionary = function(conn, retained, fe, components, limit, public_components = components) {
+prediction_key_metadata = function(conn, retained, components) {
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
   sql_types = dbglm_get_query(conn, paste0("SELECT ", paste0("typeof(", q(components), ") AS t", seq_along(components), collapse = ","),
     " FROM ", retained, " LIMIT 1"))
@@ -66,6 +68,12 @@ prediction_fe_dictionary = function(conn, retained, fe, components, limit, publi
     if (grepl("^(varchar|char|string|enum)", type)) "character" else
     if (type == "date") "date" else stop("Portable FE prediction does not support key SQL type '", type, "'.", call. = FALSE)
   }, character(1))
+  list(types = unname(types), sql_types = vapply(sql_types, function(type) type[[1]], character(1)))
+}
+
+prediction_fe_dictionary = function(conn, retained, fe, components, limit, public_components = components) {
+  q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
+  types = prediction_key_metadata(conn, retained, components)[["types"]]
   fields = vapply(seq_along(components), function(i) {
     value = q(components[i])
     if (types[i] == "integer") value = paste0("CAST(", value, " AS STRING)")
@@ -86,6 +94,19 @@ prediction_fe_dictionary = function(conn, retained, fe, components, limit, publi
 dbglm_prediction_state = function(...) build_prediction_state(...)
 
 build_prediction_state = function(conn, working, retained, fe, components, x, design_names,
+                                  center, trend_aliases, sizes, create, drop, n,
+                                  dictionary_components = components, beta = NULL,
+                                  expected_rss = NULL, constant = 0, fitted_beta = beta) {
+  tryCatch(build_portable_prediction_state(conn, working, retained, fe, components, x, design_names,
+    center, trend_aliases, sizes, create, drop, n, dictionary_components, beta, expected_rss, constant),
+    dbreg_prediction_overflow = function(error) {
+      if (length(fe) != 1L || length(unlist(attr(fe, "slopes"))) || is.null(fitted_beta)) stop(error)
+      build_database_prediction_state(conn, working, retained, fe, components, x, design_names,
+        center, create, n, dictionary_components, fitted_beta, expected_rss, constant)
+    })
+}
+
+build_portable_prediction_state = function(conn, working, retained, fe, components, x, design_names,
                                   center, trend_aliases, sizes, create, drop, n,
                                   dictionary_components = components, beta = NULL,
                                   expected_rss = NULL, constant = 0) {
@@ -226,8 +247,11 @@ prediction_match_groups = function(state, data) {
   })
 }
 
-predict_from_fitted_state = function(state, design, data, groups = NULL) {
+predict_from_fitted_state = function(state, design, data, groups = NULL, lookup = NULL) {
   if (!identical(state[["version"]], 1L)) stop("Unsupported fitted-state version.", call. = FALSE)
+  if (identical(state[["prediction"]][["storage"]], "database")) {
+    return(predict_from_database_state(state, design, lookup))
+  }
   specification = state[["specification"]]
   coef = state[["coefficients"]]
   x = sweep(design[, specification[["design_names"]], drop = FALSE], 2L, specification[["design_center"]], "-")

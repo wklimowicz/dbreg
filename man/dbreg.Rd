@@ -165,7 +165,10 @@ prediction with the demean/compress strategies on DuckDB or native
 Databricks. It snapshots required source columns during fitting, then releases
 private tables. Outcomes and fitting weights are not required in newdata.
 Cannot be combined with \code{sql_only}/\code{data_only}; Mundlak retention and
-learned-effect prediction intervals are not implemented.}
+learned-effect prediction intervals are not implemented.
+Oversized single-FE dictionaries can stay in SQL, requiring their live
+owning session until \code{\link[=close]{close()}} or garbage collection. Such state cannot
+be restored with \code{saveRDS()}; other oversized designs error explicitly.}
 
 \item{...}{Only supported legacy aliases are accepted for backwards
 compatibility. Other arguments produce an error.}

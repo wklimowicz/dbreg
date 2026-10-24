@@ -1,0 +1,14 @@
+ℹ Loading dbreg
+Starting native suite: test_database_prediction_live.R
+
+test_database_prediction_live.R   60 tests 1 fails 7.0s
+----- FAILED[data]: test_database_prediction_live.R<1--9>
+ call| expect_equal(predict(fit, newdata), as.numeric(predict(reference,
+ call| -->    reference_rows)), tolerance = 1e-06)
+ diff| 'is.NA' value mismatch: 97 in current 0 in target
+
+Showing 1 out of 60 results: 1 fails, 59 passes (7.0s)
+                            suite assertions failures error elapsed_seconds
+1 test_database_prediction_live.R         60        1              417.6723
+Error: Native Databricks validation failed; see summary.csv.
+Execution halted

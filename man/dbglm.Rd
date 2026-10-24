@@ -81,14 +81,18 @@ tests and AIC/BIC. Coefficients are finite approximations, not a finite MLE.}
 \item{retain}{Default `"none"` keeps the compact fit. `"prediction"` saves
 bounded portable FE dictionaries and learned coefficients for new-row
 prediction. It adds SQL aggregation and dictionary transfer, without keeping
-input rows or a connection. Oversized state errors instead of collecting
-the panel; `options(dbreg.prediction_max_entries = 2e6)` bounds matrix and
-transfer entries alongside the existing FE moment limits.}
+input rows. `options(dbreg.prediction_max_entries = 2e6)` bounds matrix and
+transfer entries alongside the existing FE moment limits. A single FE
+without varying slopes can keep an oversized dictionary in SQL instead.
+That state needs its live owning session, cannot be restored with
+`saveRDS()`, and can be released with [close()]. Other oversized designs
+error instead of collecting the panel.}
 }
 \value{
 A compact object of class `c("dbglm", "dbreg")`, containing slopes,
   covariance, log likelihood, sample counts and convergence diagnostics. Input
-  rows, database connections and temporary relations are not retained.
+  rows are not retained. Database-backed prediction retention keeps its owned
+  dictionary and live connection until [close()] or garbage collection.
 }
 \description{
 Fits binomial logit, probit, complementary-log-log and log-link Poisson models

@@ -1,0 +1,114 @@
+Database-backed single-FE prediction checkpoint, 2026-10-24
+=========================================================
+
+Implementation is the commit containing this file, based on 8f49000.
+Working-tree manifests identify implementation content; recorded HEAD alone
+identifies the preceding commit. This is a focused slice of the compatibility
+plan, not complete fixest replacement or a full native package acceptance gate.
+
+Final validation
+----------------
+local-final/full: 4,174 assertions, zero failures, 194.1337 elapsed seconds.
+native-final: 60 assertions, zero failures, 382.6336 elapsed seconds.
+The focused local database fixture has 60 assertions; lifecycle fixture 27.
+Package check: zero errors/warnings, existing optional binsreg reference NOTE.
+Check used --no-tests/--no-vignettes/--no-manual and
+_R_CHECK_FORCE_SUGGESTS_=false; the full local source suite ran separately.
+Initial check-with-required-suggests.txt records the environment's unavailable
+optional binsreg dependency before applying the established check configuration.
+Use explicit elapsed_seconds: tinytest labels minute-valued long difftimes as
+seconds in its printed native output.
+
+Final local/native manifests and both final performance R-source manifests
+match the implementation. audit-source.R reproduces the check at this commit.
+Native reference: installed fixest 0.14.0; adjacent fixest source v0.14.2,
+789f888416e97673d154c840eec2d99101fc07b1. Runtime versions are saved per run.
+
+Implemented behavior and boundaries
+-----------------------------------
+retain="prediction" preserves compact native defaults unless explicitly chosen.
+If portable recovery exceeds its limits, a single absorbed FE without varying
+slopes can keep an owned typed dictionary in SQL. Composite FE keys are one
+block and may combine exact integer, nearby-double, character, date/logical keys.
+Original fitted slopes stay fixed. Weighted residual means recover group
+effects; a bounded within-X Gram/null system checks new-row estimability.
+Recovery must reproduce the fitted eta or OLS RSS. Matching queries only the
+requested rows in bounded batches. Outcomes/weights/source tables are not needed
+after fitting. Unknown/missing keys and nonestimable rows return NA.
+
+Small dictionaries remain portable. Database dictionaries require their live
+owning session; deserialized/disconnected handles error before SQL and never
+reconnect, refit, or reread mutable caller data. Mathematical state stays in
+plain values; a separate versioned lease owns only specified relations.
+close(model) is idempotent, preserves caller connections/exports, shares release
+across model copies, and closes an owned connection after its last lease.
+Namespace finalizers avoid capturing fitting frames. Failed drops remain tracked
+and retryable; successful drops are not repeated against reused table names.
+
+Tests cover demean/compress OLS, binomial/Poisson GLMs and offsets, reference
+predictions and full covariance, sample exports, batching/order, BIGINT and
+composite keys, arbitrary text/dates/logicals, collinearity/absorbed regressors,
+serialization, source removal, cleanup, owned/borrowed sessions, output-lease
+lifetime, finalization, invalid handles and a real foreign-key drop failure.
+Large multi-FE/varying-slope dictionaries, keyed database prediction output,
+original-sample/default predictions and retained post-fit inference are pending.
+Output resource sharing is tested internally; no database output API is exposed.
+
+Failures preserved
+------------------
+The first full attempt in local/ caught suppressed DROP errors: the existing
+best-effort helper claimed success despite a dependency. Retained-state cleanup
+now executes checked DROP statements and leaves failed releases retryable.
+local-interrupted/native-interrupted were intentionally stopped while finalizing
+that error path and reducing repeated warehouse queries in the synthetic fixture;
+they are not successful gates.
+
+local-before-literal-fix passed 4,174 checks. Native-before-literal-fix passed
+59/60 in 417.67 seconds: typed text keys containing quotes/backslashes missed
+their dictionary rows. A two-query native probe confirmed DBI's quoted literal
+changed the string while the existing base64 JSON lookup preserved it. Requested
+key batches now reuse that bounded JSON transport natively (VALUES on DuckDB).
+The final 60-check rerun validates the correction. source-before-literal-fix.tar.gz
+preserves the exact failed native and preceding local source.
+
+Large-state local measurement
+-----------------------------
+large-state.R creates a deterministic SQL-only million-row panel with 400,000
+FE levels and four slopes. The default prediction entry budget is 2e6, so this
+selects SQL state without reducing a limit artificially. Six completed measured
+fits (three per mode, after one warmup each) match named coefficients, full
+covariance and N. Retained predictions match an independent SQL group-mean
+identity, and closing every fit restores the initial table inventory.
+
+                   compact default      retained prediction
+median fit         0.243s               1.154s
+peak process RSS   491,580 KiB          635,440 KiB
+mathematical state 0 bytes              5,792 bytes
+
+The optional path added about 0.91s and 29% whole-process peak RSS here. DuckDB
+is embedded, so RSS includes database execution memory; it is not isolated R
+heap usage. The 400,000-row dictionary stays in SQL. Instrumented prediction
+recovery queries return at most one row during fitting, with 7,272 cumulative
+R result-object bytes (object.size, not protocol transfer bytes). Only 100
+newdata rows are fetched for prediction checks, outside fit timing. No panel
+is collected into R. Source metadata and traces identify the measured scope.
+
+R 4.6.0, DuckDB 1.5.2; two DuckDB/BLAS/OMP threads, 2GB DuckDB memory limit.
+These are warmed local resource measurements with timing variation and a local
+test/native-validation client active in the background, not precise latency or
+native/disk-bound guarantees. Default fitting was already compared against the
+pre-compatibility baseline in the separate 90-fit linear checkpoint.
+
+Reproduction from repository root
+----------------------------------
+Rscript _benchmarks/check_glm_fractional.R full /tmp/dbstate-local linear_prediction
+Rscript .github/scripts/run-databricks-tests.R /tmp/dbstate-native test_database_prediction_live.R
+Rscript -e 'pkgload::load_all(); tinytest::run_test_file("inst/tinytest/test_fitted_resources.R")'
+
+Rscript _benchmarks/database_prediction_20261024/large-state.R prepare /tmp/fresh-dbstate.duckdb
+Rscript _benchmarks/database_prediction_20261024/large-state.R run /tmp/fresh-dbstate.duckdb none OUTPUT_PREFIX
+Rscript _benchmarks/database_prediction_20261024/large-state.R run /tmp/fresh-dbstate.duckdb prediction OUTPUT_PREFIX
+
+Run each mode sequentially with OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 and
+/usr/bin/time -v for process RSS. summarize-large-state.R reproduces the saved
+value checks and performance summary; audit-source.R checks source identities.

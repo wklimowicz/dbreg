@@ -1,0 +1,1 @@
+Intentionally interrupted while finalizing cleanup and the bounded native fixture. No completed gate or assertion count is claimed.

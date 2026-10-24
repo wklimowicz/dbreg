@@ -1,0 +1,36 @@
+* using log directory ‘/tmp/dbreg-dbstate-check/dbreg.Rcheck’
+* using R version 4.6.0 (2026-04-24)
+* using platform: x86_64-pc-linux-gnu
+* R was compiled by
+    gcc (GCC) 16.0.1 20260321 (Red Hat 16.0.1-0)
+    GNU Fortran (GCC) 16.0.1 20260321 (Red Hat 16.0.1-0)
+* running under: Fedora Linux 44 (Workstation Edition)
+* using session charset: UTF-8
+* current time: 2026-10-24 17:00:39 UTC
+* using options ‘--no-tests --no-manual’
+* checking for file ‘dbreg/DESCRIPTION’ ... OK
+* checking extension type ... Package
+* this is package ‘dbreg’ version ‘0.0.3.99’
+* package encoding: UTF-8
+* checking package namespace information ... OK
+* checking package dependencies ...Warning: unable to access index for repository https://packagemanager.rstudio.com/all/latest/src/contrib:
+  cannot open URL 'https://packagemanager.rstudio.com/all/latest/src/contrib/PACKAGES'
+Warning: unable to access index for repository https://cloud.r-project.org/src/contrib:
+  cannot open URL 'https://cloud.r-project.org/src/contrib/PACKAGES'
+ ERROR
+Package suggested but not available: ‘binsreg’
+
+Vignette dependency required without any vignettes: ‘quarto’
+
+The suggested packages are required for a complete check.
+Checking can be attempted without them by setting the environment
+variable _R_CHECK_FORCE_SUGGESTS_ to a false value.
+
+See section ‘The DESCRIPTION file’ in the ‘Writing R Extensions’
+manual.
+* DONE
+
+Status: 1 ERROR
+See
+  ‘/tmp/dbreg-dbstate-check/dbreg.Rcheck/00check.log’
+for details.

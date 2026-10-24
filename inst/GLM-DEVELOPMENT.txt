@@ -171,3 +171,14 @@ GLM-VALIDATION.txt for the exact source scope and preserved initial failure.
 The OLS compression path now preserves exact FE/cluster keys and converts only
 aggregate statistics from integer64 before fractional arithmetic. Required
 resource/state and adapter work remains as recorded in the compatibility plan.
+
+Single-FE retained prediction can now fall back to SQL when portable transfer or
+matrix budgets are exceeded. It keeps a typed FE dictionary with learned group
+effects and within-group regressor means, plus a bounded slope null system in R.
+It preserves the fitted slope vector and checks eta/RSS recovery. Shared resource
+leases transfer only owned dictionaries out of fit cleanup; close.dbreg and a
+namespace finalizer release them without capturing a caller/fitting environment.
+Database-backed prediction needs its live owning session. Requested typed keys
+use bounded literal batches (JSON on native Databricks); do not use DBI's quoted
+text literals for native keys containing quotes/backslashes. Multi-FE SQL state,
+keyed output relations and retained post-fit score state remain separate work.

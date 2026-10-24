@@ -1,0 +1,3 @@
+"mode","repetitions","median_seconds","peak_rss_kib","maximum_state_bytes","maximum_prediction_fit_query_rows","maximum_prediction_fit_query_bytes"
+"none",3,0.243,491580,0,0,0
+"prediction",3,1.154,635440,5792,1,7272

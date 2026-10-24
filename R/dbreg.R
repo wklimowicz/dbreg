@@ -115,6 +115,9 @@
 #'   private tables. Outcomes and fitting weights are not required in newdata.
 #'   Cannot be combined with `sql_only`/`data_only`; Mundlak retention and
 #'   learned-effect prediction intervals are not implemented.
+#'   Oversized single-FE dictionaries can stay in SQL, requiring their live
+#'   owning session until [close()] or garbage collection. Such state cannot
+#'   be restored with `saveRDS()`; other oversized designs error explicitly.
 #' @param fe_tol Positive per-fit tolerance for the fixed-effect projection.
 #' @param fe_max_iter Positive maximum number of fixed-effect projection iterations.
 #' @param diagnostics Run an additional input scan for per-variable missingness
@@ -1149,6 +1152,11 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   result = finalize_linear_design(result, inputs)
   result = finalize_linear_prediction(result, inputs)
   result = finalize_linear_sample(result, inputs)
+  if (identical(result[["fitted_state"]][["resources"]][["storage"]], "database")) {
+    inputs[["sample_resources"]][["own_conn"]] = isTRUE(inputs[["own_conn"]])
+    result = finalize_retained_resources(result, inputs[["sample_resources"]])
+    inputs[["own_conn"]] = FALSE
+  }
   result[["strategy"]] = chosen_strategy
   class(result) = c(class, class(result))
   result

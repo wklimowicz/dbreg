@@ -88,10 +88,34 @@ portable dictionaries occupy 107,296 and 6,712 bytes. Peak process RSS rises
 about 25-30% with retention. These warmed local measurements do not establish
 native or disk-bound performance. Compact defaults remain unchanged.
 
+The next retained-state increment adds a database-backed dictionary for one
+absorbed FE (including typed composite keys), without varying slopes. It keeps
+original fitted slopes, recovers weighted group residual means, and uses a
+bounded within-X null system to check new-row estimability. Mathematical state
+and live resource leases are separate. `close(model)` releases owned relations;
+caller connections and sample exports survive. Small portable state is unchanged.
+Large multi-FE recovery and keyed database prediction output remain pending.
+
+The completed increment passes **4,174 local assertions** and **60 native
+Databricks assertions** (382.63 seconds), with zero package-check errors/warnings
+and the existing optional `binsreg` NOTE. Final local/native/performance source
+manifests match. Native validation first caught a text-literal issue (59/60
+passed); bounded JSON key transport fixes it, and the source/failure/rerun are
+preserved. Checked resource release also retains failed drops for retry rather
+than accepting the old best-effort helper's suppressed error.
+
+The million-row/400,000-level fixture now keeps the dictionary in SQL under the
+default budget: mathematical state is 5,792 bytes; prediction recovery queries
+return at most one row during fitting. Six measured fits match coefficients,
+full covariance and N. Retention adds about 0.91s (0.243s to 1.154s medians) and
+whole-process peak RSS rises about 29% in this warmed local fixture. This
+includes embedded DuckDB execution memory and is not a native performance gate.
+Evidence: `_benchmarks/database_prediction_20261024/`.
+
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
-The next dependencies are database-backed large state, followed by formula
-adapters and post-fit inference. Use dbreg's
+Remaining dependencies include large multi-FE state and keyed database outputs,
+followed by formula adapters and post-fit inference. Use dbreg's
 existing conventions; consult fixest for unresolved user-facing compatibility
 choices. Concrete API/lifetime decisions are recorded in
 `inst/FIXEST-COMPATIBILITY.txt`. The complete replacement remains unfinished.

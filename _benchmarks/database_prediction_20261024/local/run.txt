@@ -1,0 +1,508 @@
+ℹ Loading dbreg
+Failed to connect to system scope bus via local transport: Operation not permitted (consider using --machine=<user>@.host --user to connect to bus of other user)
+Warning message:
+In system("timedatectl", intern = TRUE) :
+  running command 'timedatectl' had status 1
+
+Attaching package: 'fixest'
+
+The following object is masked from '.shortcut_env':
+
+    i
+
+
+test_airquality.R.............    0 tests
+test_airquality.R.............    0 tests
+test_airquality.R.............    0 tests
+test_airquality.R.............    0 tests
+test_airquality.R.............    0 tests
+test_airquality.R.............    0 tests
+test_airquality.R.............    0 tests
+test_airquality.R.............    4 tests OK
+test_airquality.R.............    4 tests OK
+test_airquality.R.............    4 tests OK
+test_airquality.R.............    8 tests OK
+test_airquality.R.............    8 tests OK
+test_airquality.R.............   12 tests OK
+test_airquality.R.............   12 tests OK
+test_airquality.R.............   12 tests OK
+test_airquality.R.............   16 tests OK 1.0s
+
+test_alias_collisions.R.......    1 tests OK
+test_alias_collisions.R.......    2 tests OK
+test_alias_collisions.R.......    3 tests OK
+test_alias_collisions.R.......    3 tests OK
+test_alias_collisions.R.......    3 tests OK
+test_alias_collisions.R.......    3 tests OK
+test_alias_collisions.R.......    3 tests OK
+test_alias_collisions.R.......    4 tests OK 50ms
+
+test_ap_moments_live.R........    0 tests    1ms
+
+test_ap_moments.R.............    0 tests
+test_ap_moments.R.............  103 tests OK 1.9s
+
+test_ap_query_plan.R..........    0 tests
+test_ap_query_plan.R..........    0 tests
+test_ap_query_plan.R..........    0 tests
+test_ap_query_plan.R..........    0 tests
+test_ap_query_plan.R..........    0 tests
+test_ap_query_plan.R..........    0 tests
+test_ap_query_plan.R..........    8 tests OK
+test_ap_query_plan.R..........    8 tests OK
+test_ap_query_plan.R..........    9 tests OK
+test_ap_query_plan.R..........   10 tests OK
+test_ap_query_plan.R..........   10 tests OK
+test_ap_query_plan.R..........   10 tests OK 0.3s
+
+test_ap_windows.R.............    0 tests
+test_ap_windows.R.............    0 tests
+test_ap_windows.R.............    1 tests OK
+test_ap_windows.R.............    2 tests OK
+test_ap_windows.R.............    2 tests OK
+test_ap_windows.R.............    3 tests OK
+test_ap_windows.R.............    3 tests OK
+test_ap_windows.R.............    4 tests OK
+test_ap_windows.R.............    4 tests OK
+test_ap_windows.R.............    4 tests OK
+test_ap_windows.R.............    5 tests OK
+test_ap_windows.R.............    6 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............    7 tests OK
+test_ap_windows.R.............   71 tests OK
+test_ap_windows.R.............   71 tests OK
+test_ap_windows.R.............   71 tests OK [dbreg] Using strategy: demean
+[dbreg] Using fixed-effect projection for FE demeaning
+[AP] iter 6: max abs mean = 1.6654e-08
+[AP] iter 12: max abs mean = 1.5011e-16
+[AP] iter 14: max abs mean = 7.3515e-17
+
+test_ap_windows.R.............   72 tests OK
+test_ap_windows.R.............   73 tests OK
+test_ap_windows.R.............   74 tests OK
+test_ap_windows.R.............   74 tests OK
+test_ap_windows.R.............   78 tests OK
+test_ap_windows.R.............   78 tests OK
+test_ap_windows.R.............   79 tests OK
+test_ap_windows.R.............   80 tests OK
+test_ap_windows.R.............   80 tests OK
+test_ap_windows.R.............   80 tests OK 2.7s
+
+test_ap.R.....................    0 tests
+test_ap.R.....................    0 tests
+test_ap.R.....................    0 tests
+test_ap.R.....................    0 tests
+test_ap.R.....................    0 tests
+test_ap.R.....................    0 tests
+test_ap.R.....................    0 tests
+test_ap.R.....................    1 tests OK
+test_ap.R.....................    1 tests OK
+test_ap.R.....................    1 tests OK
+test_ap.R.....................    2 tests OK
+test_ap.R.....................    3 tests OK
+test_ap.R.....................    3 tests OK
+test_ap.R.....................    3 tests OK
+test_ap.R.....................    4 tests OK
+test_ap.R.....................    5 tests OK
+test_ap.R.....................   11 tests OK
+test_ap.R.....................   11 tests OK
+test_ap.R.....................   15 tests OK
+test_ap.R.....................   15 tests OK
+test_ap.R.....................   15 tests OK
+test_ap.R.....................   15 tests OK
+test_ap.R.....................   16 tests OK
+test_ap.R.....................   17 tests OK
+test_ap.R.....................   17 tests OK
+test_ap.R.....................   17 tests OK 0.6s
+
+test_argument_contract.R......   24 tests OK 0.2s
+
+test_cluster_cells_typed.R....    7 tests OK 92ms
+
+test_compress_cluster_design.R    0 tests
+test_compress_cluster_design.R    0 tests
+test_compress_cluster_design.R    0 tests
+test_compress_cluster_design.R    0 tests
+test_compress_cluster_design.R   12 tests OK 0.4s
+
+test_database_prediction_live.R    0 tests    1ms
+
+test_database_prediction.R....    0 tests
+test_database_prediction.R....    0 tests
+test_database_prediction.R....   60 tests OK 4.0s
+
+test_dbbinsreg_binsreg.R......    0 tests    2ms [Exited at #13: binsreg package not installed]
+
+test_dbbinsreg_nyc.R..........    0 tests    1ms [Exited at #12: Run Sys.setenv(DBREG_TEST_NYC = TRUE) to enable NYC taxi tests]
+
+test_dbivreg_nyc.R............    0 tests    1ms [Exited at #8: Run `Sys.setenv(DBREG_TEST_NYC = 'TRUE')` to enable NYC taxi tests]
+
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    0 tests
+test_dbivreg.R................    2 tests OK
+test_dbivreg.R................    2 tests OK
+test_dbivreg.R................    3 tests OK
+test_dbivreg.R................    4 tests OK
+test_dbivreg.R................    4 tests OK
+test_dbivreg.R................    4 tests OK
+test_dbivreg.R................    6 tests OK
+test_dbivreg.R................    6 tests OK
+test_dbivreg.R................    6 tests OK
+test_dbivreg.R................    8 tests OK
+test_dbivreg.R................    8 tests OK
+test_dbivreg.R................    9 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   10 tests OK
+test_dbivreg.R................   12 tests OK
+test_dbivreg.R................   13 tests OK
+test_dbivreg.R................   13 tests OK
+test_dbivreg.R................   14 tests OK
+test_dbivreg.R................   14 tests OK
+test_dbivreg.R................   14 tests OK
+test_dbivreg.R................   16 tests OK
+test_dbivreg.R................   16 tests OK
+test_dbivreg.R................   17 tests OK
+test_dbivreg.R................   18 tests OK
+test_dbivreg.R................   18 tests OK
+test_dbivreg.R................   18 tests OK
+test_dbivreg.R................   18 tests OK
+test_dbivreg.R................   18 tests OK
+test_dbivreg.R................   18 tests OK
+test_dbivreg.R................   18 tests OK
+test_dbivreg.R................   18 tests OK
+test_dbivreg.R................   18 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   28 tests OK
+test_dbivreg.R................   30 tests OK
+test_dbivreg.R................   30 tests OK
+test_dbivreg.R................   30 tests OK
+test_dbivreg.R................   32 tests OK
+test_dbivreg.R................   33 tests OK
+test_dbivreg.R................   33 tests OK
+test_dbivreg.R................   33 tests OK
+test_dbivreg.R................   35 tests OK
+test_dbivreg.R................   35 tests OK
+test_dbivreg.R................   35 tests OK
+test_dbivreg.R................   37 tests OK
+test_dbivreg.R................   38 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   39 tests OK
+test_dbivreg.R................   41 tests OK
+test_dbivreg.R................   41 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   42 tests OK
+test_dbivreg.R................   44 tests OK
+test_dbivreg.R................   44 tests OK
+test_dbivreg.R................   45 tests OK
+test_dbivreg.R................   45 tests OK
+test_dbivreg.R................   45 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   47 tests OK
+test_dbivreg.R................   49 tests OK
+test_dbivreg.R................   49 tests OK
+test_dbivreg.R................   50 tests OK
+test_dbivreg.R................   51 tests OK
+test_dbivreg.R................   52 tests OK
+test_dbivreg.R................   52 tests OK
+test_dbivreg.R................   52 tests OK
+test_dbivreg.R................   52 tests OK
+test_dbivreg.R................   52 tests OK
+test_dbivreg.R................   52 tests OK
+test_dbivreg.R................   52 tests OK
+test_dbivreg.R................   52 tests OK
+test_dbivreg.R................   52 tests OK
+test_dbivreg.R................   54 tests OK
+test_dbivreg.R................   54 tests OK
+test_dbivreg.R................   55 tests OK
+test_dbivreg.R................   56 tests OK
+test_dbivreg.R................   57 tests OK
+test_dbivreg.R................   58 tests OK
+test_dbivreg.R................   58 tests OK
+test_dbivreg.R................   58 tests OK
+test_dbivreg.R................   58 tests OK
+test_dbivreg.R................   59 tests OK
+test_dbivreg.R................   60 tests OK
+test_dbivreg.R................   60 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   61 tests OK
+test_dbivreg.R................   63 tests OK
+test_dbivreg.R................   63 tests OK
+test_dbivreg.R................   66 tests OK
+test_dbivreg.R................   66 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   67 tests OK
+test_dbivreg.R................   69 tests OK
+test_dbivreg.R................   70 tests OK
+test_dbivreg.R................   71 tests OK
+test_dbivreg.R................   72 tests OK
+test_dbivreg.R................   73 tests OK
+test_dbivreg.R................   74 tests OK
+test_dbivreg.R................   75 tests OK
+test_dbivreg.R................   75 tests OK
+test_dbivreg.R................   75 tests OK
+test_dbivreg.R................   75 tests OK
+test_dbivreg.R................   75 tests OK
+test_dbivreg.R................   75 tests OK
+test_dbivreg.R................   75 tests OK
+test_dbivreg.R................   76 tests OK
+test_dbivreg.R................   77 tests OK
+test_dbivreg.R................   78 tests OK
+test_dbivreg.R................   79 tests OK
+test_dbivreg.R................   80 tests OK
+test_dbivreg.R................   81 tests OK
+test_dbivreg.R................   82 tests OK
+test_dbivreg.R................   82 tests OK
+test_dbivreg.R................   82 tests OK
+test_dbivreg.R................   83 tests OK
+test_dbivreg.R................   84 tests OK
+test_dbivreg.R................   85 tests OK
+test_dbivreg.R................   85 tests OK
+test_dbivreg.R................   85 tests OK
+test_dbivreg.R................   86 tests OK
+test_dbivreg.R................   86 tests OK
+test_dbivreg.R................   86 tests OK
+test_dbivreg.R................   87 tests OK
+test_dbivreg.R................   88 tests OK
+test_dbivreg.R................   88 tests OK
+test_dbivreg.R................   88 tests OK
+test_dbivreg.R................   89 tests OK
+test_dbivreg.R................   90 tests OK
+test_dbivreg.R................   90 tests OK
+test_dbivreg.R................   91 tests OK
+test_dbivreg.R................   93 tests OK
+test_dbivreg.R................   95 tests OK
+test_dbivreg.R................   96 tests OK 2.7s
+
+test_did.R....................    0 tests
+test_did.R....................    0 tests
+test_did.R....................    0 tests
+test_did.R....................    0 tests
+test_did.R....................    0 tests
+test_did.R....................    0 tests
+test_did.R....................    0 tests
+test_did.R....................    0 tests
+test_did.R....................    1 tests OK
+test_did.R....................    1 tests OK
+test_did.R....................   21 tests OK
+test_did.R....................   21 tests OK
+test_did.R....................   21 tests OK
+test_did.R....................   21 tests OK
+test_did.R....................   31 tests OK 0.2s
+
+test_duckdb_cg.R..............    0 tests
+test_duckdb_cg.R..............    0 tests
+test_duckdb_cg.R..............    0 tests
+test_duckdb_cg.R..............   83 tests OK 2.0s
+
+test_errors.R.................    0 tests
+test_errors.R.................    0 tests
+test_errors.R.................    1 tests OK
+test_errors.R.................    2 tests OK
+test_errors.R.................    3 tests OK
+test_errors.R.................    3 tests OK
+test_errors.R.................    4 tests OK
+test_errors.R.................    5 tests OK
+test_errors.R.................    6 tests OK
+test_errors.R.................    7 tests OK
+test_errors.R.................    8 tests OK
+test_errors.R.................    8 tests OK
+test_errors.R.................    8 tests OK
+test_errors.R.................    8 tests OK
+test_errors.R.................    8 tests OK
+test_errors.R.................    8 tests OK
+test_errors.R.................    9 tests OK
+test_errors.R.................    9 tests OK
+test_errors.R.................    9 tests OK
+test_errors.R.................   10 tests OK
+test_errors.R.................   10 tests OK
+test_errors.R.................   11 tests OK
+test_errors.R.................   12 tests OK
+test_errors.R.................   13 tests OK
+test_errors.R.................   13 tests OK 0.4s
+
+test_exact_factor.R...........    0 tests
+test_exact_factor.R...........    1 tests OK
+test_exact_factor.R...........    2 tests OK
+test_exact_factor.R...........    3 tests OK
+test_exact_factor.R...........    3 tests OK
+test_exact_factor.R...........    4 tests OK 27ms
+
+test_fe_edges_live.R..........    0 tests    1ms
+
+test_fe_edges.R...............    0 tests
+test_fe_edges.R...............    0 tests    The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+The variables 'duplicate' and 'absorbed' have been removed because of
+collinearity (see $collin.var).
+
+test_fe_edges.R...............  133 tests OK 2.6s
+
+test_fit_diagnostics.R........    0 tests
+test_fit_diagnostics.R........    0 tests
+test_fit_diagnostics.R........    0 tests
+test_fit_diagnostics.R........    0 tests
+test_fit_diagnostics.R........    0 tests
+test_fit_diagnostics.R........    0 tests
+test_fit_diagnostics.R........    0 tests
+test_fit_diagnostics.R........    0 tests
+test_fit_diagnostics.R........   10 tests OK
+test_fit_diagnostics.R........   10 tests OK
+test_fit_diagnostics.R........   11 tests OK
+test_fit_diagnostics.R........   12 tests OK
+test_fit_diagnostics.R........   13 tests OK
+test_fit_diagnostics.R........   14 tests OK
+test_fit_diagnostics.R........   19 tests OK
+test_fit_diagnostics.R........   23 tests OK
+test_fit_diagnostics.R........   24 tests OK
+test_fit_diagnostics.R........   24 tests OK
+test_fit_diagnostics.R........   24 tests OK
+test_fit_diagnostics.R........   25 tests OK
+test_fit_diagnostics.R........   25 tests OK
+test_fit_diagnostics.R........   26 tests OK
+test_fit_diagnostics.R........   27 tests OK 0.3s
+
+test_fitted_resources.R.......   16 tests OK
+test_fitted_resources.R.......   21 tests OK
+test_fitted_resources.R.......   23 tests OK   mode assertions failures elapsed_seconds
+1 full          0        1        20.07522
+                                                                                                                                error
+1 error in evaluating the argument 'dbObj' in selecting a method for function 'dbIsValid': Retained database state has been released.
+Error: Validation failed; see saved artifacts.
+Execution halted

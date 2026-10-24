@@ -1,0 +1,6 @@
+ℹ Loading dbreg
+Starting native suite: test_database_prediction_live.R
+
+Execution halted
+Warning message:
+Cancelling previous query

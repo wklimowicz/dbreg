@@ -304,3 +304,29 @@ numeric DBI defaults, and exact typed cluster-cell matching. Newdata/source
 removal, serialization, compression and disconnected-design checks all pass.
 Default native resource behavior stays compact; large database-backed state,
 original-sample/default predictions and post-fit inference remain unfinished.
+
+Database-backed single-FE prediction checkpoint, 2026-10-24
+----------------------------------------------------------
+Final local: 4,174 assertions, zero failures, 194.13 seconds. Focused database
+fixture: 60 checks; resource lifecycle fixture: 27. Final native: 60 assertions,
+zero failures, 382.63 seconds. Package check: zero errors/warnings, the existing
+optional binsreg NOTE, with tests run in the separate full source suite.
+All final local/native/performance source manifests match the implementation.
+Evidence: _benchmarks/database_prediction_20261024, including audit-source.R.
+
+The first native run passed 59/60 and exposed DBI-quoted text changing keys with
+quotes/backslashes. A two-query native probe confirmed exact preservation via
+the existing base64 JSON lookup. Requested key batches now reuse that transport;
+all 60 shared cases pass. A local real dependency failure also caught suppressed
+DROP errors; owned-state release now keeps failed drops tracked and retryable.
+Failed/interrupted diagnostics and the pre-literal-fix source are preserved.
+
+Coverage includes OLS demean/compress, binomial/Poisson GLMs and offsets, typed
+composite keys, exact integers/nearby doubles/text/dates/logicals, collinearity,
+source removal, exports, serialization, owned/borrowed sessions and finalizers.
+A million-row/400,000-level DuckDB fixture keeps its dictionary in SQL under the
+default budget. Six measured fits match beta/full covariance/N. Mathematical
+state is 5,792 bytes; recovery queries return at most one row during fitting.
+Retention adds about 0.91s and 29% whole-process RSS in this local fixture.
+These focused native/resource gates do not establish full native package or
+large multi-FE/keyed-output/inference support, which remain unfinished.

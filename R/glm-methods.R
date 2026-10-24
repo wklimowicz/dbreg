@@ -3,6 +3,8 @@
 #' @param ... Additional method arguments are not supported and produce an error.
 #'   New-row prediction with absorbed effects requires `retain = "prediction"`
 #'   when fitting. Unknown or non-estimable FE combinations return `NA`.
+#'   Database-backed dictionaries need their live owning session; see
+#'   [close.dbreg()] for release and serialization behavior.
 #' @name dbglm-methods
 #' @importFrom stats logLik nobs df.residual predict
 NULL
@@ -71,6 +73,8 @@ predict.dbglm = function(object, newdata, type = c("link", "response"), ...) {
     newdata[[a]] = newdata[[source]]
   }
   state = object[["fitted_state"]]
+  database = identical(state[["prediction"]][["storage"]], "database")
+  if (database) fitted_resource_connection(object[["resource_state"]])
   required = unique(c(object[["model_spec"]][["source_vars"]], object[["offset"]],
     unlist(lapply(state[["specification"]][["dictionaries"]], `[[`, "columns")),
     unlist(object[["varying_slopes"]])))
@@ -90,13 +94,17 @@ predict.dbglm = function(object, newdata, type = c("link", "response"), ...) {
   data = newdata[valid, , drop = FALSE]
   positions = which(valid)
   groups = NULL
+  lookup = NULL
   if (!is.null(state)) {
-    groups = prediction_match_groups(state, data)
-    known = if (length(groups)) Reduce(`&`, lapply(groups, function(group) !is.na(group))) else rep(TRUE, nrow(data))
+    lookup = if (database) prediction_database_lookup(state, object[["resource_state"]], data) else NULL
+    groups = if (!database) prediction_match_groups(state, data) else NULL
+    known = if (database) !is.na(lookup[["gamma"]]) else if (length(groups))
+      Reduce(`&`, lapply(groups, function(group) !is.na(group))) else rep(TRUE, nrow(data))
     if (!any(known)) return(prediction)
     if (!all(known)) {
       data = data[known, , drop = FALSE]
       groups = lapply(groups, function(group) group[known])
+      if (database) lookup = lookup[known, , drop = FALSE]
       positions = positions[known]
     }
   }
@@ -105,7 +113,7 @@ predict.dbglm = function(object, newdata, type = c("link", "response"), ...) {
   if (object[["has_intercept"]]) design = cbind("(Intercept)" = 1, design)
   beta = stats::coef(object)
   names(beta) = object[["design_names"]]
-  eta = if (!is.null(state)) predict_from_fitted_state(state, design, data, groups = groups) else
+  eta = if (!is.null(state)) predict_from_fitted_state(state, design, data, groups = groups, lookup = lookup) else
     as.vector(design[, names(beta), drop = FALSE] %*% beta)
   if (!is.null(object[["offset"]])) eta = eta + as.numeric(data[[object[["offset"]]]])
   prediction[positions] = if (type == "link") eta else object[["family"]][["linkinv"]](eta)

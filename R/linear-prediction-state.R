@@ -1,7 +1,7 @@
 # Use the original linear fit's slopes and RSS; only nuisance coefficients are
 # recovered. Both model classes share the bounded FE kernel and prediction state.
 finalize_linear_prediction = function(result, inputs) {
-  if (!identical(inputs[["retain"]], "prediction") || !length(inputs[["fe"]])) return(result)
+  if (!retain_prediction(inputs[["retain"]]) || !length(inputs[["fe"]])) return(result)
   conn = inputs[["conn"]]
   components = lapply(inputs[["prediction_fe_components"]], unique)
   from = inputs[["from_statement"]]

@@ -15,7 +15,7 @@ dbreg_moment_projections = function(inputs, x_sql, x_names, max_iter, tol) {
   dbglm_validate_moment_limits(max_cells, max_cells)
   vars = c(yvar, x_names)
   columns = paste0("dbreg_m_v", seq_along(vars))
-  ids = unique(c(fe, cluster_var))
+  ids = unique(c(fe, cluster_var, inputs[["retained_key_safe"]]))
   id_columns = paste0("dbreg_m_id", seq_along(ids))
   fe_columns = paste0("dbreg_m_f", seq_along(fe))
   # Pair rows carry NULL RHS fields too. Bound the entire rectangular transfer

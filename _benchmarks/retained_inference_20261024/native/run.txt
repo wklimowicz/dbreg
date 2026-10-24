@@ -1,0 +1,21 @@
+ℹ Loading dbreg
+Starting native suite: test_retained_inference_live.R
+[Retained inference] moments 1
+[Retained inference] demean 2
+[Retained inference] demean 3
+[Retained inference] compress 4
+[Retained inference] logit
+[Retained inference] cloglog
+[Retained inference] probit
+[Retained inference] log
+[Retained inference] zero-column Poisson
+[Retained inference] all nested GLM fixed effects
+test_retained_inference_live.R  268 tests OK 8.5s
+All ok, 268 results (8.5s)
+Warning messages:
+1: In eval(family$initialize) : non-integer #successes in a binomial glm!
+2: In eval(family$initialize) : non-integer #successes in a binomial glm!
+3: In eval(family$initialize) : non-integer #successes in a binomial glm!
+4: In eval(family$initialize) : non-integer #successes in a binomial glm!
+                           suite assertions failures error elapsed_seconds
+1 test_retained_inference_live.R        268        0              507.9769

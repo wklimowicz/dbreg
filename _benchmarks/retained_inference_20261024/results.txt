@@ -1,0 +1,51 @@
+Retained sample and post-fit inference checkpoint (2026-10-24)
+--------------------------------------------------------------
+Native dbreg/dbglm accept retain="all". This explicitly retains one immutable
+original-row relation augmented with estimation membership, fitted predictors,
+residuals and projected scores, plus any learned-effect dictionaries. R inputs
+retain original positions; SQL inputs use explicit typed row_id or snapshot-local
+keys and promise no implicit ordering. Compact defaults are unchanged.
+
+predict(model), fitted(), residuals(), obs() and case.names() use that snapshot.
+R inputs return vectors/positions; SQL inputs return keyed relations with explicit
+collection and independent output leases. predict(sample="original") and
+residuals(na.rm=FALSE) preserve omitted positions. Native GLM prediction still
+defaults to link. dbreg::obs is an independent function: fixest::obs is not an S3
+generic. Closing the model releases sample-dependent operations; cached estimates,
+covariance and likelihood remain available. Portable newdata prediction survives.
+
+Post-fit vcov/summary/confint support IID, HC1, one-/two-way OLS clusters and
+one-way GLM clusters on columns of the immutable original source, including typed
+^ combinations. Missing cluster values on fitted rows error without refitting.
+SSC separates model K, covariance K and testing df; supports full/none/nonnested,
+G.df, numeric t.df and optional covariance eigenvalue repair. K.exact=TRUE is
+unsupported. OLS logLik uses unweighted residual RSS even for weighted fits,
+matching fixest; weighted OLS needs full retention to cache that statistic.
+
+Validation: 4,793 full local assertions, zero failures, 236.76 seconds; broad
+native 268 assertions in 507.98 seconds, focused final native 35 in 89.79 seconds.
+Package check: zero errors/warnings, existing optional binsreg NOTE. The broad
+native source predates influence-before-crossproduct numerical stabilization,
+fit-time numeric NaN key rejection and test namespace qualification; six originals
+are archived and audited. Final numerical checks cover weights 1e-200/1/1e200,
+GLM covariance and NaN versus literal-text keys. An initial local full run failed
+because another test attached fixest and masked unqualified obs calls; fixtures
+now explicitly use dbreg::obs, and the complete final rerun passes.
+
+Million-row, 50,000/49,997-level two-FE local fixture: six fits match named slopes,
+full covariance and N. Three measured warmed fits per mode give median 11.911s
+with prediction retention and 10.638s with full retention, with overlapping ranges
+and material timing noise; this does not establish a speedup or zero overhead.
+Whole-process peak RSS is 664,040 versus 806,444 KiB (+21.4%). Full-state R object
+is 28,752 bytes versus 19,960; its N-sized data remains in SQL. Score capture
+returns at most one row/query (2,000 total R object bytes), and post-fit HC1 plus
+two-way clustering at most one row/query (5,248 bytes), median 0.106s together.
+Default prediction returns a million keyed rows matching the analytical target;
+outputs survive model close and all owned tables disappear after final release.
+These measurements do not establish native large-state or disk-history costs.
+
+Evidence: _benchmarks/retained_inference_20261024/, including audit-source.R.
+Fit-time two-way clustering, external new cluster key mapping, compatibility
+entry points/formula normalization and large 3+ FE/varying-slope recovery boundaries
+remain unfinished. Full retention requires finite GLM fits and DuckDB/native
+Databricks; IV/Mundlak retained inference and learned-FE intervals are unsupported.

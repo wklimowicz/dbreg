@@ -49,6 +49,7 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
 
     }
   }
+  if (isTRUE(fe) && !isTRUE(collin) && !is.null(object[["all_coefficients"]])) return(object[["all_coefficients"]])
   
   ct = object[["coeftable"]]
   out = if (isTRUE(collin) && !is.null(object[["collin.coef"]])) {
@@ -126,6 +127,9 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
 #' @param prediction_table Optional caller-named session table receiving output.
 #'   Requires a caller-owned connection and must not already exist. Otherwise
 #'   the result owns its temporary table; see [dbreg-prediction].
+#' @param sample Without `newdata`, `"estimation"` returns the fitted rows and
+#'   `"original"` includes omitted original rows as missing. Requires `retain="all"`;
+#'   R inputs return ordered vectors and SQL inputs return keyed relations.
 #' @section Database prediction:
 #' Returns a `dbreg_prediction` relation containing the original typed keys and
 #'   a prediction column. Its `prediction_column` field names that column.
@@ -152,17 +156,24 @@ predict.dbreg = function(
   path = NULL,
   row_id = NULL,
   prediction_table = NULL,
+  sample = c("estimation", "original"),
   ...
 ) {
   check_unused_args(list(...))
   interval = match.arg(interval)
+  sample = match.arg(sample)
   if (any(!vapply(list(conn, table, path, row_id, prediction_table), is.null, logical(1)))) {
     if (interval != "none") stop("Database prediction output does not support intervals.", call. = FALSE)
     return(predict_sql(object, newdata, conn, table, path, row_id, prediction_table))
   }
+  if (is.null(newdata) && !is.null(object[["fitted_state"]][["inference"]])) {
+    if (interval != "none") stop("Retained sample prediction currently supports interval='none'.", call. = FALSE)
+    return(predict_retained_sample(object, sample = sample))
+  }
+  if (is.null(newdata) && sample == "original") stop("Original-sample prediction requires retain='all'.", call. = FALSE)
   stored_compression = identical(object[["strategy"]], "compress") &&
     (is.null(newdata) || identical(newdata, object[["data"]]))
-  if (!is.null(object[["fitted_state"]]) && !stored_compression) return(predict_linear_state(object, newdata, interval))
+  if (!is.null(object[["fitted_state"]][["prediction"]]) && !stored_compression) return(predict_linear_state(object, newdata, interval))
   strategy = object[["strategy"]] 
 
   # Demean strategy doesn't support intervals (FE uncertainty not available)
@@ -314,15 +325,43 @@ predict.dbreg = function(
 #' @param object A `dbreg` object.
 #' @param fe Include covariance rows and columns for explicit fixed effects?
 #'   Default is `FALSE`, matching [coef()].
-#' @param ... Additional covariance requests are not yet supported and produce
-#'   an error. This method returns the covariance calculated when fitting.
+#' @param ... Additional arguments are not supported.
+#' @param vcov,cluster Optional post-fit covariance type or cluster formula/names.
+#'   Requires `retain="all"`. Supported requests are IID, HC1, one-/two-way OLS
+#'   and one-way GLM clustering. `^` combines typed columns within a cluster.
+#' @param ssc Optional small-sample correction list; see [summary.dbreg()].
+#' @param vcov_fix Repair nonpositive covariance eigenvalues when needed.
+#' @details Without a request, returns the fitted covariance unchanged. Post-fit
+#'   requests use saved scores on exactly the fitted sample. Missing cluster
+#'   values error, and absent columns require refitting or a supported mapping.
+#'   Ordinary post-fit requests only cover slope covariance (`fe=FALSE`).
 #' @inherit coef.dbreg examples
 #' @export
-vcov.dbreg = function(object, fe = FALSE, ...) {
+vcov.dbreg = function(object, fe = FALSE, ..., vcov = NULL, cluster = NULL, ssc = NULL, vcov_fix = TRUE) {
   check_unused_args(list(...))
+  if (inherits(fe, "formula") || is.character(fe)) {
+    if (!is.null(vcov)) stop("Specify one covariance request.", call. = FALSE)
+    vcov = fe
+    fe = FALSE
+  }
+  if (!is.null(vcov) || !is.null(cluster) || !is.null(ssc) || !identical(vcov_fix, TRUE)) {
+    if (!identical(fe, FALSE)) stop("Post-fit absorbed-effect covariance is not supported; use fe=FALSE.", call. = FALSE)
+    if (is.null(vcov) && is.null(cluster)) {
+      saved = object[["covariance_request"]]
+      if (!is.null(saved)) {
+        vcov = saved[["vcov"]]
+        cluster = saved[["cluster"]]
+      } else vcov = object[["fitted_state"]][["inference"]][["default_vcov"]]
+    }
+    if (is.null(vcov) && is.null(cluster)) vcov = object[["vcov_type"]]
+    if (is.null(vcov) && is.null(cluster)) vcov = attr(object[["vcov"]], "type")
+    return(retained_covariance(object, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix))
+  }
   out = object[["vcov"]]
-  metadata = lapply(c("type", "n_clusters", "n_params", "rss", "tss"), function(nm) attr(out, nm))
-  names(metadata) = c("type", "n_clusters", "n_params", "rss", "tss")
+  if (isTRUE(fe) && length(object[["fe"]]) && isTRUE(object[["postfit_covariance"]])) stop("Post-fit absorbed-effect covariance is not supported; use fe=FALSE.", call. = FALSE)
+  fields = c("type", "n_clusters", "n_params", "rss", "tss", "df.K", "df.t", "ssc")
+  metadata = lapply(fields, function(nm) attr(out, nm))
+  names(metadata) = fields
   # The table already has public names (including interaction separators).
   # Its rows and the stored covariance share the fitted parameter order.
   dimnames(out) = rep(list(rownames(object[["coeftable"]])), 2L)
@@ -344,10 +383,13 @@ vcov.dbreg = function(object, fe = FALSE, ...) {
 #' @param fe Should the fixed effects be included? Default is `FALSE`.
 #' @param ... Only the superseded `fes` argument is accepted. Other arguments
 #'   produce an error.
+#' @param vcov,cluster,ssc,vcov_fix Optional post-fit covariance controls, as in
+#'   [summary.dbreg()]. New requests require `retain="all"` and `fe=FALSE`.
 #' @inherit coef.dbreg examples
 #' @importFrom stats qt
 #' @export
-confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...) {
+confint.dbreg = function(object, parm, level = 0.95, fe = FALSE,
+  vcov = NULL, cluster = NULL, ssc = NULL, vcov_fix = TRUE, ...) {
 
   # superseded args handled through ...
   dots = list(...)
@@ -358,6 +400,11 @@ confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...) {
       warning('The `fes` argument has been superseded by `fe` (without the "s") and will be deprecated in a future `dbreg` release.\n')
 
     }
+  }
+  if (!is.null(vcov) || !is.null(cluster) || !is.null(ssc) || !identical(vcov_fix, TRUE) || isTRUE(object[["postfit_covariance"]])) {
+    if (!identical(fe, FALSE)) stop("Post-fit absorbed-effect intervals are not supported; use fe=FALSE.", call. = FALSE)
+    V = vcov.dbreg(object, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)
+    return(inference_confint(object, V, if (missing(parm)) NULL else parm, level))
   }
 
   ct = object[["coeftable"]]

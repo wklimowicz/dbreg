@@ -1,0 +1,5 @@
+"mode","assertions","failures","elapsed_seconds","error"
+"full",0,1,208.94251704216,"in obs(fit):
+ Argument `x` must be an object of class 'fixest'.
+PROBLEM: the object is not of the appropriate class (instead it is of class
+dbreg and list)."

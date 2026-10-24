@@ -13,11 +13,18 @@ validate_source_row_id = function(conn, from_statement, row_id) {
   counter = safe_identifiers("dbreg_key_count__", taken = row_id,
     fold_case = folds_identifier_case(conn))
   count = sql_count_expr(detect_backend(conn)[["name"]])
+  missing = paste0(quoted, " IS NULL")
+  backend = detect_backend(conn)
+  if (backend[["name"]] == "duckdb" || isTRUE(backend[["is_databricks"]])) {
+    text = if (isTRUE(backend[["is_databricks"]])) "STRING" else "VARCHAR"
+    missing = c(missing, paste0("(LOWER(typeof(", quoted, ")) IN ('double','float','real') AND LOWER(CAST(",
+      quoted, " AS ", text, "))='nan')"))
+  }
   # Compare counts in SQL so even counts outside double's exact integer range
   # cannot turn a duplicate into a false successful validation in R.
   info = DBI::dbGetQuery(conn, paste0("SELECT CASE WHEN COALESCE(SUM(", counter,
     "),0)=", count, " THEN 0 ELSE 1 END AS duplicate_keys,COALESCE(SUM(CASE WHEN ",
-    paste(paste0(quoted, " IS NULL"), collapse = " OR "), " THEN ", counter,
+    paste(missing, collapse = " OR "), " THEN ", counter,
     " ELSE 0 END),0) AS n_null FROM (SELECT ", paste(quoted, collapse = ","),
     ",", sql_count(conn, counter), " ", from_statement,
     " GROUP BY ", paste(quoted, collapse = ","), ") dbreg_keys"))
@@ -64,10 +71,18 @@ export_retained_sample = function(conn, table, keys, from_statement, public_name
 prepare_linear_sample = function(inputs, from_statement, variables) {
   keys = inputs[["row_id"]]
   table = inputs[["sample_table"]]
-  prediction = identical(inputs[["retain"]], "prediction") && length(inputs[["fe_labels"]]) > 0L
-  if (is.null(keys) && is.null(table) && !prediction) return(from_statement)
+  full = identical(inputs[["retain"]], "all")
+  prediction = retain_prediction(inputs[["retain"]]) && length(inputs[["fe_labels"]]) > 0L
+  if (is.null(keys) && is.null(table) && !prediction && !full) return(from_statement)
   conn = inputs[["conn"]]
-  if (!is.null(table) || prediction) {
+  if (full && !is.null(table) && sample_table_exists(conn, table)) stop("Sample export table already exists.", call. = FALSE)
+  if (full) {
+    original = materialize_retained_source(conn, from_statement, inputs[["sample_resources"]],
+      inputs[["retained_input"]][["key"]], inputs[["retained_input"]][["r_input"]])
+    inputs[["retained_source"]] = original
+    from_statement = paste("FROM", DBI::dbQuoteIdentifier(conn, original[["table"]]))
+  }
+  if ((!is.null(table) || prediction) && !full) {
     backend = detect_backend(conn)
     if (backend[["name"]] != "duckdb" && !isTRUE(backend[["is_databricks"]])) {
       stop("Sample snapshots currently support DuckDB and native Databricks.", call. = FALSE)

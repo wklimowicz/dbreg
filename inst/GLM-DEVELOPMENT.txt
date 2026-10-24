@@ -217,3 +217,19 @@ the final output table transfers into its lease; intermediates, uploads and
 portable lookups are cleaned up. Caller exports use separate, empty leases
 and require caller-owned sessions. Full collection is explicit and protects
 large integer keys from driver rounding; SQL types remain unchanged.
+
+Retained inference implementation, 2026-10-24
+--------------------------------------------
+retained-sample.R owns original snapshots and the final keyed augmented relation.
+linear-inference-state.R captures shared frame scores while its projector lives;
+compression reconstructs a shared within frame at fixed fitted slopes and
+certifies RSS. glm-inference-state.R uses final projected working scores.
+score-moments.R projects scores by bread in SQL before aggregating crossproducts,
+avoiding intermediate overflow/underflow under extreme uniform weights. Only
+bounded covariance summaries return to R. inference-vcov.R handles SSC, typed
+cluster tuples, two-way inclusion/exclusion, fixest's approximate nesting shortcut
+and optional eigenvalue repair. Native fit-time covariance remains a separate
+compact path. retained-methods/extractors expose saved-sample operations and own
+obs(), using the same output leases as newdata prediction. NoFE inference-only
+state is excluded from learned-prediction consumers. See validation source scope
+and resource measurements in _benchmarks/retained_inference_20261024/results.txt.

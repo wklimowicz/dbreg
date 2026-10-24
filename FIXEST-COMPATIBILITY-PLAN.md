@@ -148,10 +148,22 @@ most one row collected per setup query. Median output creation is 0.155s in
 this warmed local fixture; backend row storage remains required and native
 large-output performance/history storage are unmeasured.
 
+Retained sample and post-fit inference now pass **4,793 full local assertions**,
+**268 broad native checks** and **35 focused final native numerical checks**.
+Package check has zero errors/warnings and the existing binsreg NOTE. Explicit
+`retain="all"` supports default/original-sample prediction, fitted values,
+residuals, observation identities and post-fit IID/HC1/one-/two-way OLS or
+one-way GLM covariance. Compact native defaults are unchanged. The broad native
+source preceded final numerical/key fixes and namespace-qualified test calls;
+archived source plus final focused coverage are documented in
+`_benchmarks/retained_inference_20261024/`. Its million-row fixture transfers
+only bounded score/covariance summaries; full retention increases whole-process
+peak RSS about 21% versus prediction-only in this noisy local comparison.
+
 The original handoff and interrupted-run evidence in sections 1 and 8 below are
 historical, preserved for provenance. They no longer describe the latest gate.
-Remaining dependencies include retained sample/score state, post-fit inference
-and formula adapters. Three or more large FE blocks
+Remaining dependencies include compatibility entry points/formula adapters,
+fit-time two-way OLS covariance and validated external cluster key mapping. Three or more large FE blocks
 and large varying-slope designs still need a supported recovery boundary. Use dbreg's
 existing conventions; consult fixest for unresolved user-facing compatibility
 choices. Concrete API/lifetime decisions are recorded in

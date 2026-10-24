@@ -1,0 +1,11 @@
+ℹ Loading dbreg
+Starting native suite: test_inference_numerics_live.R
+[Inference numerics] OLS uniform weight scale 1
+[Inference numerics] OLS uniform weight scale 1e-200
+[Inference numerics] OLS uniform weight scale 1e+200
+[Inference numerics] SQL NaN identities versus literal text NaN
+
+test_inference_numerics_live.R   35 tests OK 1.5s
+All ok, 35 results (1.5s)
+                           suite assertions failures error elapsed_seconds
+1 test_inference_numerics_live.R         35        0              89.79362

@@ -90,9 +90,14 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   `saveRDS()`, and can be released with [close()]. Other oversized designs
 #'   error instead of collecting the panel. Two-FE recovery uses the fitted
 #'   projection iteration limit and a tolerance at least as strict as `1e-10`.
+#'   `"all"` also saves original rows, fitted predictors, residuals and scores
+#'   in an owned database relation, enabling default/sample prediction, [obs()],
+#'   [residuals()] and post-fit covariance via [summary()]. It requires a finite
+#'   fit, adds row-sized backend storage/SQL work and needs its live owning session.
+#'   SQL inputs return keyed relations; R inputs preserve original positions.
 #' @return A compact object of class `c("dbglm", "dbreg")`, containing slopes,
-#'   covariance, log likelihood, sample counts and convergence diagnostics. Input
-#'   rows are not retained. Database-backed prediction retention keeps its owned
+#'   covariance, log likelihood, sample counts and convergence diagnostics. Compact
+#'   modes do not retain input rows. Database-backed retention keeps its owned
 #'   dictionary and live connection until [close()] or garbage collection.
 #' @details Missing/nonfinite model values and zero weights are omitted. Model
 #'   specification is fixed before IRLS, and rank decisions are held constant.
@@ -154,7 +159,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
                   control = dbglm_control(), verbose = FALSE,
                   fixef_rm = c("perfect_fit", "singletons", "infinite_coef", "none"),
                   row_id = NULL, sample_table = NULL, separation = c("error", "prediction"),
-                  retain = c("none", "prediction")) {
+                  retain = c("none", "prediction", "all")) {
   family = dbglm_family(family)
   if (is.character(fml) && length(fml) == 1 && !is.na(fml)) fml = stats::as.formula(fml, env = baseenv())
   if (!is.logical(verbose) || length(verbose) != 1 || is.na(verbose)) stop("`verbose` must be TRUE or FALSE.", call. = FALSE)
@@ -167,7 +172,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   fixef_rm = match.arg(fixef_rm)
   separation = match.arg(separation)
   retain = match.arg(retain)
-  if (retain == "prediction") prediction_state_limit()
+  if (retain_prediction(retain)) prediction_state_limit()
   if (family[["family"]] == "poisson" && separation == "prediction") {
     stop("Boundary prediction mode supports binomial families only.", call. = FALSE)
   }
@@ -213,9 +218,15 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
 
   resources = dbglm_resources()
   on.exit(dbglm_release_resources(resources), add = TRUE)
+  retained_data = prepare_retained_data(data, table, retain)
+  data = retained_data[["data"]]
   setup = setup_db_connection(conn, table, data, path, caller = "dbglm", resources = resources,
     duckdb_config = list(temp_directory = ""))
   conn = setup[["conn"]]
+  retained_source = if (retain == "all") materialize_retained_source(conn, setup[["from_statement"]], resources,
+    retained_data[["key"]], retained_data[["r_input"]]) else NULL
+  source_from = if (is.null(retained_source)) setup[["from_statement"]] else paste("FROM", DBI::dbQuoteIdentifier(conn, retained_source[["table"]]))
+  resources[["retain_scores"]] = identical(retain, "all")
   backend_info = detect_backend(conn)
   if (backend_info[["name"]] != "duckdb" && !isTRUE(backend_info[["is_databricks"]])) {
     stop("dbglm() supports native DuckDB or Databricks connections.", call. = FALSE)
@@ -231,7 +242,8 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   if (any(startsWith(real_vars, "__dbglm_")) || any(startsWith(real_vars, "dbglm_factor_"))) stop("Source names use a reserved GLM prefix.", call. = FALSE)
   snapshot = create(paste("SELECT", paste(c(quote_id(real_vars),
     vapply(names(normalized[["factors"]]), function(a) paste(quote_id(normalized[["factors"]][[a]]), "AS", a), character(1)),
-    if (isTRUE(backend_info[["is_databricks"]])) "monotonically_increasing_id() AS __dbglm_key" else "ROW_NUMBER() OVER () AS __dbglm_key"), collapse = ", "), setup[["from_statement"]]), materialize = !is.null(sample_table) && is.null(row_id))
+    if (!is.null(retained_source)) paste(quote_id(retained_source[["key"]]), "AS __dbglm_key") else
+      if (isTRUE(backend_info[["is_databricks"]])) "monotonically_increasing_id() AS __dbglm_key" else "ROW_NUMBER() OVER () AS __dbglm_key"), collapse = ", "), source_from), materialize = !is.null(sample_table) && is.null(row_id))
   validate_source_row_id(conn, paste("FROM", snapshot), row_id)
   schema = dbglm_get_query(conn, paste("SELECT * FROM", snapshot, "LIMIT 0"))
   for (name in c(parsed[["yvar"]], weights, offset, unlist(normalized[["slopes"]]))) {
@@ -326,7 +338,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   public = c(if (has_intercept) "(Intercept)", spec[["columns"]][["name"]])
   x = c(if (has_intercept) "__dbglm_intercept", spec[["columns"]][["alias"]])
   if (!length(x) && !length(fe)) stop("No GLM design columns were specified.", call. = FALSE)
-  prediction_keys = if (retain == "prediction" && length(fe)) prediction_key_fields(conn, parsed[["fe_components"]]) else
+  prediction_keys = if (retain_prediction(retain) && length(fe)) prediction_key_fields(conn, parsed[["fe_components"]]) else
     list(fields = character(), columns = list())
   trend_fields = vapply(trend_sources, function(v) paste0("CAST(", quote_id(v), " AS DOUBLE) AS ", trend_aliases[[v]]), character(1))
   fields = c("__dbglm_key", fe, prediction_keys[["fields"]], trend_fields, sprintf("CAST((%s) AS DOUBLE) AS %s", quote_id(parsed[["yvar"]]), "__dbglm_y"),
@@ -479,7 +491,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     varying_slopes = normalized[["slopes"]], row_id = row_id, sample_table = sample_table, ap_cycles = fit[["ap_cycles"]], ap_residual = fit[["ap_residual"]],
     projection_iterations = fit[["ap_cycles"]], projection_residual = fit[["ap_residual"]],
     projection_method = if (!is.null(fit[["projection_method"]])) fit[["projection_method"]] else if (length(fe)) "group" else "none", call = call)
-  if (retain == "prediction" && length(fe)) {
+  if (retain_prediction(retain) && length(fe)) {
     prediction_beta = numeric(length(all_x))
     prediction_beta[keep] = fit[["beta"]]
     result[["fitted_state"]] = dbglm_prediction_state(conn, fit[["working"]], base,
@@ -487,6 +499,10 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
       design_center, trend_aliases, counts[["sizes"]], create, drop, n,
       dictionary_components = prediction_keys[["columns"]], fitted_beta = prediction_beta,
       recovery_control = list(tol = control[["fe_tol"]], max_iter = control[["fe_max_iter"]]))
+  }
+  if (retain == "all") {
+    result = retain_glm_score_frame(result, fit, conn, base, x, fe, retained_source, resources,
+      parsed[["fe_components"]], row_id, weights, weight_scale, counts, ssc)
   }
   if (!is.null(sample_table)) {
     keys = if (length(row_id)) row_id else "__dbglm_key"

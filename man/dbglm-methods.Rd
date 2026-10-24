@@ -18,7 +18,17 @@
 
 \method{df.residual}{dbglm}(object, ...)
 
-\method{confint}{dbglm}(object, parm, level = 0.95, fe = FALSE, ...)
+\method{confint}{dbglm}(
+  object,
+  parm,
+  level = 0.95,
+  fe = FALSE,
+  vcov = NULL,
+  cluster = NULL,
+  ssc = NULL,
+  vcov_fix = TRUE,
+  ...
+)
 
 \method{predict}{dbglm}(
   object,
@@ -29,6 +39,7 @@
   path = NULL,
   row_id = NULL,
   prediction_table = NULL,
+  sample = c("estimation", "original"),
   ...
 )
 
@@ -60,6 +71,9 @@ Database-backed dictionaries need their live owning session; see
 \item{fe}{Must be `FALSE` for GLM confidence intervals. This argument is
 accepted for shared tidying; absorbed-effect intervals are not supported.}
 
+\item{vcov, cluster, ssc, vcov_fix}{Optional post-fit covariance controls, as in
+[summary.dbreg()]. New requests require `retain="all"`.}
+
 \item{newdata}{Data frame containing regressors, fitted FE keys and varying
 slope variables, and any fitted offset column. Outcomes and fitting weights
 are not required. Missing inputs preserve their positions as `NA` predictions.}
@@ -72,6 +86,9 @@ argument selects keyed database output; see [dbreg-prediction].}
 
 \item{prediction_table}{Optional caller-named output session table. Requires
 a caller-owned connection and must not already exist.}
+
+\item{sample}{Without `newdata`, returns fitted estimation rows or original
+rows with omitted positions missing; requires `retain="all"`.}
 
 \item{conf.int}{Include confidence intervals?}
 

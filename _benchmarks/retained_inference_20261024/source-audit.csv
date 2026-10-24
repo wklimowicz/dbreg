@@ -1,0 +1,6 @@
+"manifest","files","differences","scope"
+"local-final/full-source-md5.csv",171,0,"final implementation"
+"native-numerics/source-md5.csv",170,0,"final implementation"
+"prediction-source-md5.csv",60,0,"final implementation"
+"all-source-md5.csv",60,0,"final implementation"
+"native/source-md5.csv",167,6,"before numerical stabilization, NaN key rejection and test namespace qualification"

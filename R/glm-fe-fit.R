@@ -164,7 +164,7 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
       final = solve_partial_wls(conn, working, x, fe, control, create, drop, response = FALSE, cache = cache,
         materialize = FALSE, scales = if (p) current[["scales"]][seq_len(p)] else numeric(),
         extra_sums = if (p && !is.null(current[["raw_score"]])) "score" else character(),
-        need_table = !use_moments || (p > 0L && vcov_type != "iid"), precomputed = current[["fe_moments"]])
+        need_table = !use_moments || (p > 0L && (vcov_type != "iid" || isTRUE(cache[["retain_scores"]]))), precomputed = current[["fe_moments"]])
       H = if (p) {
         if (!is.null(final[["cross_reduction"]])) current[["raw_moments"]][seq_len(p), seq_len(p), drop = FALSE] - final[["cross_reduction"]] else
           dbglm_read_information(dbglm_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", final[["table"]])), p)

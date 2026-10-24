@@ -53,7 +53,7 @@ build_base_frame = function(inputs, x_sql, x_names) {
     c("yvar", "weights", "cluster_var", "from_statement", "conn", "intercept")
   )
   y = yvar
-  sel = frame_select(y, x_sql, x_names, extra = c(weights, cluster_var))
+  sel = frame_select(y, x_sql, x_names, extra = c(weights, cluster_var, inputs[["retained_key_safe"]]))
   base_sql = paste0("SELECT ", paste(sel, collapse = ", "), " ", from_statement)
   list(
     cte_sql = paste0("WITH base AS (\n  ", base_sql, "\n)"),
@@ -150,9 +150,10 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     }
     passthrough = c(
       if (!is.null(weights)) sprintf("b.%s AS weights", weights),
-      if (!is.null(cluster_var) && !cluster_var %in% fe) sprintf("b.%s AS %s", cluster_var, cluster_var)
+      if (!is.null(cluster_var) && !cluster_var %in% fe) sprintf("b.%s AS %s", cluster_var, cluster_var),
+      if (length(inputs[["retained_key_safe"]])) sprintf("b.%s AS %s", inputs[["retained_key_safe"]], inputs[["retained_key_safe"]])
     )
-    sel = frame_select(y, x_sql, x_names, id_cols = fe, extra = c(weights, cluster_var))
+    sel = frame_select(y, x_sql, x_names, id_cols = fe, extra = c(weights, cluster_var, inputs[["retained_key_safe"]]))
     cte_sql = paste0(
       "WITH base AS (\n  SELECT ", paste(sel, collapse = ", "), " ", from_statement, "\n),\n",
       paste(mean_ctes, collapse = ",\n"), ",\n",

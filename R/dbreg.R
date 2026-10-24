@@ -120,6 +120,13 @@
 #'   be restored with `saveRDS()`; other oversized designs error explicitly.
 #'   Two-FE recovery uses `fe_max_iter` and a tolerance at least as strict as
 #'   `1e-10`; varying slopes require portable state.
+#'   `"all"` additionally saves an immutable original sample with fitted
+#'   predictors, residuals and scores in the database. It enables default/sample
+#'   prediction, [obs()], [residuals()] and post-fit covariance through [summary()].
+#'   This adds row-sized backend storage and SQL work; no panel is implicitly
+#'   collected into R for SQL inputs. R inputs retain their original positions;
+#'   SQL inputs use `row_id`, or snapshot-local generated keys when it is absent.
+#'   Full state needs its live owning session and is released by [close()].
 #' @param fe_tol Positive per-fit tolerance for the fixed-effect projection.
 #' @param fe_max_iter Positive maximum number of fixed-effect projection iterations.
 #' @param diagnostics Run an additional input scan for per-variable missingness
@@ -385,7 +392,7 @@ dbreg = function(
   factor_refs = NULL,
   row_id = NULL,
   sample_table = NULL,
-  retain = c("none", "prediction"),
+  retain = c("none", "prediction", "all"),
   ...
 ) {
 
@@ -396,7 +403,7 @@ dbreg = function(
   cluster_var = vcov_parsed[["cluster_var"]]
   strategy = match.arg(strategy)
   retain = match.arg(retain)
-  if (retain == "prediction") {
+  if (retain_prediction(retain)) {
     prediction_state_limit()
   }
   if (strategy == "within") strategy = "demean"  # alias
@@ -414,7 +421,7 @@ dbreg = function(
     }
   }
 
-  if (retain == "prediction" && (isTRUE(sql_only) || isTRUE(data_only))) {
+  if (retain_prediction(retain) && (isTRUE(sql_only) || isTRUE(data_only))) {
     stop("Prediction retention cannot be combined with sql_only/data_only.", call. = FALSE)
   }
   validate_row_id_arg(row_id)
@@ -428,11 +435,14 @@ dbreg = function(
       stop("`sample_table` cannot be combined with `sql_only` or `data_only`.", call. = FALSE)
     }
   }
-  sample_resources = if (!is.null(sample_table) || retain == "prediction") dbglm_resources() else NULL
+  sample_resources = if (!is.null(sample_table) || retain_prediction(retain)) dbglm_resources() else NULL
+  retained_data = prepare_retained_data(data, table, retain)
+  data = retained_data[["data"]]
 
   # Collect the (normalised) arguments into the `inputs` environment, which
   # the rest of the pipeline reads from and writes to (reference semantics)
   inputs = new.env(parent = emptyenv())
+  inputs[["retained_input"]] = retained_data[c("key", "r_input")]
   env2env(
     environment(),
     inputs,
@@ -456,7 +466,7 @@ dbreg = function(
 
   # Choose strategy (mutates inputs[["is_balanced"]], inputs[["compression_ratio_est"]])
   chosen_strategy = choose_strategy(inputs)
-  if (retain == "prediction" && length(inputs[["fe"]]) && chosen_strategy == "mundlak") {
+  if (retain_prediction(retain) && length(inputs[["fe"]]) && chosen_strategy == "mundlak") {
     stop("Prediction retention for the Mundlak strategy is not implemented yet.", call. = FALSE)
   }
 
@@ -517,11 +527,12 @@ process_dbreg_inputs = function(inputs) {
 
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
   # results are mapped back to display names at the end
-  src = safe_source(conn, from_statement, c(source_vars, inputs[["row_id"]]))
+  src = safe_source(conn, from_statement, c(source_vars, inputs[["row_id"]], inputs[["retained_source"]][["key"]]))
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
   source_map = name_map
   inputs[["row_id_safe"]] = src[["to_safe"]](inputs[["row_id"]])
+  inputs[["retained_key_safe"]] = src[["to_safe"]](inputs[["retained_source"]][["key"]])
   fml_parsed = parse_regression_formula(src[["to_safe"]](fml), allow_extended = TRUE)
   inputs[["prediction_fe_components"]] = fml_parsed[["fe_components"]]
   source_xvars = fml_parsed[["xvars"]]
@@ -828,7 +839,7 @@ dbreg_alternating_projections = function(
     if (method == "cg" && length(fe) == 2L && solver != "moments") {
       projected = dbreg_duckdb_cg_projections(
         conn, from_statement, fe, yvar, xvars_sql, xvar_names, weights,
-        cluster_var, verbose, max_iter, tol
+        unique(c(cluster_var, inputs[["retained_key_safe"]])), verbose, max_iter, tol
       )
       if (!is.null(projected)) return(projected)
       if (verbose) message("[dbreg] Bounded DuckDB projection unavailable; using join AP")
@@ -856,7 +867,7 @@ dbreg_alternating_projections = function(
 
   # FE and cluster identifiers must survive every AP table, including when
   # they are also regressors (which are otherwise replaced by `_tilde` columns).
-  id_cols = unique(c(fe, cluster_var))
+  id_cols = unique(c(fe, cluster_var, inputs[["retained_key_safe"]]))
   id_cols = id_cols[!is.na(id_cols) & id_cols != ""]
 
   seed = paste0(
@@ -1153,6 +1164,7 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   result = finalize_fit_diagnostics(result, inputs)
   result = finalize_linear_design(result, inputs)
   result = finalize_linear_prediction(result, inputs)
+  result = finalize_linear_inference(result, inputs)
   result = finalize_linear_sample(result, inputs)
   if (identical(result[["fitted_state"]][["resources"]][["storage"]], "database")) {
     inputs[["sample_resources"]][["own_conn"]] = isTRUE(inputs[["own_conn"]])

@@ -4,7 +4,15 @@
 \alias{vcov.dbreg}
 \title{Variance-covariance matrix for dbreg objects}
 \usage{
-\method{vcov}{dbreg}(object, fe = FALSE, ...)
+\method{vcov}{dbreg}(
+  object,
+  fe = FALSE,
+  ...,
+  vcov = NULL,
+  cluster = NULL,
+  ssc = NULL,
+  vcov_fix = TRUE
+)
 }
 \arguments{
 \item{object}{A `dbreg` object.}
@@ -12,11 +20,24 @@
 \item{fe}{Include covariance rows and columns for explicit fixed effects?
 Default is `FALSE`, matching [coef()].}
 
-\item{...}{Additional covariance requests are not yet supported and produce
-an error. This method returns the covariance calculated when fitting.}
+\item{...}{Additional arguments are not supported.}
+
+\item{vcov, cluster}{Optional post-fit covariance type or cluster formula/names.
+Requires `retain="all"`. Supported requests are IID, HC1, one-/two-way OLS
+and one-way GLM clustering. `^` combines typed columns within a cluster.}
+
+\item{ssc}{Optional small-sample correction list; see [summary.dbreg()].}
+
+\item{vcov_fix}{Repair nonpositive covariance eigenvalues when needed.}
 }
 \description{
 Variance-covariance matrix for dbreg objects
+}
+\details{
+Without a request, returns the fitted covariance unchanged. Post-fit
+  requests use saved scores on exactly the fitted sample. Missing cluster
+  values error, and absent columns require refitting or a supported mapping.
+  Ordinary post-fit requests only cover slope covariance (`fe=FALSE`).
 }
 \examples{
 mod = dbreg(Temp ~ Wind | Month, data = airquality)

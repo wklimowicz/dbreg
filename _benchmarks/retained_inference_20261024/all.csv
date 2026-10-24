@@ -1,0 +1,4 @@
+"repetition","mode","elapsed_fit_seconds","elapsed_postfit_seconds","capture_max_rows","capture_object_bytes","postfit_max_rows","postfit_object_bytes","model_object_bytes"
+1,"all",12.83,0.125999999999998,1,2000,1,5248,28752
+2,"all",10.638,0.103000000000002,1,2000,1,5248,28752
+3,"all",10.273,0.106000000000002,1,2000,1,5248,28752

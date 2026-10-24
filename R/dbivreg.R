@@ -46,7 +46,7 @@
 #'   excluded from K, matching the default behavior of `fixest::feols`. See
 #'   [dbreg()] for details.
 #' @param sql_only Logical indicating whether to return only the underlying SQL
-#'   query.
+#'   query, or an iterative projection plan for multiway demeaning.
 #' @param data_only Logical indicating whether to return only the aggregated
 #'   sufficient statistics.
 #' @param drop_missings Logical indicating whether incomplete cases should be

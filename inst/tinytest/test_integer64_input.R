@@ -38,6 +38,9 @@ if (requireNamespace("bit64", quietly = TRUE)) local({
   conn = DBI::dbConnect(duckdb::duckdb(bigint = "integer64", config = list(threads = "2")))
   on.exit(DBI::dbDisconnect(conn, shutdown = TRUE))
   check(conn)
+  compressed = dbreg(y ~ x, data = d, conn = conn, strategy = "compress", diagnostics = TRUE)
+  expect_identical(nobs(compressed), as.numeric(n))
+  expect_identical(compressed[["nobs_dropped"]], 0)
   expect_equal(length(DBI::dbListTables(conn)), 0L)
   # A supplied connection may support integer64 independently of its output
   # mode in future drivers. Compare results in that case; otherwise fail closed.
@@ -62,6 +65,11 @@ if (requireNamespace("bit64", quietly = TRUE)) local({
   linear = dbreg(y ~ q + g_factor, data = d, strategy = "moments")
   linear_ref = lm(y ~ q + g_factor, reference_data)
   expect_equal(unname(predict(linear, d)), unname(predict(linear_ref, reference_data)), tolerance = 1e-8)
+  missing_linear = d
+  missing_linear[["q"]][1] = NA
+  expected_linear = as.numeric(predict(linear_ref, reference_data))
+  expected_linear[1] = NA_real_
+  expect_equal(predict(linear, missing_linear), expected_linear, tolerance = 1e-8)
   binary = dbglm(binary ~ q + factor(g), data = d)
   binary_ref = glm(binary ~ q + factor(g), reference_data, family = binomial("cloglog"),
     control = glm.control(epsilon = 1e-12))
@@ -83,4 +91,7 @@ if (requireNamespace("bit64", quietly = TRUE)) local({
   within_fit = dbreg(count ~ x | g, data = d, strategy = "demean")
   within_ref = lm(count ~ x + g_factor, reference_data)
   expect_equal(unname(predict(within_fit, d)), unname(predict(within_ref, reference_data)), tolerance = 1e-8)
+  weighted_within = dbreg(count ~ x | g, data = d, weights = "a", strategy = "demean")
+  weighted_ref = lm(count ~ x + g_factor, reference_data, weights = a)
+  expect_equal(predict(weighted_within, d), as.numeric(predict(weighted_ref, reference_data)), tolerance = 1e-8)
 })

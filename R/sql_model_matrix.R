@@ -19,6 +19,7 @@
 #' @param intercept Logical. Whether the model has an intercept. As in
 #'   [stats::model.matrix()], without an intercept the first factor main effect
 #'   keeps all of its levels (no reference level is dropped).
+#' @param factor_refs Optional named reference levels for categorical regressors.
 #' @return List with:
 #'   - `select_exprs`: character vector of SQL expressions
 #'   - `col_names`: corresponding column names
@@ -45,7 +46,8 @@ sql_model_matrix = function(
   expand = c("all", "interactions"),
   sep = "_x_",
   fe_vars = character(),
-  intercept = TRUE
+  intercept = TRUE,
+  factor_refs = NULL
 ) {
   expand = match.arg(expand)
   
@@ -64,7 +66,7 @@ sql_model_matrix = function(
   }
   
   # Get column types and factor levels from database
-  col_info = get_column_info(conn, table, term_labels)
+  col_info = get_column_info(conn, table, term_labels, factor_refs)
 
   # SQL-safe aliases for factor dummies, one per (variable, level), computed
   # once so that every term uses the same alias. They avoid the model's
@@ -80,6 +82,10 @@ sql_model_matrix = function(
   }
   level_aliases = do.call(rbind, c(list(data.frame(alias = character(), var = character(), level = character())), level_aliases))
   col_info[["level_aliases"]] = level_aliases
+  components = unique(unlist(lapply(term_labels, split_interaction_term)))
+  powers = components[vapply(components, function(t) !is.null(parse_power_term(t)), logical(1))]
+  col_info[["power_aliases"]] = if (length(powers)) setNames(safe_identifiers(
+    paste0("dbreg_power_", seq_along(powers), "__"), taken = taken, fold_case = fold_case), powers) else character()
 
   result = list(select_exprs = character(), col_names = character(), aliases = character())
   
@@ -109,9 +115,9 @@ sql_model_matrix = function(
 
 #' Get column types and factor levels from database
 #' @keywords internal
-get_column_info = function(conn, table, term_labels) {
+get_column_info = function(conn, table, term_labels, factor_refs = NULL) {
   # Extract unique variable names from all terms
-  vars = unique(unlist(lapply(term_labels, function(t) strsplit(t, ":")[[1]])))
+  vars = unique(unlist(lapply(term_labels, function(t) all.vars(str2lang(t)))))
   
   # Build FROM clause
   from_sql = if (grepl("^FROM", table, ignore.case = TRUE)) table else paste("FROM", table)
@@ -129,11 +135,16 @@ get_column_info = function(conn, table, term_labels) {
   for (v in vars) {
     col_class = class(schema[[v]])[1]
     # Treat character, factor, logical as categorical
-    if (col_class %in% c("character", "factor", "logical")) {
+    if (col_class %in% c("character", "factor", "logical") || v %in% names(factor_refs)) {
       types[[v]] = "factor"
       # All distinct levels (a sample could miss rare levels)
       lvl_query = glue("SELECT DISTINCT {v} FROM (SELECT {v} {from_sql}) lvl WHERE {v} IS NOT NULL ORDER BY {v}")
       levels[[v]] = dbGetQuery(conn, lvl_query)[[1]]
+      if (v %in% names(factor_refs)) {
+        ref = match(as.character(factor_refs[[v]]), as.character(levels[[v]]))
+        if (is.na(ref)) stop("Reference level was not found in regressor `", v, "`.", call. = FALSE)
+        levels[[v]] = levels[[v]][c(ref, setdiff(seq_along(levels[[v]]), ref))]
+      }
     } else {
       types[[v]] = "numeric"
     }
@@ -148,10 +159,10 @@ get_column_info = function(conn, table, term_labels) {
 #' `name` (column names) and `alias` (SQL-safe column names).
 #' @keywords internal
 expand_term = function(term, col_info, expand, sep = "_x_", all_terms = character(), fe_vars = character(), keep_all_levels = FALSE) {
-  vars = strsplit(term, ":")[[1]]
+  vars = split_interaction_term(term)
   is_interaction = length(vars) > 1
   
-  if (!is_interaction && expand == "interactions") {
+  if (!is_interaction && expand == "interactions" && is.null(parse_power_term(term))) {
     # Main effect, only expanding interactions: return as-is
     return(list(sql = term, name = term, alias = term))
   }
@@ -173,6 +184,10 @@ expand_term = function(term, col_info, expand, sep = "_x_", all_terms = characte
 #' Expand a single variable into SQL expression(s)
 #' @keywords internal
 expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRUE) {
+  power = parse_power_term(var)
+  if (!is.null(power)) {
+    return(list(sql = power[["sql"]], name = var, alias = unname(col_info[["power_aliases"]][var])))
+  }
   is_factor = identical(col_info[["types"]][[var]], "factor")
   
   # Only expand factors if: expand="all", OR variable is part of interaction

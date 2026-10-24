@@ -11,7 +11,9 @@
 #' estimated. Fixed effects should be included after a pipe, e.g
 #' `fml = y ~ x1 + x2 | fe1 + f2`. Interaction terms are supported using
 #' standard R syntax (`:` for interactions, `*` for main effects plus
-#' interaction). Transformations and literals are not yet supported.
+#' interaction). Squares and cubes use `I(x^2)` and `I(x^3)`. Combine fixed
+#' effects as tuples with `fe1^fe2`; for example, `y ~ x | school^year`.
+#' Other transformations must be created in the source data or a view.
 #' @param conn Database connection, e.g. created with
 #' \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
 #' ephemeral (in-memory). If no connection is provided, then an ephemeral
@@ -79,9 +81,10 @@
 #' This distinction only matters for small samples. For large datasets
 #' (`dbreg`'s target use case), the difference is negligible and hence we
 #' default to the simple `"full"` option.
-#' @param sql_only Logical indicating whether only the underlying compression
-#'   SQL query should be returned (i.e., no computation will be performed).
-#'   Default is `FALSE`.
+#' @param sql_only Return SQL without estimating coefficients? Multiway
+#'   demeaning returns a `dbreg_query_plan` with executable templates for the
+#'   iterative projection fallback; other strategies return their primary query.
+#'   Schema and strategy-selection queries may still run. Default is `FALSE`.
 #' @param data_only Logical indicating whether only the compressed dataset
 #'   should be returned (i.e., no regression is run). Default is `FALSE`.
 #' @param drop_missings Logical indicating whether incomplete cases (i.e., rows
@@ -94,6 +97,8 @@
 #'   console? Defaults to `FALSE`. This can be overridden for a single call
 #'   by supplying `verbose = TRUE`, or set globally via
 #'   `options(dbreg.verbose = TRUE)`.
+#' @param factor_refs Named categorical reference levels. Numeric-coded columns
+#'   named here are treated as factors.
 #' @param fe_tol Positive per-fit tolerance for the fixed-effect projection.
 #' @param fe_max_iter Positive maximum number of fixed-effect projection iterations.
 #' @param diagnostics Run an additional input scan for per-variable missingness
@@ -356,6 +361,7 @@ dbreg = function(
   fe_tol = getOption("dbreg.ap_tol", 1e-10),
   fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   diagnostics = FALSE,
+  factor_refs = NULL,
   ...
 ) {
 
@@ -388,7 +394,7 @@ dbreg = function(
     c(
       "fml", "conn", "table", "data", "path", "weights", "vcov_type_req",
       "cluster_var", "ssc", "strategy", "sql_only", "data_only", "compress_ratio",
-      "compress_nmax", "drop_missings", "verbose", "fe_tol", "fe_max_iter", "diagnostics"
+      "compress_nmax", "drop_missings", "verbose", "fe_tol", "fe_max_iter", "diagnostics", "factor_refs"
     )
   )
   # Release any connection/registration we create, including on errors during
@@ -447,7 +453,10 @@ process_dbreg_inputs = function(inputs) {
   from_statement = db_setup[["from_statement"]]
 
   # Parse (and validate) the formula with the user's names
-  fml_parsed = parse_regression_formula(fml)
+  fml_parsed = parse_regression_formula(fml, allow_extended = TRUE)
+  inputs[["original_fml"]] = fml_parsed[["fml"]]
+  inputs[["fe_labels"]] = fml_parsed[["fe_labels"]]
+  refs = validate_factor_refs(inputs[["factor_refs"]], fml_parsed[["xvars"]])
   any_continuous = any_continuous_vars(data, fml_parsed[["xvars"]])
   weights_display = weights
 
@@ -457,14 +466,22 @@ process_dbreg_inputs = function(inputs) {
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
   source_map = name_map
-  fml_parsed = parse_regression_formula(src[["to_safe"]](fml))
+  fml_parsed = parse_regression_formula(src[["to_safe"]](fml), allow_extended = TRUE)
+  source_xvars = fml_parsed[["xvars"]]
+  source_fes = unique(unlist(fml_parsed[["fe_components"]]))
+  if (length(refs)) names(refs) = src[["to_safe"]](names(refs))
+  inputs[["factor_refs"]] = refs
+  composite = linear_composite_frame(conn, from_statement, fml_parsed)
+  from_statement = composite[["from_statement"]]
+  fml_parsed = composite[["parsed"]]
+  inputs[["composite_fes"]] = composite[["composites"]]
   weights = src[["to_safe"]](weights)
   cluster_var = src[["to_safe"]](cluster_var)
   fml = fml_parsed[["fml"]]
   yvar = fml_parsed[["yvar"]]
   xvars = fml_parsed[["xvars"]]
   term_labels = fml_parsed[["term_labels"]]
-  has_interactions = fml_parsed[["has_interactions"]]
+  has_interactions = fml_parsed[["has_interactions"]] || fml_parsed[["has_transformations"]]
   fe = fml_parsed[["fe"]]
   # With FE the intercept is absorbed, so `- 1` / `0 +` only matters without FE
   intercept = fml_parsed[["has_intercept"]] || length(fe) > 0
@@ -478,11 +495,11 @@ process_dbreg_inputs = function(inputs) {
   inputs[["weights"]] = weights
   inputs[["source_map"]] = source_map
   inputs[["sample_diagnostics"]] = sample_diagnostics(inputs, from_statement,
-    list(outcome = yvar, regressor = xvars, fixed_effect = fe, weight = weights, cluster = cluster_var))
+    list(outcome = yvar, regressor = source_xvars, fixed_effect = source_fes, weight = weights, cluster = cluster_var))
 
   from_statement = filter_estimation_sample(
     from_statement,
-    vars = c(yvar, xvars, fe, cluster_var),
+    vars = c(yvar, xvars, source_fes, cluster_var),
     weights = weights,
     drop_missings = drop_missings
   )
@@ -1077,6 +1094,7 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
     return(result)
   }
   result = finalize_fit_diagnostics(result, inputs)
+  result = finalize_linear_design(result, inputs)
   result[["strategy"]] = chosen_strategy
   class(result) = c(class, class(result))
   result

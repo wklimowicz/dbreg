@@ -73,7 +73,7 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
 #'
 #' @param object A `dbreg` object.
 #' @param newdata Data frame for predictions. Required for objects that were
-#'   estimated using the `"mundlak"` and `"moments"` strategies, since `dbreg`
+#'   estimated using the `"demean"`, `"mundlak"` and `"moments"` strategies, since `dbreg`
 #'   does not retain any data for these estimations.
 #' @param interval Type of interval to compute: `"none"` (default), 
 #'   `"confidence"`, or `"prediction"`. Note that `"confidence"` intervals
@@ -85,14 +85,16 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
 #' 
 #' @section Predicting on "demean" strategy objects:
 #' 
-#' Predicting on `dbreg` objects should generally work as expected. However,
-#' predictions from `"demean"` strategy models carry two important caveats:
+#' Predictions from `"demean"` strategy models carry two important caveats:
 #' 
 #' 1. Predictions require group means to transform back to the original scale.
 #' If `newdata` contains the outcome variable, group means are computed from
 #' `newdata` and used to return level predictions. If the outcome is absent,
 #' within-group predictions (deviations from group means) are returned instead,
-#' with a message.
+#' with a message. These are conditional predictions for the supplied population,
+#' not out-of-sample predictions using saved training fixed effects. They change
+#' when the rows or outcomes in `newdata` change. Multiway effects use alternating
+#' weighted projections; weighted models require their weight column.
 #' 
 #' 2. Confidence/prediction intervals are not supported. A demeaned model cannot
 #' account for uncertainty in the fixed-effects (since these were absorbed at
@@ -100,6 +102,13 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
 #' Requesting intervals for `"demean"` strategy models will return point
 #' predictions with a message. Users should re-estimate with a different
 #' strategy if intervals are needed.
+#'
+#' @section Prediction design:
+#' Factor levels and treatment coding are retained from estimation. Unseen levels
+#' produce an error; incomplete rows produce `NA` without changing row order.
+#' Compressed fits support prediction on their stored cells without raw outcomes
+#' or weights. Mundlak means are computed from the supplied population, using
+#' fitted-model weights when present; they are not saved training group means.
 #'
 #' @seealso [dbreg()] for examples.
 #' @inherit coef.dbreg examples
@@ -125,21 +134,13 @@ predict.dbreg = function(
     interval = "none"
   }
 
-  if (is.null(newdata)) {
+  stored = is.null(newdata) || (strategy == "compress" && identical(newdata, object[["data"]]))
+  if (stored) {
     if (strategy == "compress" && !is.null(object[["data"]])) {
       newdata = object[["data"]]
     } else {
       stop("newdata is required for predictions, as dbreg does not retain the original data.")
     }
-  }
-
-  # Demean predictions recover the FE contribution via (double) demeaning,
-  # which only covers one or two FE
-  if (strategy == "demean" && length(object[["fe"]]) > 2) {
-    stop(
-      "predict() is not yet supported for demean models with more than two fixed effects.",
-      call. = FALSE
-    )
   }
 
   # Extract common components from object
@@ -149,9 +150,25 @@ predict.dbreg = function(
   yvar = object[["yvar"]]
   intercept = "(Intercept)" %in% names(betas)
 
+  required = unique(c(all.vars(stats::formula(fml, lhs = 0, rhs = 1)),
+    unlist(object[["composite_fes"]]), setdiff(fe, names(object[["composite_fes"]])),
+    if (strategy %in% c("demean", "mundlak")) object[["weights"]],
+    if (strategy == "demean" && yvar %in% names(newdata)) yvar))
+  if (stored) required = names(newdata)
+  missing = setdiff(required, names(newdata))
+  if (length(missing)) stop("newdata is missing required columns: ", paste(missing, collapse = ", "), call. = FALSE)
+  n_new = nrow(newdata)
+  valid = Reduce(`&`, lapply(newdata[, required, drop = FALSE], function(x) !is.na(x)))
+  if (!any(valid)) {
+    blank = rep(NA_real_, n_new)
+    return(if (interval == "none") blank else data.frame(fit = blank, lwr = blank, upr = blank))
+  }
+  newdata = newdata[valid, , drop = FALSE]
+  newdata = prediction_factors(object, newdata)
+
   # Ensure FE columns are factors
   for (f in fe) {
-    newdata[[f]] = factor(newdata[[f]])
+    if (!is.factor(newdata[[f]])) newdata[[f]] = factor(newdata[[f]])
   }
 
   # Rebuild the design from the model's own terms (so factors, interactions and
@@ -166,16 +183,19 @@ predict.dbreg = function(
     terms_rhs = "1"
   }
   fml_mm = reformulate(terms_rhs, intercept = intercept)
-  design_data = model_matrix_data(fml_mm, newdata)
-  # (sparse.model.matrix() can't handle backticked, non-syntactic names)
-  mm = tryCatch(
-    sparse.model.matrix(fml_mm, data = design_data),
-    error = function(e) model.matrix(fml_mm, data = design_data)
-  )
+  if (stored && !is.null(object[["compressed_design"]])) {
+    spec = object[["compressed_design"]]
+    data = newdata
+    names(data) = unname(spec[["source_names"]][names(data)])
+    mm = fitted_model_matrix(spec[["formula"]], data)
+    mm = mm[, names(spec[["columns"]]), drop = FALSE]
+    colnames(mm) = unname(spec[["columns"]])
+  } else mm = fitted_model_matrix(fml_mm, newdata)
   if (strategy == "mundlak") {
     # Group means of each design column, one set per FE
     mm_means = mapply(
-      function(term, f) ave(as.numeric(mm[, term]), newdata[[f]], FUN = function(y) mean(y, na.rm = TRUE)),
+      function(term, f) weighted_group_mean(as.numeric(mm[, term]), newdata[[f]],
+        if (is.null(object[["weights"]])) NULL else newdata[[object[["weights"]]]]),
       object[["mundlak_means"]][["term"]],
       object[["mundlak_means"]][["fe"]]
     )
@@ -196,21 +216,13 @@ predict.dbreg = function(
     # demean: sweep the FE out of the regressors (and recover the outcome's
     # group means, if available, to return level predictions)
     has_y = yvar %in% names(newdata)
-    mean_fn = function(y) mean(y, na.rm = TRUE)
-    sweep_fe = function(v) {
-      if (length(fe) == 1) {
-        v - ave(v, newdata[[fe[1]]], FUN = mean_fn)
-      } else {
-        v - ave(v, newdata[[fe[1]]], FUN = mean_fn) - ave(v, newdata[[fe[2]]], FUN = mean_fn) + mean_fn(v)
-      }
-    }
-    mm = apply(as.matrix(mm), 2, sweep_fe)
-    if (is.null(dim(mm))) {
-      mm = matrix(mm, nrow = 1)
-    }
+    groups = lapply(fe, function(f) newdata[[f]])
+    weights = if (is.null(object[["weights"]])) NULL else newdata[[object[["weights"]]]]
+    sweep_fe = function(v) demean_prediction_data(v, groups, weights)
+    mm = sweep_fe(mm)
     if (has_y) {
       y = as.numeric(newdata[[yvar]])
-      y_group_mean = y - sweep_fe(y)
+      y_group_mean = y - drop(sweep_fe(matrix(y, ncol = 1L)))
     } else {
       y_group_mean = 0
       message(sprintf(
@@ -247,7 +259,14 @@ predict.dbreg = function(
     fit = data.frame(fit = fit, lwr = lwr, upr = upr)
   }
 
-  return(fit)
+  if (interval == "none") {
+    out = rep(NA_real_, n_new)
+    out[valid] = fit
+  } else {
+    out = data.frame(fit = rep(NA_real_, n_new), lwr = NA_real_, upr = NA_real_)
+    out[valid, ] = fit
+  }
+  return(out)
 }
 
 #' Variance-covariance matrix for dbreg objects

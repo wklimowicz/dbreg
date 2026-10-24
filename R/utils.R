@@ -266,6 +266,8 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
 #' for regression: outcome variable, RHS variables, term labels, and fixed effects.
 #'
 #' @param fml A formula object (will be converted to Formula)
+#' @param allow_empty Allow an intercept-only RHS (GLM).
+#' @param allow_extended Allow restricted powers and composite fixed effects.
 #'
 #' @return A list containing:
 #'   \item{fml}{The Formula object}
@@ -276,7 +278,7 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
 #'   \item{fe}{Character vector of fixed effect variable names, or NULL if none}
 #'
 #' @keywords internal
-parse_regression_formula = function(fml, allow_empty = FALSE) {
+parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = FALSE) {
   fml = Formula(fml)
   # Extract outcome variable (LHS)
   lhs = formula(fml, lhs = 1, rhs = 0)
@@ -295,7 +297,7 @@ parse_regression_formula = function(fml, allow_empty = FALSE) {
   has_interactions = any(grepl(":", term_labels))
   has_transformations = any(grepl("^I\\(", term_labels))
   
-  if (isTRUE(allow_empty)) {
+  if (isTRUE(allow_empty) || isTRUE(allow_extended)) {
     validate_regressor_expression = function(expr) {
       if (is.symbol(expr) || is.numeric(expr)) return(invisible(NULL))
       if (!is.call(expr)) {
@@ -349,7 +351,7 @@ parse_regression_formula = function(fml, allow_empty = FALSE) {
   fe = NULL
   if (length(fml)[2] > 1) {
     fe_rhs = formula(fml, lhs = 0, rhs = 2)
-    if (isTRUE(allow_empty)) {
+    if (isTRUE(allow_empty) || isTRUE(allow_extended)) {
       flatten_call = function(expr, operator) {
         if (is.call(expr) && identical(as.character(expr[[1]]), "(")) {
           return(flatten_call(expr[[2]], operator))
@@ -489,7 +491,7 @@ safe_identifiers = function(x, taken = character(), fold_case = FALSE) {
     # (fixed) entries alone and suffixes later duplicates with _1, _2, ...
     fixed = tolower(c(taken, out[keep]))
     lc = tolower(out[gen])
-    uniq = tail(make.unique(c(fixed, lc), sep = "_"), length(gen))
+    uniq = utils::tail(make.unique(c(fixed, lc), sep = "_"), length(gen))
     out[gen] = paste0(out[gen], substring(uniq, nchar(lc) + 1L))
   }
   out
@@ -569,11 +571,23 @@ safe_source = function(conn, from_statement, vars) {
 #'   and `level` (the `level_aliases` element of [sql_model_matrix()]).
 #' @keywords internal
 register_factor_display = function(inputs, factor_levels = list(), level_aliases = NULL, col_names = NULL, aliases = NULL) {
+  saved = inputs[["factor_levels"]]
+  if (is.null(saved)) saved = list()
+  for (nm in names(factor_levels)) saved[[nm]] = factor_levels[[nm]]
+  inputs[["factor_levels"]] = saved
   map = inputs[["name_map"]]
   if (is.null(map)) map = setNames(character(), character())
   disp = function(v) coef_var_name(ifelse(v %in% names(map), map[v], v))
   vars = rep(names(factor_levels), lengths(factor_levels))
   lvls = unlist(lapply(factor_levels, as.character), use.names = FALSE)
+  col_names = vapply(col_names, function(nm) {
+    parts = strsplit(nm, "_x_", fixed = TRUE)[[1]]
+    parts = vapply(parts, function(part) {
+      if (is.null(parse_power_term(part))) return(part)
+      paste(deparse(rename_expr_vars(str2lang(part), inputs[["source_map"]]), width.cutoff = 500L), collapse = "")
+    }, character(1))
+    paste(parts, collapse = "_x_")
+  }, character(1))
   internal = c(paste0(vars, lvls), level_aliases[["alias"]], aliases)
   display = c(paste0(disp(vars), lvls), paste0(disp(level_aliases[["var"]]), level_aliases[["level"]]), col_names)
   new = setNames(display, internal)[internal != display]
@@ -632,7 +646,7 @@ restore_result_names = function(result, inputs) {
   if (!is.null(result[["vcov"]])) {
     dimnames(result[["vcov"]]) = lapply(dimnames(result[["vcov"]]), restore_names, map = coef_map)
   }
-  for (f in c("xvars", "collin.var", "coef_names", "endogenous", "instruments")) {
+  for (f in c("xvars", "collin.var", "coef_names", "coef_names_all", "endogenous", "instruments")) {
     if (!is.null(result[[f]])) result[[f]] = restore_names(result[[f]], coef_map)
   }
   for (f in c("yvar", "fe", "weights")) {

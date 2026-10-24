@@ -23,7 +23,8 @@ execute_moments_strategy = function(inputs) {
     table_ref,
     expand = "all",
     fe_vars = fe,
-    intercept = intercept
+    intercept = intercept,
+    factor_refs = inputs[["factor_refs"]]
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
@@ -113,7 +114,8 @@ execute_demean_strategy = function(inputs) {
     conn,
     table_ref,
     expand = "all",
-    fe_vars = fe
+    fe_vars = fe,
+    factor_refs = inputs[["factor_refs"]]
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
@@ -228,7 +230,8 @@ execute_mundlak_strategy = function(inputs) {
     conn,
     table_ref,
     expand = "all",
-    fe_vars = fe
+    fe_vars = fe,
+    factor_refs = inputs[["factor_refs"]]
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
@@ -403,13 +406,14 @@ execute_compress_strategy = function(inputs) {
     )
   )
   from_statement = inputs[["from_statement"]]
+  composite_columns = unique(unlist(inputs[["composite_fes"]], use.names = FALSE))
   # catch for sampled (limited) queries
   if (grepl("LIMIT\\s+\\d+\\s*$", from_statement, ignore.case = TRUE)) {
     from_statement = glue("FROM (SELECT * {from_statement})")
   }
 
   # Handle interactions: expand to SQL expressions
-  if (isTRUE(has_interactions)) {
+  if (isTRUE(has_interactions) || length(inputs[["factor_refs"]])) {
     # Extract table name from FROM statement for sql_model_matrix
     table_ref = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
     
@@ -419,7 +423,8 @@ execute_compress_strategy = function(inputs) {
       conn,
       table_ref,
       expand = "interactions",
-      fe_vars = fe
+      fe_vars = fe,
+      factor_refs = inputs[["factor_refs"]]
     )
     
     # Build SELECT expressions with aliases
@@ -430,7 +435,7 @@ execute_compress_strategy = function(inputs) {
     # Both the compression and clustered score passes must read the expanded
     # columns. Aliases from a SELECT list do not exist in the original source.
     projection = frame_select(yvar, sql_design[["select_exprs"]], xvar_names,
-      id_cols = setdiff(fe, c(yvar, xvar_names)), extra = c(weights, inputs[["cluster_var"]]))
+      id_cols = setdiff(fe, c(yvar, xvar_names)), extra = c(weights, inputs[["cluster_var"]], composite_columns))
     from_statement = paste0("FROM (SELECT ", paste(projection, collapse = ", "),
       " ", from_statement, ") dbreg_compress_design")
     xvars_sql = paste(xvar_names, collapse = ", ")
@@ -445,7 +450,9 @@ execute_compress_strategy = function(inputs) {
   
   # Combined columns for SELECT and GROUP BY
   all_cols_sql = if (!is.null(fe_sql)) paste(xvars_sql, fe_sql, sep = ", ") else xvars_sql
-  group_cols = if (!is.null(fe_sql)) c(xvar_names, fe) else xvar_names
+  extra_components = setdiff(composite_columns, c(xvar_names, fe))
+  if (length(extra_components)) all_cols_sql = paste(all_cols_sql, paste(extra_components, collapse = ", "), sep = ", ")
+  group_cols = unique(c(xvar_names, fe, extra_components))
   group_cols_sql = paste(group_cols, collapse = ", ")
   moment_terms = build_weighted_moment_terms(
     y_sql = yvar,
@@ -473,7 +480,7 @@ execute_compress_strategy = function(inputs) {
     message(if (!is.null(weights)) "[dbreg] Executing weighted compress strategy SQL\n" else "[dbreg] Executing compress strategy SQL\n")
   }
   compressed_dat = dbGetQuery(conn, query_string)
-  nobs_orig = sum(compressed_dat[["n"]])
+  nobs_orig = as.numeric(sum(compressed_dat[["n"]]))
   nobs_comp = nrow(compressed_dat)
   compression_ratio = nobs_comp / max(nobs_orig, 1)
 
@@ -487,10 +494,20 @@ execute_compress_strategy = function(inputs) {
     ))
   }
 
+  if (length(inputs[["composite_fes"]])) {
+    inputs[["composite_levels"]] = lapply(names(inputs[["composite_fes"]]), function(f) {
+      keys = tuple_key(compressed_dat, inputs[["composite_fes"]][[f]])
+      setNames(as.character(compressed_dat[[f]][!duplicated(keys)]), keys[!duplicated(keys)])
+    })
+    names(inputs[["composite_levels"]]) = names(inputs[["composite_fes"]])
+  }
   if (length(fe)) {
     for (f in fe) {
       compressed_dat[[f]] = factor(compressed_dat[[f]])
     }
+  }
+  for (nm in intersect(names(inputs[["factor_levels"]]), names(compressed_dat))) {
+    compressed_dat[[nm]] = factor(compressed_dat[[nm]], levels = inputs[["factor_levels"]][[nm]])
   }
   if (data_only) {
     return(compressed_dat)
@@ -504,11 +521,11 @@ execute_compress_strategy = function(inputs) {
   is_cat = vapply(c(design_vars, fe), function(v) {
     v %in% names(compressed_dat) && (is.factor(compressed_dat[[v]]) || is.character(compressed_dat[[v]]))
   }, logical(1))
-  register_factor_display(inputs, lapply(setNames(nm = c(design_vars, fe)[is_cat]), function(v) unique(compressed_dat[[v]])))
-  X = sparse.model.matrix(
-    reformulate(c(design_vars, fe), intercept = intercept),
-    compressed_dat
-  )
+  register_factor_display(inputs, lapply(setNames(nm = c(design_vars, fe)[is_cat]), function(v) levels(factor(compressed_dat[[v]]))))
+  matrix_formula = reformulate(c(design_vars, fe), intercept = intercept)
+  X = fitted_model_matrix(matrix_formula, compressed_dat)
+  slope_terms = match(design_vars, attr(terms(matrix_formula), "term.labels"))
+  slope_names = standardize_coef_names(colnames(X)[attr(X, "assign") %in% slope_terms])
   if (ncol(X) == 0) {
     stop("Design matrix has zero columns.")
   }
@@ -586,16 +603,14 @@ execute_compress_strategy = function(inputs) {
 
   coeftable = gen_coeftable(betahat, vcov_mat, max(nobs_orig - ncol(X), 1))
 
-  # Coefficient names for xvars (excluding intercept and FE dummies)
-  # Match coefficients that start with any design_var name
-  all_coef_names = rownames(coeftable)
-  all_coef_names = all_coef_names[all_coef_names != "(Intercept)"]
-  design_pattern = paste0("^(", paste(standardize_coef_names(design_vars), collapse = "|"), ")")
-  coef_names = all_coef_names[grepl(design_pattern, all_coef_names)]
+  # Use term assignments, not name prefixes (an FE can start with a slope name).
+  coef_names = intersect(slope_names, rownames(coeftable))
 
   return(
     list(
       coeftable = coeftable,
+      compressed_design = list(formula = reformulate(c(design_vars, fe), intercept = intercept),
+        source_names = names(compressed_dat), columns = colnames(X)),
       data = compressed_dat,
       vcov = vcov_mat,
       fml = fml,
@@ -603,6 +618,7 @@ execute_compress_strategy = function(inputs) {
       xvars = standardize_coef_names(xvars),
       collin.var = standardize_coef_names(collin_vars),
       coef_names = coef_names,
+      coef_names_all = slope_names,
       fe = fe,
       weights = weights,
       query_string = query_string,

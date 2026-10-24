@@ -13,7 +13,7 @@ fixest::setFixest_nthreads(2)
 dir.create(out, recursive = TRUE, showWarnings = FALSE)
 writeLines(c(paste("UTC:", format(Sys.time(), tz = "UTC")), capture.output(sessionInfo())), file.path(out, "environment.txt"))
 suites = c("test_glm_databricks_live.R", "test_glm_databricks_sample.R", "test_fe_edges_live.R",
-  "test_ap_moments_live.R", "test_glm_stress_live.R", "test_glm_separation_live.R", "test_glm_wide_live.R")
+  "test_ap_moments_live.R", "test_glm_stress_live.R", "test_glm_separation_live.R", "test_glm_wide_live.R", "test_linear_design_live.R")
 records = list()
 for (file in suites) {
   message("Starting native suite: ", file)

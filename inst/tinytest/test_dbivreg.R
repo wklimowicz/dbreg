@@ -647,12 +647,9 @@ expect_error(dbivreg(y ~ x | d ~ z, conn = con_val, data = dat, compress_ratio =
 expect_equal(DBI::dbListTables(con_val), character(0), info = "no registered table left behind after a late validation error")
 DBI::dbDisconnect(con_val, shutdown = TRUE)
 
-# predict() refuses demean models with more than two FE (would omit the rest)
-expect_error(
-  predict(db_fe3, newdata = dat_fe3),
-  "more than two fixed effects",
-  info = "IV predict with 3 FE errors"
-)
+# Conditional prediction uses all absorbed dimensions.
+expect_equal(predict(db_fe3, newdata = dat_fe3), as.numeric(predict(fx_fe3, dat_fe3)),
+  tolerance = 1e-7, info = "IV conditional prediction with three fixed effects")
 
 # No-intercept IV models (#68)
 expect_iv_match(

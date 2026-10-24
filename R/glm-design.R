@@ -83,7 +83,7 @@ evaluate_model_spec = function(model_spec, newdata) {
   }
 
   design_data = model_matrix_data(model_spec[["rhs"]], newdata)
-  matrix = Matrix::sparse.model.matrix(model_spec[["rhs"]], data = design_data)
+  matrix = fitted_model_matrix(model_spec[["rhs"]], design_data)
   if ("(Intercept)" %in% colnames(matrix)) {
     matrix = matrix[, colnames(matrix) != "(Intercept)", drop = FALSE]
   }
@@ -208,38 +208,6 @@ glm_get_column_info = function(conn, table, term_labels, factor_refs = NULL) {
     vapply(x, function(value) as.character(DBI::dbQuoteLiteral(conn, value)), character(1))
   })
   list(types = types, levels = levels, level_sql = level_sql)
-}
-
-parse_power_term = function(term) {
-  expr = tryCatch(parse(text = term, keep.source = FALSE)[[1]], error = function(e) NULL)
-  if (is.null(expr) || !is.call(expr) || !identical(as.character(expr[[1]]), "I")) {
-    return(NULL)
-  }
-  power = expr[[2]]
-  if (!is.call(power) || !identical(as.character(power[[1]]), "^") ||
-    !is.symbol(power[[2]]) || !is.numeric(power[[3]]) ||
-    !as.numeric(power[[3]]) %in% c(2, 3)) {
-    return(NULL)
-  }
-  variable = as.character(power[[2]])
-  exponent = as.integer(power[[3]])
-  list(
-    variable = variable,
-    exponent = exponent,
-    sql = sprintf("POWER(%s, %d)", variable, exponent),
-    name = sprintf("%s__pow%d", variable, exponent)
-  )
-}
-
-split_interaction_term = function(term) {
-  expr = parse(text = term, keep.source = FALSE)[[1]]
-  flatten = function(x) {
-    if (is.call(x) && identical(as.character(x[[1]]), ":")) {
-      return(c(flatten(x[[2]]), flatten(x[[3]])))
-    }
-    paste(deparse(x, width.cutoff = 500L), collapse = "")
-  }
-  flatten(expr)
 }
 
 glm_expand_term = function(term, col_info, expand, sep = "_x_", all_terms = character(), fe_vars = character()) {

@@ -227,7 +227,7 @@ predict.dbreg = function(
   }
  
   if (interval != "none") {
-    vcovm = vcov(object)
+    vcovm = vcov(object, fe = TRUE)
     dof = object[["df_residual"]]
     if (interval == "confidence") {
       ses = sqrt(Matrix::rowSums((mm %*% vcovm) * mm))
@@ -253,11 +253,22 @@ predict.dbreg = function(
 #' Variance-covariance matrix for dbreg objects
 #'
 #' @param object A `dbreg` object.
+#' @param fe Include covariance rows and columns for explicit fixed effects?
+#'   Default is `FALSE`, matching [coef()].
 #' @param ... Additional arguments (currently unused).
 #' @inherit coef.dbreg examples
 #' @export
-vcov.dbreg = function(object, ...) {
-  object[["vcov"]]
+vcov.dbreg = function(object, fe = FALSE, ...) {
+  out = object[["vcov"]]
+  metadata = lapply(c("type", "n_clusters", "n_params", "rss", "tss"), function(nm) attr(out, nm))
+  names(metadata) = c("type", "n_clusters", "n_params", "rss", "tss")
+  # The table already has public names (including interaction separators).
+  # Its rows and the stored covariance share the fitted parameter order.
+  dimnames(out) = rep(list(rownames(object[["coeftable"]])), 2L)
+  visible = names(coef(object, fe = fe))
+  out = out[visible, visible, drop = FALSE]
+  for (nm in names(metadata)) if (!is.null(metadata[[nm]])) attr(out, nm) = metadata[[nm]]
+  out
 }
 
 #' Confidence intervals for dbreg objects

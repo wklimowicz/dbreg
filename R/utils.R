@@ -476,7 +476,7 @@ is_safe_identifier = function(x, fold_case = FALSE) {
 #' @inheritParams is_safe_identifier
 #' @keywords internal
 safe_identifiers = function(x, taken = character(), fold_case = FALSE) {
-  keep = is_safe_identifier(x, fold_case)
+  keep = is_safe_identifier(x, fold_case) & !tolower(x) %in% tolower(taken) & !duplicated(tolower(x))
   out = gsub("[^A-Za-z0-9_]", "_", x)
   if (fold_case) out = tolower(out)
   bad_start = !grepl("^[A-Za-z_]", out) | tolower(out) %in% sql_reserved
@@ -489,7 +489,7 @@ safe_identifiers = function(x, taken = character(), fold_case = FALSE) {
     # (fixed) entries alone and suffixes later duplicates with _1, _2, ...
     fixed = tolower(c(taken, out[keep]))
     lc = tolower(out[gen])
-    uniq = make.unique(c(fixed, lc), sep = "_")[-seq_along(fixed)]
+    uniq = tail(make.unique(c(fixed, lc), sep = "_"), length(gen))
     out[gen] = paste0(out[gen], substring(uniq, nchar(lc) + 1L))
   }
   out

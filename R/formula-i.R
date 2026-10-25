@@ -185,7 +185,7 @@ glm_i_dictionaries = function(conn,from_sql,declarations,classes,intercept) {
     if (type=="float") stop("i() floating-point categories require a DOUBLE source column.",call.=FALSE)
     value = if(type=="integer") paste0("CAST(",first," AS STRING)") else first
     # Group by the original typed value; textual ordering would put 10 before 2.
-    keys = dbglm_get_query(conn,paste0("SELECT ",value," AS value ",from_sql," GROUP BY ",first,
+    keys = backend_get_query(conn,paste0("SELECT ",value," AS value ",from_sql," GROUP BY ",first,
       " ORDER BY ",first," LIMIT ",sprintf("%.0f",limit+2L)))[[1L]]
     if (length(keys)>limit+1L) stop("i() level dictionary exceeds dbreg.i_max_columns.",call.=FALSE)
     # Match R/fixest character collation on this bounded dictionary. Preserve

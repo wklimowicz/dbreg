@@ -128,7 +128,10 @@ iterative projection fallback; other strategies return their primary query.
 Schema and strategy-selection queries may still run. Default is \code{FALSE}.}
 
 \item{data_only}{Logical indicating whether only the compressed dataset
-should be returned (i.e., no regression is run). Default is \code{FALSE}.}
+or moment summary should be returned (i.e., no regression is run).
+Moment summaries use centered coordinates when an intercept is present
+and normalized weights; their \verb{dbreg_moment_center_*} and
+\code{dbreg_moment_weight_scale} fields record the transformation. Default is \code{FALSE}.}
 
 \item{drop_missings}{Logical indicating whether incomplete cases (i.e., rows
 where any of the dependent, independent or FE variables are
@@ -296,11 +299,15 @@ All modes retain the existing fallback and convergence checks.
 \code{dbreg.ap_max_iter} (default \code{100}) limits projection iterations.
 The bounded solver uses \code{dbreg.duckdb_ap_max_edges} (default \code{1e6} summary
 rows), \code{dbreg.duckdb_ap_max_entries} (default \code{2e6} FE-by-design entries),
-and \code{dbreg.ap_moment_max_cells} (default \code{8e6} rectangular transfer cells)
+and \code{dbreg.ap_moment_max_cells} (default \code{8e6} compact transfer cells)
 on both backends. Its dense system also shares the GLM limits
 \code{dbreg.glm_fe_dense_max} (default \code{4096} remaining FE levels after absorbing
 the largest block) and \code{dbreg.glm_fe_cross_max} (default \code{5e7} cross entries).
-Exceeding a limit selects iterative AP. Successful bounded projections
+\code{dbreg.projection_max_bytes} (default \code{512 * 1024^2}) bounds conservative
+working-memory estimates; it is not a hard cap on process RSS. On DuckDB,
+automatic two-way projection can try bounded sparse PCG before iterative AP.
+\code{projection_diagnostics} records attempted methods and rejection reasons.
+Successful bounded moment projections
 report \code{ap_method = "bounded_moments"}; \code{ap_iterations} counts solve and
 refinement steps and \code{ap_max_abs} reports the certified group-mean residual.
 

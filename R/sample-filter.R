@@ -110,10 +110,10 @@ linear_prune_source = function(inputs, from_statement, fe, y) {
   resources[["conn"]] = conn
   schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from_statement), 0, backend[["name"]]))
   flags = safe_identifiers(c("__dbglm_single", "__dbglm_infinite"), taken = names(schema), fold_case = folds_identifier_case(conn))
-  manager = dbglm_table_manager(conn, resources, backend)
+  manager = fit_table_manager(conn, resources, backend)
   source = paste0("(SELECT * ", from_statement, ")")
   pruning = dbglm_prune(conn, source, fe, y, "singletons", manager[["create"]], manager[["drop"]], flags = flags)
-  if (pruning[["rounds"]] > 0 && as.numeric(dbglm_get_query(conn,
+  if (pruning[["rounds"]] > 0 && as.numeric(backend_get_query(conn,
     paste("SELECT COUNT(*) AS n FROM", pruning[["table"]]))[["n"]]) == 0) {
     stop("No observations remain after singleton removal.", call. = FALSE)
   }

@@ -1,0 +1,69 @@
+name: Local Spark syntax and algorithms
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 2'
+
+permissions:
+  contents: read
+
+jobs:
+  spark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SPARK_LOCAL_IP: 127.0.0.1
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            any::pkgload
+            any::tinytest
+            any::fixest
+            any::sparklyr
+          needs: check
+      - name: Install final Spark 4.2.0 with Apache checksum verification
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --max-time 600 \
+            https://archive.apache.org/dist/spark/spark-4.2.0/spark-4.2.0-bin-hadoop3.tgz \
+            --output "$RUNNER_TEMP/spark.tgz"
+          curl --fail --location --retry 3 --max-time 60 \
+            https://archive.apache.org/dist/spark/spark-4.2.0/spark-4.2.0-bin-hadoop3.tgz.sha512 \
+            --output "$RUNNER_TEMP/spark.sha512"
+          python - "$RUNNER_TEMP" <<'PY'
+          import hashlib, pathlib, re, sys, tarfile
+          root = pathlib.Path(sys.argv[1])
+          expected = re.search(r'\b[0-9a-fA-F]{128}\b', (root/'spark.sha512').read_text()).group().lower()
+          digest = hashlib.sha512()
+          with (root/'spark.tgz').open('rb') as stream:
+              while chunk := stream.read(8*1024*1024):
+                  digest.update(chunk)
+          assert digest.hexdigest() == expected, 'Apache checksum mismatch'
+          with tarfile.open(root/'spark.tgz') as archive:
+              archive.extractall(root, filter='data')
+          PY
+          echo "SPARK_HOME=$RUNNER_TEMP/spark-4.2.0-bin-hadoop3" >> "$GITHUB_ENV"
+      - name: Run bounded local Spark assertions
+        run: Rscript .github/scripts/run-spark-tests.R "$RUNNER_TEMP/spark-validation"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spark-4.2.0-${{ github.sha }}
+          path: ${{ runner.temp }}/spark-validation
+          if-no-files-found: warn
+          retention-days: 30

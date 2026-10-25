@@ -7,9 +7,9 @@ dbreg_test_linear_offset = function(conn) {
   d[["w"]][4] = 0
   d[["o"]][8] = NA_real_
   d[["x"]][12] = NA_real_
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
-  on.exit(dbreg:::dbglm_release_resources(resources), add = TRUE)
+  on.exit(dbreg:::release_fit_resources(resources), add = TRUE)
   table = dbreg:::prediction_upload_frame(conn, d, resources)
   baseline = dbglm_validation_tables(conn)
   cases = list(list(fml = y ~ x + z, strategy = "moments"),

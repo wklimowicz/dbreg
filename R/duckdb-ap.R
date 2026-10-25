@@ -23,6 +23,25 @@ dbreg_duckdb_cg_projections = function(
   stopifnot(length(fe) == 2L)
   backend_info = detect_backend(conn)
   vars = c(yvar, xvar_names)
+  limits = projection_limits()
+  width = length(vars) + length(extra_sums)
+  key_bytes = function(f) {
+    value = paste0("CAST(", f, " AS VARCHAR)")
+    if (backend_info[["name"]] == "duckdb") paste0("OCTET_LENGTH(encode(", value, "))") else
+      paste0("OCTET_LENGTH(", value, ")")
+  }
+  preflight = backend_get_query(conn, paste("SELECT COUNT(*) AS source_n,",
+    paste(c(sprintf("COUNT(DISTINCT %s) AS n%d", fe, 1:2),
+      sprintf("MAX(%s) AS bytes%d", vapply(fe, key_bytes, character(1)), 1:2)), collapse = ","), from_statement))
+  sizes = as.numeric(preflight[c("n1", "n2")][1L, ])
+  key_width = as.numeric(preflight[c("bytes1", "bytes2")][1L, ])
+  if (any(!is.finite(c(sizes, key_width))) || any(sizes < 1L)) return(NULL)
+  if (sum(sizes)*length(vars) > max_entries) projection_abort("system_limit", "Sparse FE system exceeds its design budget.")
+  row_bytes = 4*(sum(key_width) + 128 + 8*(width + 3L))
+  remaining = limits[["memory_bytes"]] - 8*sum(sizes)*max(1L, width)*12
+  max_edges = min(max_edges, floor(limits[["transfer_cells"]]/(width + 3L))-1L,
+    floor(remaining/row_bytes)-1L)
+  if (max_edges < 1L) projection_abort("system_limit", "Sparse FE system exceeds its memory or transfer budget.")
   equation_metric = !is.null(scales)
   if (equation_metric && (length(scales) != length(vars) ||
       any(!is.finite(scales)) || any(scales <= 0))) {
@@ -43,7 +62,8 @@ dbreg_duckdb_cg_projections = function(
     !isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates",FALSE))) {
     unname(tables[c("source","edges","a","b", if (!materialize_result) "result")])
   } else character()
-  created = character()
+  state = new.env(parent = emptyenv())
+  state[["created"]] = character()
   drop_state = function(table) {
     if(table %in% views) try(DBI::dbExecute(conn,paste("DROP VIEW IF EXISTS",table)),silent=TRUE) else
       drop_ap_table_if_exists(conn,table,backend_info)
@@ -51,13 +71,13 @@ dbreg_duckdb_cg_projections = function(
   success = FALSE
   on.exit({
     if (!success) {
-      for (table in rev(created)) drop_state(table)
+      for (table in rev(state[["created"]])) drop_state(table)
     }
   }, add = TRUE)
   create = function(name, sql) {
-    created <<- unique(c(created, tables[[name]]))
+    state[["created"]] = unique(c(state[["created"]], tables[[name]]))
     if(isTRUE(backend_info$is_databricks)) {
-      DBI::dbExecute(conn,dbglm_sql(conn,paste(if(tables[[name]] %in% views) "CREATE TEMP VIEW" else "CREATE TEMP TABLE",tables[[name]],"AS",sql)))
+      DBI::dbExecute(conn,backend_sql(conn,paste(if(tables[[name]] %in% views) "CREATE TEMP VIEW" else "CREATE TEMP TABLE",tables[[name]],"AS",sql)))
     } else create_temp_table_as(conn, tables[[name]], sql, "duckdb")
   }
   w = if (is.null(weights)) "1.0" else weights
@@ -75,10 +95,10 @@ dbreg_duckdb_cg_projections = function(
     " GROUP BY ", paste(fe, collapse = ", "),
     " LIMIT ", sprintf("%.0f", max_edges + 1)
   )
-  edges = dbglm_get_query(conn, edges_sql)
+  edges = backend_get_query(conn, edges_sql)
   if (!nrow(edges) || nrow(edges) > max_edges) {
     if (verbose) message("[dbreg] FE summaries exceed DuckDB transfer limits; using join AP")
-    return(NULL)
+    projection_abort("transfer_limit", "FE pair summaries exceed sparse projection limits.", list(summary_rows = max_edges))
   }
   u1 = unique(edges[[keys[1]]])
   u2 = unique(edges[[keys[2]]])
@@ -192,7 +212,7 @@ dbreg_duckdb_cg_projections = function(
       adjustment = means[[k]][keys[k]]
       effect = if (k == 1L) a else b
       for (j in seq_along(vars)) adjustment[[paste0("a", j)]] = effect[, j]
-      lsql = dbglm_values_sql(conn, adjustment)
+      lsql = sql_values_frame(conn, adjustment)
       if (is.null(lsql)) return(NULL)
       lookup_sqls[k] = lsql
     }
@@ -207,19 +227,20 @@ dbreg_duckdb_cg_projections = function(
     success = TRUE
     return(list(table = result_sql, base_table = NULL, all_tables = character(), view_tables = character(),
       iterations = iterations, max_abs = actual, method = "bounded_pcg", backend_info = backend_info,
-      cross_reduction = cross_reduction, extra_reduction = extra_reduction, s1 = s1, s2 = s2, a = a, b = b))
+      cross_reduction = cross_reduction, extra_reduction = extra_reduction, s1 = s1, s2 = s2, a = a, b = b,
+      transfer_cells = nrow(edges)*(width + 3L), estimated_bytes = nrow(edges)*row_bytes + 8*sum(sizes)*max(1L, width)*12))
   }
   for (k in 1:2) {
     adjustment = means[[k]][keys[k]]
     effect = if (k == 1L) a else b
     for (j in seq_along(vars)) adjustment[[paste0("a", j)]] = effect[, j]
     if(isTRUE(backend_info$is_databricks)) {
-      lookup_sql = dbglm_values_sql(conn,adjustment)
+      lookup_sql = sql_values_frame(conn,adjustment)
       if(is.null(lookup_sql)) return(NULL)
       create(if(k==1L) "a" else "b",lookup_sql)
     } else dbWriteTable(conn, tables[[if (k == 1L) "a" else "b"]], adjustment,
       temporary = TRUE, overwrite = TRUE)
-    created = unique(c(created, tables[[if (k == 1L) "a" else "b"]]))
+    state[["created"]] = unique(c(state[["created"]], tables[[if (k == 1L) "a" else "b"]]))
   }
   broadcast_hint = if (isTRUE(backend_info$is_databricks)) "/*+ BROADCAST(a, b) */ " else ""
   w_select = if (is.null(weights)) "1.0 AS __w" else paste0("s.", weights, " AS __w")
@@ -240,14 +261,15 @@ dbreg_duckdb_cg_projections = function(
         paste(terms, collapse = ", "),
         " FROM ", tables[["result"]], " GROUP BY ", f, ") q")
     }, character(1))
-    actual = dbglm_get_query(conn, paste0("SELECT MAX(max_abs) AS max_abs FROM (",
+    actual = backend_get_query(conn, paste0("SELECT MAX(max_abs) AS max_abs FROM (",
       paste(checks, collapse = " UNION ALL "), ") q"))[["max_abs"]]
-    n_result = dbglm_get_query(conn, paste("SELECT COUNT(*) AS n FROM", tables[["result"]]))[["n"]]
-    n_source = dbglm_get_query(conn, paste("SELECT COUNT(*) AS n", from_statement))[["n"]]
+    n_result = backend_get_query(conn, paste("SELECT COUNT(*) AS n FROM", tables[["result"]]))[["n"]]
+    n_source = as.numeric(preflight[["source_n"]])
     if (!is.finite(actual) || actual > tol || n_result != n_source) return(NULL)
   }
   success = TRUE
-  list(table = tables[["result"]], base_table = NULL, all_tables = created, view_tables = intersect(created, views),
+  list(table = tables[["result"]], base_table = NULL, all_tables = state[["created"]], view_tables = intersect(state[["created"]], views),
     iterations = iterations, max_abs = actual, method = "bounded_pcg", backend_info = backend_info,
-    cross_reduction = cross_reduction, extra_reduction = extra_reduction, s1 = s1, s2 = s2, a = a, b = b)
+    cross_reduction = cross_reduction, extra_reduction = extra_reduction, s1 = s1, s2 = s2, a = a, b = b,
+    transfer_cells = nrow(edges)*(width + 3L), estimated_bytes = nrow(edges)*row_bytes + 8*sum(sizes)*max(1L, width)*12)
 }

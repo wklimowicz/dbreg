@@ -21,7 +21,15 @@ dbglm_validation_connection = function(live = FALSE) {
 
 dbglm_validation_tables = function(conn) {
   if (isTRUE(dbreg:::detect_backend(conn)[["is_databricks"]])) {
-    sort(DBI::dbGetQuery(conn, "SHOW TABLES")[["tableName"]])
+    tables = DBI::dbGetQuery(conn, "SHOW TABLES")
+    names = tables[["tableName"]]
+    benchmark = grepl("^dbreg_bench_[0-9a-f]{24}$", names)
+    # Managed inputs from other benchmark connections are workspace-global.
+    # Compare this session's temporary objects, and still catch accidental
+    # persistent fit objects under every production-owned naming prefix.
+    temporary = !is.na(tables[["isTemporary"]]) & as.logical(tables[["isTemporary"]])
+    owned = grepl("^(dbglm_|dbreg_)", names) & !benchmark
+    sort(names[temporary | owned])
   } else sort(DBI::dbListTables(conn))
 }
 
@@ -34,7 +42,7 @@ dbglm_validation_drop = function(conn, table) {
 dbglm_validation_upload = function(conn, data) {
   table = basename(tempfile("glm_validation_"))
   if (isTRUE(dbreg:::detect_backend(conn)[["is_databricks"]])) {
-    DBI::dbExecute(conn, paste("CREATE TEMP TABLE", table, "AS", dbreg:::dbglm_values_sql(conn, data)))
+    DBI::dbExecute(conn, paste("CREATE TEMP TABLE", table, "AS", dbreg:::sql_values_frame(conn, data)))
   } else DBI::dbWriteTable(conn, table, data, temporary = TRUE)
   table
 }

@@ -4,7 +4,7 @@ dbglm_test_databricks_cases = function(conn, verbose = FALSE) {
   # Wide FE covariance queries embed large coefficient literals. Verify their
   # translation and execution on both the fixture and the native warehouse.
   payload = strrep("QUJDZGVmMDEyMzQ1Njc4OSsv", 300000L)
-  decoded = dbreg:::dbglm_get_query(conn, paste0("SELECT LENGTH('", payload,
+  decoded = dbreg:::backend_get_query(conn, paste0("SELECT LENGTH('", payload,
     "') AS n,FSUM(x) AS total FROM (SELECT 1.0 AS x UNION ALL SELECT 2.0 AS x) t"))
   expect_equal(as.numeric(decoded[["n"]]), nchar(payload))
   expect_equal(as.numeric(decoded[["total"]]), 3)
@@ -13,13 +13,13 @@ dbglm_test_databricks_cases = function(conn, verbose = FALSE) {
   coefficients = matrix(sin(seq_len(2400L * 88L)), ncol = 88L)
   info = rep(list(list(id = seq_len(400L))), 6L)
   frame = dbreg:::dbglm_coefficient_frame(info, coefficients)
-  source = paste0("(", dbreg:::dbglm_values_sql(conn, frame), ")")
+  source = paste0("(", dbreg:::sql_values_frame(conn, frame), ")")
   ctes = dbreg:::dbglm_coefficient_ctes(source, 6L, "wide")
   branches = vapply(seq_len(6L), function(i) paste0("SELECT ", i,
     " AS op,COUNT(*) AS n,SUM(c1) AS first,SUM(c88) AS last FROM wide_g", i), character(1))
   query = paste0("WITH ", paste(ctes, collapse = ","), " ", paste(branches, collapse = " UNION ALL "), " ORDER BY op")
   expect_true(nchar(query, type = "bytes") < 8 * 1024^2)
-  stored = dbreg:::dbglm_get_query(conn, query)
+  stored = dbreg:::backend_get_query(conn, query)
   expect_identical(as.numeric(stored[["op"]]), as.numeric(seq_len(6L)))
   expect_equal(as.numeric(stored[["n"]]), rep(400, 6L))
   expect_equal(stored[["first"]], vapply(split(coefficients[, 1], frame[["__glm_op"]]), sum, numeric(1)),
@@ -32,7 +32,7 @@ dbglm_test_databricks_cases = function(conn, verbose = FALSE) {
   upload = function(data) {
     table = basename(tempfile("glm_test_"))
     owned[["tables"]] = c(owned[["tables"]], table)
-    DBI::dbExecute(conn, paste("CREATE TEMP TABLE", table, "AS", dbreg:::dbglm_values_sql(conn, data)))
+    DBI::dbExecute(conn, paste("CREATE TEMP TABLE", table, "AS", dbreg:::sql_values_frame(conn, data)))
     table
   }
   compare = function(fit, reference) {
@@ -128,7 +128,7 @@ dbglm_test_databricks_cases = function(conn, verbose = FALSE) {
     expect_equal(capped, full, tolerance = 1e-13)
   }
   # Overflow can omit the global row entirely: reject it before JSON decoding.
-  expect_null(dbreg:::dbglm_read_fe_moments(conn,
+  expect_null(dbreg:::read_fe_moments(conn,
     "SELECT 1 AS __set,CAST(NULL AS STRING) AS __globals", max_rows = 0))
   fused = dbreg:::dbglm_fe_evaluate(conn, table, "x", fe, collect_fe_moments = TRUE)
   expect_equal(fused[["fe_moments"]][["rows"]], 8)
@@ -146,14 +146,14 @@ dbglm_test_databricks_cases = function(conn, verbose = FALSE) {
   expect_equal(fused[["raw_moments"]], unname(crossprod(as.matrix(working[c("x", "z")]), working[["w"]] * as.matrix(working[c("x", "z")]))))
   expect_equal(fused[["score_max"]], full[["score_max"]], tolerance = 1e-13)
   expect_equal(fused[["deviance"]], 4)
-  compact = dbreg:::dbglm_read_fe_moments(conn, dbreg:::dbglm_fe_moments_sql(conn,
-    table, fe, dbreg:::dbglm_fe_value_terms(conn, c("x", "z"), "score"),
+  compact = dbreg:::read_fe_moments(conn, dbreg:::fe_moments_sql(conn,
+    table, fe, dbreg:::fe_value_terms(conn, c("x", "z"), "score"),
     c("SUM(dev) AS deviance", "SUM(score) AS raw_score")))
   expect_equal(attr(compact, "dbglm_globals"), data.frame(deviance = 4, raw_score = -2))
   # Resource contract: a global statistic must occupy one scalar, rather than
   # being padded over all FE-pair rows as the regressor count grows.
   expect_false("deviance" %in% names(compact))
-  extremes = dbreg:::dbglm_read_fe_moments(conn, paste0("SELECT 0 AS __set,",
+  extremes = dbreg:::read_fe_moments(conn, paste0("SELECT 0 AS __set,",
     "to_json(named_struct('large',a,'small',b,'fraction',c)) AS __globals FROM ",
     "(SELECT CAST(1e300 AS DOUBLE) AS a,CAST(1e-300 AS DOUBLE) AS b,",
     "CAST(0.12345678901234567 AS DOUBLE) AS c) t"))
@@ -163,9 +163,9 @@ dbglm_test_databricks_cases = function(conn, verbose = FALSE) {
   # conversion can differ from R's literal parser by one rounding unit.
   expect_identical(as.numeric(attr(extremes, "dbglm_globals")[1, ]), as.numeric(direct[1, ]))
   expect_true(all(abs(as.numeric(direct[1, ]) / c(1e300, 1e-300, .12345678901234567) - 1) <= 4 * .Machine$double.eps))
-  expect_error(dbreg:::dbglm_read_fe_moments(conn,
+  expect_error(dbreg:::read_fe_moments(conn,
     "SELECT 1 AS __set,CAST(NULL AS STRING) AS __globals"), "global summary")
-  expect_error(dbreg:::dbglm_validate_moment_limits(NA, 1), "limits")
-  expect_error(dbreg:::dbglm_validate_moment_limits(1, Inf), "limits")
-  expect_error(dbreg:::dbglm_validate_moment_limits(.5, 1), "limits")
+  expect_error(dbreg:::validate_moment_limits(NA, 1), "limits")
+  expect_error(dbreg:::validate_moment_limits(1, Inf), "limits")
+  expect_error(dbreg:::validate_moment_limits(.5, 1), "limits")
 }

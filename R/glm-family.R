@@ -41,7 +41,7 @@ dbglm_binomial_loglik = function(conn, working, weight_scale = 1) {
     "WHEN ", a, "-FLOOR(", a, ")>0.5 THEN CEIL(", a, ") ",
     "WHEN MOD(FLOOR(", a, "),2.0)=0 THEN FLOOR(", a, ") ELSE CEIL(", a, ") END)")
   term = paste0(rounded, "*(CASE WHEN __dbglm_y=1 THEN LN(mu) ELSE LN(1.0-mu) END)")
-  as.numeric(dbglm_get_query(conn, paste0("SELECT ", dbglm_exact_sum(conn, term),
+  as.numeric(backend_get_query(conn, paste0("SELECT ", sql_stable_sum(conn, term),
     " AS ll FROM ", working))[["ll"]])
 }
 
@@ -166,4 +166,21 @@ dbglm_binomial_working_cte = function() {
     "-2.0*__dbglm_a*(CASE WHEN __dbglm_y=1 THEN LN(mu) ELSE LN(1.0-mu) END) AS dev ",
     "FROM means) "
   )
+}
+
+dbglm_deviance_term = function(conn) paste(sql_stable_sum(conn, "dev"), "AS deviance")
+
+dbglm_saturated_loglik = function(conn, base) {
+  if (!isTRUE(detect_backend(conn)[["is_databricks"]])) return(backend_get_query(conn, paste0(
+    "SELECT FSUM(__dbglm_a*(CASE WHEN __dbglm_y=0 THEN 0.0 ELSE ",
+    "__dbglm_y*LN(__dbglm_y)-__dbglm_y-lgamma(__dbglm_y+1) END)) AS ll FROM ", base))[["ll"]])
+  # Databricks has no lgamma builtin. A bounded count histogram is sufficient
+  # for the likelihood constant, with R's canonical lgamma evaluation.
+  n = backend_get_query(conn, paste("SELECT COUNT(DISTINCT __dbglm_y) AS n FROM", base))[["n"]]
+  if (n > 1e6) stop("Poisson count histogram exceeds the likelihood transfer limit.", call. = FALSE)
+  h = backend_get_query(conn, paste("SELECT __dbglm_y AS y,SUM(__dbglm_a) AS a FROM", base, "GROUP BY __dbglm_y"))
+  value = numeric(nrow(h))
+  positive = h[["y"]] > 0
+  value[positive] = h[["y"]][positive] * log(h[["y"]][positive]) - h[["y"]][positive] - lgamma(h[["y"]][positive] + 1)
+  sum(h[["a"]] * value)
 }

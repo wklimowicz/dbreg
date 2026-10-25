@@ -24,16 +24,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      targets: ${{ steps.matrix.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: matrix
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, re
+          text = pathlib.Path('.github/scripts/run-databricks-tests.R').read_text()
+          block = re.search(r'suites = c\((.*?)\)\n', text, re.S).group(1)
+          suites = re.findall(r'"(test_[a-z_]+\.R)"', block)
+          assert suites and len(suites) == len(set(suites))
+          targets = ['smoke'] if os.environ['GITHUB_EVENT_NAME'] == 'push' else suites
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write('targets=' + json.dumps(targets) + '\n')
+          PY
   native:
+    needs: plan
     runs-on: ubuntu-24.04
     environment: databricks-validation
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
     env:
       DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
       DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
       DATABRICKS_SQL_PATH: ${{ secrets.DATABRICKS_SQL_PATH }}
       DATABRICKS_ODBC_DRIVER: /opt/databricks/databricksodbc/lib/64/libdatabricksodbc64.so
-      OPENBLAS_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '1'
       OMP_NUM_THREADS: '2'
     steps:
       - uses: actions/checkout@v4
@@ -74,13 +101,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/databricks-validation"
-          Rscript .github/scripts/run-databricks-tests.R "$RUNNER_TEMP/databricks-validation" \
-            2>&1 | tee "$RUNNER_TEMP/databricks-validation/run.log"
+          if [[ "${{ matrix.target }}" == "smoke" ]]; then
+            Rscript .github/scripts/run-databricks-tests.R "$RUNNER_TEMP/databricks-validation" --group smoke
+          else
+            Rscript .github/scripts/run-databricks-tests.R "$RUNNER_TEMP/databricks-validation" "${{ matrix.target }}"
+          fi 2>&1 | tee "$RUNNER_TEMP/databricks-validation/run.log"
       - name: Preserve validation evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: databricks-validation-${{ github.sha }}
+          name: databricks-validation-${{ matrix.target }}-${{ github.sha }}
           path: ${{ runner.temp }}/databricks-validation
           if-no-files-found: warn
           retention-days: 30

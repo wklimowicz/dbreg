@@ -2,16 +2,14 @@ retain_linear_score_frame = function(fit, frame, y, inputs) {
   if (!retain_sample(inputs[["retain"]])) return(invisible(NULL))
   conn = inputs[["conn"]]
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
-  cols = frame[["cols"]]
-  beta = fit[["coef"]][, 1L]
-  names(beta) = fit[["x"]]
-  slopes = setdiff(fit[["x"]], "(Intercept)")
-  residual = paste0("(CAST(", cols[[y]], " AS DOUBLE)-", sql_linear_predictor(unname(cols[slopes]),
-    beta[slopes], if ("(Intercept)" %in% fit[["x"]]) beta[["(Intercept)"]]), ")")
+  residual = fit_residual_sql(fit, frame, y, conn)
   x = vapply(fit[["x"]], function(name) if (name == "(Intercept)") "1.0" else
-    paste0("CAST(", cols[[name]], " AS DOUBLE)"), character(1))
+    fit_column_sql(fit, frame, name, conn), character(1))
   w = frame[["weights_expr"]]
   if (is.null(w)) w = "1.0"
+  scale = fit[["weight_scale"]]
+  if (is.null(scale)) scale = 1
+  w = paste0("(", w, ")/(", dbglm_number(scale), ")")
   scores = sprintf("CAST((%s) AS DOUBLE)*(%s)*(%s)", w, residual, x)
   score_names = if (length(x)) paste0("dbreg_fit_score", seq_along(x)) else character()
   select = c(paste(inputs[["retained_key_safe"]], "AS dbreg_fit_key__"),
@@ -28,10 +26,11 @@ retain_linear_score_frame = function(fit, frame, y, inputs) {
   if (!is.finite(state[["rss"]]) || abs(state[["rss"]] - fit[["rss"]]) > 1e-6*max(1, abs(fit[["rss"]]))) {
     stop("Retained OLS scores do not reproduce the fitted RSS.", call. = FALSE)
   }
-  state[["bread"]] = unname(fit[["bread"]])
+  state[["bread"]] = unname(fit[["bread"]])*scale
+  if (!is.null(fit[["sandwich_bread"]])) state[["score_projection"]] = t(unname(fit[["sandwich_bread"]])*scale)
   state[["coefficient_names"]] = fit[["x"]]
   state[["kind"]] = "ols"
-  state[["weight_scale"]] = 1
+  state[["weight_scale"]] = scale
   inputs[["inference_state"]] = state
   invisible(NULL)
 }
@@ -80,13 +79,18 @@ reconstruct_compressed_score_frame = function(result, inputs) {
   x = design[["aliases"]][selected]
   frame = if (length(inputs[["fe"]])) build_demean_frame(inputs, x_sql, x) else build_base_frame(inputs, x_sql, x)
   on.exit(frame[["cleanup"]](), add = TRUE)
-  row = dbglm_get_query(conn, frame_moments_sql(frame, inputs[["yvar"]], x, conn))
+  row = backend_get_query(conn, frame_moments_sql(frame, inputs[["yvar"]], x, conn))
   S = cross_moments(row, x, inputs[["yvar"]], intercept = has_intercept)
   names = c(if (has_intercept) "(Intercept)", x)
   fixed = matrix(unname(beta), ncol = 1L, dimnames = list(names, NULL))
   H = S[names, names, drop = FALSE]
   fit = list(coef = fixed, x = names,
-    bread = if (length(names)) solve_with_fallback(H, matrix(0, length(names), 1L))[["XtX_inv"]] else matrix(numeric(), 0L, 0L),
+    bread = if (length(names)) {
+      A = moment_coordinates(S, names)
+      A %*% solve_with_fallback(H, matrix(0, length(names), 1L))[["XtX_inv"]] %*% t(A)/attr(S, "weight_scale")
+    } else matrix(numeric(), 0L, 0L),
+    weight_scale = attr(S, "weight_scale"), centers = attr(S, "centers"),
+    sandwich_bread = if (length(names)) moment_coordinates(S, names) %*% solve_with_fallback(H, matrix(0, length(names), 1L))[["XtX_inv"]]/attr(S, "weight_scale") else matrix(numeric(), 0L, 0L),
     rss = attr(result[["vcov"]], "rss"))
   retain_linear_score_frame(fit, frame, inputs[["yvar"]], inputs)
 }

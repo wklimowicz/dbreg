@@ -10,7 +10,7 @@ detect_backend(conn)
 \item{conn}{A DBI database connection object.}
 }
 \value{
-List with `name` (character) and `supports_count_big` (logical).
+List with backend name and capabilities.
 }
 \description{
 Returns backend name and capabilities for SQL dialect handling.

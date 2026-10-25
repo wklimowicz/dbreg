@@ -44,7 +44,7 @@ prediction_upload_frame = function(conn, frame, resources, sql_types = NULL) {
     chunk = as.data.frame(lapply(frame[first:last, , drop = FALSE], prediction_frame_text), stringsAsFactors = FALSE,
       check.names = FALSE)
     if (native) {
-      values = dbglm_values_sql(conn, chunk, max_bytes = 8 * 1024^2, format = "json")
+      values = sql_values_frame(conn, chunk, max_bytes = 8 * 1024^2, format = "json")
       if (is.null(values)) {
         if (batch == 1L) stop("A prediction input row exceeds the SQL transfer limit.", call. = FALSE)
         batch = max(1L, floor(batch / 2L))

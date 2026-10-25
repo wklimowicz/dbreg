@@ -160,7 +160,9 @@ get_column_info = function(conn, table, vars, level_vars = character(), factor_r
   # Fetch zero rows to get the schema, then separate queries for factor levels
   # (sql_limit() handles dialects without LIMIT, e.g. SQL Server's TOP)
   backend = detect_backend(conn)[["name"]]
-  schema_query = sql_limit(glue("SELECT {paste(vars, collapse = ', ')} {from_sql}"), 0, backend)
+  # SQLite has no static type for computed expressions; a zero-row CASE or
+  # polynomial projection is reported as logical. Inspect one bounded row.
+  schema_query = sql_limit(glue("SELECT {paste(vars, collapse = ', ')} {from_sql}"), if (backend == "sqlite") 1 else 0, backend)
   schema = dbGetQuery(conn, schema_query)
   
   types = list()
@@ -169,6 +171,10 @@ get_column_info = function(conn, table, vars, level_vars = character(), factor_r
   
   for (v in vars) {
     col_class = class(schema[[v]])[1]
+    if (backend == "sqlite" && col_class == "logical") {
+      value = dbGetQuery(conn, sql_limit(glue("SELECT {v} FROM (SELECT {v} {from_sql}) dbreg_type_sample WHERE {v} IS NOT NULL"), 1, backend))[[1L]]
+      if (length(value)) col_class = class(value)[[1L]]
+    }
     classes[[v]] = col_class
     # Treat character, factor, logical as categorical
     is_cat = col_class %in% c("character", "factor", "logical") || v %in% names(factor_refs)
@@ -187,6 +193,7 @@ get_column_info = function(conn, table, vars, level_vars = character(), factor_r
   
   classes = vapply(schema, function(column) class(column)[[1L]], character(1))
   list(types = types, levels = levels, classes = classes, factor_classes = classes[names(levels)],
+    numeric_sql = setNames(sql_cast_double(vars, conn), vars),
     level_sql = sql_factor_literals(conn, levels, classes))
 }
 
@@ -223,14 +230,18 @@ expand_term = function(term, col_info, expand, sep = "_x_", all_terms = characte
 expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRUE) {
   power = parse_power_term(var)
   if (!is.null(power)) {
-    return(list(sql = power[["sql"]], name = var, alias = unname(col_info[["power_aliases"]][var])))
+    source = col_info[["numeric_sql"]][[power[["variable"]]]]
+    if (is.null(source)) source = power[["variable"]]
+    return(list(sql = sprintf("POWER(%s, %d)", source, power[["exponent"]]), name = var, alias = unname(col_info[["power_aliases"]][var])))
   }
   is_factor = identical(col_info[["types"]][[var]], "factor")
   
   # Only expand factors if: expand="all", OR variable is part of interaction
   if (!(is_factor && (expand == "all" || in_interaction))) {
     # Numeric or unexpanded factor: pass through
-    return(list(sql = var, name = var, alias = var))
+    sql = if (!is_factor) col_info[["numeric_sql"]][[var]] else NULL
+    if (is.null(sql)) sql = var
+    return(list(sql = sql, name = var, alias = var))
   }
   lvls = col_info[["levels"]][[var]]
   level_sql = col_info[["level_sql"]][[var]]

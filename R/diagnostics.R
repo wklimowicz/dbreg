@@ -61,5 +61,6 @@ finalize_fit_diagnostics = function(result, inputs) {
   result[["ap_converged"]] = if (projected) TRUE else NA
   result[["ap_tolerance"]] = if (projected) inputs[["fe_tol"]] else NA_real_
   result[["ap_max_iter"]] = if (projected) inputs[["fe_max_iter"]] else NA_integer_
+  result[["projection_diagnostics"]] = inputs[["projection_diagnostics"]]
   result
 }

@@ -37,7 +37,7 @@ expect_equal(
   info = "balanced panel (sim): auto selects demean"
 )
 
-sim_feols = feols(
+sim_feols = fixest::feols(
   y ~ x1 + x2 | firm + year,
   data = sim_panel,
   lean = TRUE
@@ -71,7 +71,7 @@ sim_mundlak = dbreg(
   strategy = "mundlak"
 )
 
-sim_mundlak_manual = feols(
+sim_mundlak_manual = fixest::feols(
   y ~ x1 + x2 + x1_mean_firm + x2_mean_firm + x1_mean_year + x2_mean_year,
   data = sim_panel,
   lean = TRUE
@@ -99,7 +99,7 @@ sim_moments = dbreg(
   strategy = "moments"
 )
 
-sim_ols = feols(
+sim_ols = fixest::feols(
   y ~ x1 + x2,
   data = sim_panel,
   lean = TRUE
@@ -123,7 +123,7 @@ expect_equal(
 ## Test predictions (balanced panel) ----
 
 # Need non-lean fixest for predictions
-sim_feols_full = feols(
+sim_feols_full = fixest::feols(
   y ~ x1 + x2 | firm + year,
   data = sim_panel
 )
@@ -177,8 +177,8 @@ expect_true(
 sim_na_cl = sim_panel
 sim_na_cl$cl = (sim_na_cl$firm %% 10) + 1
 sim_na_cl$cl[c(3, 57, 211, 404)] = NA
-fx_na_cl = feols(y ~ x1 + x2 | firm, data = sim_na_cl[!is.na(sim_na_cl$cl), ], vcov = ~cl)
-fx_na_cl_nofe = feols(y ~ x1 + x2, data = sim_na_cl[!is.na(sim_na_cl$cl), ], vcov = ~cl)
+fx_na_cl = fixest::feols(y ~ x1 + x2 | firm, data = sim_na_cl[!is.na(sim_na_cl$cl), ], vcov = ~cl)
+fx_na_cl_nofe = fixest::feols(y ~ x1 + x2, data = sim_na_cl[!is.na(sim_na_cl$cl), ], vcov = ~cl)
 
 for (s in c("demean", "compress")) {
   # firm is nested in cl; fixest's default K excludes nested FEs
@@ -186,7 +186,7 @@ for (s in c("demean", "compress")) {
   expect_equal(db_na_cl$nobs_orig, nobs(fx_na_cl), info = paste(s, "drops rows with missing cluster"))
   expect_equal(
     as.numeric(db_na_cl$coeftable[c("x1", "x2"), "std.error"]),
-    as.numeric(se(fx_na_cl)[c("x1", "x2")]),
+    as.numeric(fixest::se(fx_na_cl)[c("x1", "x2")]),
     tolerance = 1e-6,
     info = paste(s, "cluster SEs match fixest after dropping missing clusters")
   )
@@ -195,7 +195,7 @@ db_na_cl_mom = dbreg(y ~ x1 + x2, data = sim_na_cl, vcov = ~cl, strategy = "mome
 expect_equal(db_na_cl_mom$nobs_orig, nobs(fx_na_cl_nofe), info = "moments drops rows with missing cluster")
 expect_equal(
   as.numeric(db_na_cl_mom$coeftable[, "std.error"]),
-  as.numeric(se(fx_na_cl_nofe)),
+  as.numeric(fixest::se(fx_na_cl_nofe)),
   tolerance = 1e-6,
   info = "moments cluster SEs match fixest after dropping missing clusters"
 )
@@ -204,10 +204,10 @@ expect_equal(
 ## Moments are computed in double precision (FLOAT is 4-byte on DuckDB) ----
 
 sim_cl = transform(sim_panel, cl = (firm %% 10) + 1)
-fx_prec = feols(y ~ x1 + x2 | firm, data = sim_cl, vcov = ~cl)
+fx_prec = fixest::feols(y ~ x1 + x2 | firm, data = sim_cl, vcov = ~cl)
 for (s in c("demean", "mundlak")) {
   db_prec = dbreg(y ~ x1 + x2 | firm, data = sim_cl, vcov = ~cl, strategy = s)
   expect_equal(coef(db_prec)[c("x1", "x2")], coef(fx_prec), tolerance = 1e-12, info = paste(s, "coefficients match fixest to double precision"))
 }
 db_prec = dbreg(y ~ x1 + x2 | firm, data = sim_cl, vcov = ~cl, ssc = "nested", strategy = "demean")
-expect_equal(as.numeric(db_prec$coeftable[c("x1", "x2"), "std.error"]), as.numeric(se(fx_prec)), tolerance = 1e-12, info = "cluster SEs match fixest to double precision")
+expect_equal(as.numeric(db_prec$coeftable[c("x1", "x2"), "std.error"]), as.numeric(fixest::se(fx_prec)), tolerance = 1e-12, info = "cluster SEs match fixest to double precision")

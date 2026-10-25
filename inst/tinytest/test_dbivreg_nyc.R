@@ -64,14 +64,14 @@ expect_true(
   info = "dbivreg returns finite coefficients and standard errors on NYC backend data"
 )
 
-fx_iv = feols(y ~ x | d ~ z, data = nyc_local, weights = ~w, vcov = "hc1")
+fx_iv = fixest::feols(y ~ x | d ~ z, data = nyc_local, weights = ~w, vcov = "hc1")
 fx_coef = rename_fixest_iv(coef(fx_iv))
 expect_true(
   max(abs(nyc_iv$coeftable[names(fx_coef), "estimate"] - fx_coef)) < 1e-6,
   info = "dbivreg coefficients match fixest on NYC backend view"
 )
 
-fx_se = rename_fixest_iv(se(fx_iv))
+fx_se = rename_fixest_iv(fixest::se(fx_iv))
 expect_true(
   max(abs(nyc_iv$coeftable[names(fx_se), "std.error"] - fx_se)) < 1e-6,
   info = "dbivreg HC1 standard errors match fixest on NYC backend view"
@@ -95,14 +95,14 @@ expect_true(
   info = "dbivreg FE-IV returns finite coefficients and standard errors on NYC backend data"
 )
 
-fx_iv_fe = feols(y ~ x | fe1 + fe2 | d ~ z, data = nyc_local, weights = ~w, vcov = "hc1")
+fx_iv_fe = fixest::feols(y ~ x | fe1 + fe2 | d ~ z, data = nyc_local, weights = ~w, vcov = "hc1")
 fx_fe_coef = rename_fixest_iv(coef(fx_iv_fe))
 expect_true(
   max(abs(nyc_iv_fe$coeftable[names(fx_fe_coef), "estimate"] - fx_fe_coef)) < 1e-6,
   info = "dbivreg FE-IV coefficients match fixest on NYC backend view"
 )
 
-fx_fe_se = rename_fixest_iv(se(fx_iv_fe))
+fx_fe_se = rename_fixest_iv(fixest::se(fx_iv_fe))
 expect_true(
   max(abs(nyc_iv_fe$coeftable[names(fx_fe_se), "std.error"] - fx_fe_se)) < 1e-6,
   info = "dbivreg FE-IV HC1 standard errors match fixest on NYC backend view"

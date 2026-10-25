@@ -8,7 +8,8 @@ filter_estimation_sample(
   from_statement,
   vars,
   weights = NULL,
-  drop_missings = TRUE
+  drop_missings = TRUE,
+  conn = NULL
 )
 }
 \description{

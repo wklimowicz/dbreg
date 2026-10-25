@@ -10,7 +10,7 @@ did$period = relevel(did$period, ref = "5")
 
 fml_did = y ~ x1 + treat * period | id
 
-fe_did = suppressMessages(feols(fml_did, data = did))
+fe_did = suppressMessages(fixest::feols(fml_did, data = did))
 db_did = dbreg(fml_did, data = did, strategy = "demean")
 
 # Check treat was detected as collinear

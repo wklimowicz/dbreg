@@ -19,6 +19,15 @@ sql_ap_convergence = function(table, vars, fe) {
   paste0("SELECT ", outer, " FROM (", inner, ") dbreg_convergence")
 }
 
+sql_ap_original_scale = function(table, vars, conn) {
+  paste("SELECT", paste(sprintf("MAX(ABS(%s)) AS original_%d", sql_cast_double(vars, conn), seq_along(vars)), collapse = ","), "FROM", table)
+}
+
+sql_ap_rms = function(table, vars, conn) {
+  values = sql_cast_double(paste0(vars, "_tilde"), conn)
+  paste("SELECT", paste(sprintf("SQRT(SUM(__w*(%s)*(%s))/SUM(__w)) AS rms_%d", values, values, seq_along(vars)), collapse = ","), "FROM", table)
+}
+
 dbreg_ap_query_plan = function(inputs, x_sql, x_names) {
   conn = inputs[["conn"]]
   fe = inputs[["fe"]]
@@ -43,6 +52,7 @@ dbreg_ap_query_plan = function(inputs, x_sql, x_names) {
   }, character(1)), fe)
   frame = list(cte_sql = "WITH demeaned AS (SELECT * FROM <ap_converged>)", cte_name = "demeaned",
     cols = setNames(tilde, vars), weights_expr = "__w", intercept = FALSE, cast = TRUE,
+    rank_source = paste0("(", base, ") dbreg_ap_rank_source"),
     prefix_terms = c(sql_count(conn, "n_total"), vapply(seq_along(fe), function(k)
       sql_count(conn, sprintf("n_fe%d", k), fe[[k]], distinct = TRUE), character(1))))
   structure(list(strategy = "demean", backend = backend, method = method,
@@ -50,9 +60,12 @@ dbreg_ap_query_plan = function(inputs, x_sql, x_names) {
     model_frame_sql = base, initialization_sql = initial,
     design_matrix = data.frame(term = restore_names(standardize_coef_names(x_names), inputs[["name_map"]]), sql = x_sql),
     projection_sql = projection, convergence_sql = sql_ap_convergence("<ap_current>", vars, fe),
+    original_scale_sql = sql_ap_original_scale("(<model_frame_sql>) dbreg_ap_original", vars, conn),
+    residual_scale_sql = sql_ap_rms("<ap_current>", vars, conn),
     final_moments_sql = frame_moments_sql(frame, y, x_names, conn),
     note = paste("Templates for iterative fixed-effect projection; replace the angle-bracket placeholders.",
       "Repeat the projections until convergence. The automatic solver may instead use bounded FE moments.",
+      "Also require group means divided by projected RMS to meet tolerance for columns above their original-value roundoff bound.",
       "No projection or coefficient estimation is executed by sql_only.")), class = "dbreg_query_plan")
 }
 
@@ -62,7 +75,7 @@ dbreg_ap_query_plan = function(inputs, x_sql, x_names) {
 #' @export
 print.dbreg_query_plan = function(x, ...) {
   cat("Fixed-effect SQL plan (", x[["backend"]], ", ", x[["method"]], ")\n", sep = "")
-  for (name in c("model_frame_sql", "initialization_sql", "projection_sql", "convergence_sql", "final_moments_sql")) {
+  for (name in c("model_frame_sql", "initialization_sql", "projection_sql", "convergence_sql", "original_scale_sql", "residual_scale_sql", "final_moments_sql")) {
     cat("\n", name, ":\n", paste(x[[name]], collapse = "\n\n"), "\n", sep = "")
   }
   cat("\n", x[["note"]], "\n", sep = "")

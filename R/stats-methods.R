@@ -439,6 +439,7 @@ confint.dbreg = function(object, parm, level = 0.95, fe = FALSE,
   cf = ct[, "estimate"]
   ses = ct[, "std.error"]
   df = object[["df_residual"]]
+  if (!is.null(attr(object[["vcov"]], "df.t"))) df = attr(object[["vcov"]], "df.t")
   
   a = (1 - level) / 2
   t_crit = qt(1 - a, df)

@@ -16,15 +16,15 @@ predict_retained_sample = function(object, type = "link", sample = c("estimation
     values = DBI::dbGetQuery(conn, paste("SELECT", q(state[["eta"]]), "AS eta", from, "ORDER BY", q(state[["key"]])))[["eta"]]
     return(if (inherits(object, "dbglm") && type == "response") object[["family"]][["linkinv"]](values) else values)
   }
-  resources = dbglm_resources()
+  resources = fit_resources()
   resources[["conn"]] = conn
   resources[["retained_session"]] = object[["resource_state"]][["session"]]
-  on.exit(dbglm_release_resources(resources))
+  on.exit(release_fit_resources(resources))
   prediction = safe_identifiers("prediction", taken = state[["row_id"]], fold_case = folds_identifier_case(conn))
   create = function(sql) {
     name = basename(tempfile("dbreg_sample_prediction_"))
     resources[["tables"]] = c(resources[["tables"]], name)
-    DBI::dbExecute(conn, sql_sample_table(conn, name, dbglm_sql(conn, sql), c(state[["row_id"]], prediction)))
+    DBI::dbExecute(conn, sql_sample_table(conn, name, backend_sql(conn, sql), c(state[["row_id"]], prediction)))
     name
   }
   table = create(paste("SELECT", paste(c(q(state[["row_id"]]), paste(q(state[["eta"]]), "AS", q(prediction))), collapse = ","), from))

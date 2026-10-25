@@ -1,7 +1,7 @@
 dbreg_test_sql_prediction_keys = function(conn) {
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
-  on.exit(dbreg:::dbglm_release_resources(resources))
+  on.exit(dbreg:::release_fit_resources(resources))
   d = data.frame(id = 1:20, x = sin(1:20), y = cos(1:20))
   table = dbreg:::prediction_upload_frame(conn, d, resources)
   fit = dbreg(y ~ x, conn = conn, table = table, strategy = "moments")

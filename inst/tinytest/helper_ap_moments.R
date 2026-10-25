@@ -22,10 +22,10 @@ dbreg_test_ap_moments = function(conn, verbose = FALSE) {
   d[["endog"]] = .8 * d[["x"]] + .2 * d[["z"]] + rnorm(n)
   d[["x2"]] = d[["x"]]^2
   d[["y"]] = .4 * d[["endog"]] - .2 * d[["z"]] + .12 * d[["x"]]^2 + sin(f) + cos(d[["g"]]) + rnorm(n)
-  if (native) DBI::dbExecute(conn, paste("CREATE TEMP TABLE", table, "AS", dbreg:::dbglm_values_sql(conn, d))) else
+  if (native) DBI::dbExecute(conn, paste("CREATE TEMP TABLE", table, "AS", dbreg:::sql_values_frame(conn, d))) else
     DBI::dbWriteTable(conn, table, d, temporary = TRUE)
   # IDs that collide if converted to R doubles must remain distinct SQL keys.
-  DBI::dbExecute(conn, dbreg:::dbglm_sql(conn, paste0("CREATE TEMP TABLE ", big,
+  DBI::dbExecute(conn, dbreg:::backend_sql(conn, paste0("CREATE TEMP TABLE ", big,
     " AS SELECT * EXCLUDE(g),CAST(9007199254740992 AS BIGINT)+CAST(g AS BIGINT) AS g FROM ", table)))
 
   compare = function(fml, covariance, iv = FALSE, source = table) {

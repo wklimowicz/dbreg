@@ -12,10 +12,10 @@ for(mode in c("perfect_fit","singletons","infinite_coef")) {
  m <- dbglm(y~x|f+g,conn=cs,data=ds,weights="a",offset="o",vcov=~cl,
              row_id="id",sample_table="retained",fixef_rm=mode)
  eligible <- ds[-(1:4),]
- r <- feglm(y~x|f+g,eligible,family=binomial("cloglog"),weights=~a,offset=~o,vcov=~cl,
+ r <- fixest::feglm(y~x|f+g,eligible,family=binomial("cloglog"),weights=~a,offset=~o,vcov=~cl,
              fixef.rm=mode,glm.tol=3e-13,fixef.tol=1e-10,notes=FALSE)
  keys <- sort(dbReadTable(cs,"retained")$id)
- expect_equal(keys,sort(eligible$id[obs(r)]))
+ expect_equal(keys,sort(eligible$id[fixest::obs(r)]))
  expect_equal(nobs(m),nobs(r))
  expect_true(m$pruning_rounds>1)
  expect_equal(sum(m$exclusions),4)

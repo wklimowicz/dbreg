@@ -106,6 +106,10 @@ local({
   expect_warning({ repaired = dbreg:::inference_repair_vcov(V) }, "not positive definite")
   expect_equal(as.numeric(repaired), rep(1.5, 4L), tolerance = 1e-14)
   expect_warning({ unchanged = dbreg:::inference_repair_vcov(V, FALSE) }, "not positive definite")
+  expect_equal(attr(unchanged, "repair")[["min_eigenvalue"]], -1, tolerance = 1e-14)
+  expect_false(attr(unchanged, "repair")[["repaired"]])
+  expect_true(attr(repaired, "repair")[["repaired"]])
+  attr(unchanged, "repair") = NULL
   expect_identical(unchanged, V)
   expect_error(dbreg:::inference_repair_vcov(matrix(Inf, 1L)), "nonfinite")
 })

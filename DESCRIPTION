@@ -65,6 +65,8 @@ Suggests:
   knitr,
   odbc,
   quarto,
+  RSQLite,
+  sparklyr (>= 1.9.1),
   tinytest
 Enhances:
   dbplyr
@@ -75,3 +77,4 @@ URL: https://grantmcdermott.com/dbreg/
 BugReports: https://github.com/grantmcdermott/dbreg/issues
 VignetteBuilder: quarto
 Config/roxygen2/version: 8.1.0
+RoxygenNote: 7.3.3

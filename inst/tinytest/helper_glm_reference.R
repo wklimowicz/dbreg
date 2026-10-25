@@ -6,6 +6,7 @@ dbglm_reference_feglm = function(fml, data, ..., max_refine = 60L) {
     fixef.iter = 10000, notes = FALSE)
   for (name in names(defaults)) if (is.null(args[[name]])) args[[name]] = defaults[[name]]
   fit = do.call(fixest::feglm, args)
+  stopifnot(inherits(fit, "fixest"), !inherits(fit, "dbreg"))
   if (!length(stats::coef(fit))) {
     if (!isTRUE(fit[["convStatus"]])) stop("The FE-only fixest reference did not converge.")
     return(fit)
@@ -21,6 +22,7 @@ dbglm_reference_feglm = function(fml, data, ..., max_refine = 60L) {
     args[["etastart"]] = fit[["linear.predictors"]]
     fit = NULL
     fit = do.call(fixest::feglm, args)
+    stopifnot(inherits(fit, "fixest"), !inherits(fit, "dbreg"))
     current_coef = stats::coef(fit)
     current_vcov = stats::vcov(fit)
     if (!identical(names(current_coef), names(previous_coef))) stop("The fixest reference basis changed.")

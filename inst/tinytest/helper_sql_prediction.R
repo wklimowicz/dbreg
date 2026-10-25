@@ -2,9 +2,9 @@ dbreg_test_sql_prediction = function(conn) {
   before = dbglm_validation_tables(conn)
   original = options(dbreg.prediction_max_entries = 1e6)
   on.exit(options(original), add = TRUE)
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
-  on.exit(dbreg:::dbglm_release_resources(resources), add = TRUE)
+  on.exit(dbreg:::release_fit_resources(resources), add = TRUE)
   models = outputs = list()
   on.exit({ for (output in outputs) close(output); for (model in models) close(model) }, add = TRUE)
   set.seed(275)
@@ -173,7 +173,7 @@ dbreg_test_sql_prediction = function(conn) {
   check(fit, newdata)
   for (output in outputs) close(output)
   for (model in models) close(model)
-  dbreg:::dbglm_release_resources(resources)
+  dbreg:::release_fit_resources(resources)
   resources[["tables"]] = character()
   expect_identical(dbglm_validation_tables(conn), before)
 }

@@ -12,7 +12,7 @@ dbglm_databricks_pruning_needed = function(conn, table, groups, y, mode, family)
     ") AS __lo, MAX(", y, ") AS __hi FROM ", table, " GROUP BY GROUPING SETS (",
     paste(vapply(groups, function(g) paste0("(", paste(g, collapse = ","), ")"), character(1)), collapse = ","),
     ")) __dbglm_prune WHERE ", condition)
-  as.numeric(dbglm_get_query(conn, sql)[["n"]]) > 0
+  as.numeric(backend_get_query(conn, sql)[["n"]]) > 0
 }
 
 # Databricks inlines CTEs, so a UNION branch per FE pair repeatedly plans the

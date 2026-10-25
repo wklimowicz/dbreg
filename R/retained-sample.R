@@ -68,16 +68,16 @@ retain_score_sample = function(conn, original, resources, score_query, score_key
   resources[["tables"]] = c(resources[["tables"]], name)
   sql = paste0("SELECT ", paste(select, collapse = ","), " FROM ", q(original[["table"]]), " r LEFT JOIN (",
     score_query, ") s ON r.", q(original[["key"]]), "=s.", q(score_key))
-  DBI::dbExecute(conn, sql_sample_table(conn, name, dbglm_sql(conn, sql), c(original[["columns"]], original[["key"]], private)))
+  DBI::dbExecute(conn, sql_sample_table(conn, name, backend_sql(conn, sql), c(original[["columns"]], original[["key"]], private)))
   w = if (is.null(weights)) "1.0" else paste0("CAST(", q(weights), " AS DOUBLE)")
   summary = c("COUNT(*) AS n_original", paste0("SUM(CASE WHEN ", q(estimated_column), " THEN 1 ELSE 0 END) AS n_fit"),
     paste0("SUM(CASE WHEN ", q(estimated_column), " THEN POWER(", q(residual_column), ",2) ELSE 0.0 END) AS rss_unweighted"),
     paste0("SUM(CASE WHEN ", q(estimated_column), " THEN ", w, "*POWER(", q(residual_column), ",2) ELSE 0.0 END) AS rss"))
-  row = dbglm_get_query(conn, paste("SELECT", paste(summary, collapse = ","), "FROM", q(name)))
+  row = backend_get_query(conn, paste("SELECT", paste(summary, collapse = ","), "FROM", q(name)))
   if (as.numeric(row[["n_original"]]) != original[["nobs_input"]]) stop("Retained score rows do not match the original sample.", call. = FALSE)
   fe_sizes = if (length(fe_components)) {
     terms = vapply(seq_along(fe_components), function(i) paste(sql_distinct_tuple_count(conn, fe_components[[i]]), "AS", paste0("g", i)), character(1))
-    counts = dbglm_get_query(conn, paste("SELECT", paste(terms, collapse = ","), "FROM", q(name), "WHERE", q(estimated_column)))
+    counts = backend_get_query(conn, paste("SELECT", paste(terms, collapse = ","), "FROM", q(name), "WHERE", q(estimated_column)))
     vapply(counts, as.numeric, numeric(1))
   } else numeric()
   list(version = 1L, table = name, key = original[["key"]], r_input = original[["r_input"]],

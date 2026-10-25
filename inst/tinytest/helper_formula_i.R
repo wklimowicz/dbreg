@@ -14,9 +14,9 @@ dbreg_reference_i = function() {
 dbreg_test_formula_i = function(conn) {
   restore_i = dbreg_reference_i()
   on.exit(restore_i(),add=TRUE)
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
-  on.exit(dbreg:::dbglm_release_resources(resources),add=TRUE)
+  on.exit(dbreg:::release_fit_resources(resources),add=TRUE)
   models = outputs = list()
   on.exit({ for(output in outputs) close(output); for(model in models) close(model) },add=TRUE)
   i = fixest::i

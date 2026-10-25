@@ -14,10 +14,13 @@ local({
   project = dbreg:::dbreg_moment_projections
   environment(project) = new.env(parent = environment(project))
   injected = "FE coefficient lookup exceeds the SQL transfer limit."
-  environment(project)[["dbglm_project_moments"]] = function(...) stop(injected)
-  expect_null(project(inputs, "x", "x", 100L, 1e-10))
+  environment(project)[["project_fe_moments"]] = function(...) dbreg:::projection_abort("upload_limit", injected)
+  attempt = dbreg:::projection_attempt("bounded_moments", project(inputs, "x", "x", 100L, 1e-10))
+  expect_null(attempt[["result"]])
+  expect_identical(attempt[["reason"]], "upload_limit")
   expect_identical(DBI::dbListTables(conn), "source")
   injected = "injected unexpected database failure"
+  environment(project)[["project_fe_moments"]] = function(...) stop(injected)
   expect_error(project(inputs, "x", "x", 100L, 1e-10), injected)
   expect_identical(DBI::dbListTables(conn), "source")
   environment(project)[["detect_backend"]] = function(conn) list(name = "spark",

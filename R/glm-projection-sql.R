@@ -49,7 +49,7 @@ dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, targ
     applied = moments(direction, direction_names, a, info)
     drop(direction)
     joined = create(paste0("SELECT s.*,", paste(paste0("a.", a), collapse = ","), " FROM ", state, " s JOIN ", applied, " a USING (", key, ")"))
-    moment = dbglm_get_query(conn, paste("SELECT", paste(c(sprintf("FSUM(%1$s*%1$s) AS rr%2$d", r, index),
+    moment = backend_get_query(conn, paste("SELECT", paste(c(sprintf("FSUM(%1$s*%1$s) AS rr%2$d", r, index),
       sprintf("FSUM(%s*%s) AS da%d", d, a, index)), collapse = ","), "FROM", joined))
     rr = vapply(index, function(j) as.numeric(moment[[paste0("rr", j)]]), numeric(1))
     da = vapply(index, function(j) as.numeric(moment[[paste0("da", j)]]), numeric(1))
@@ -68,7 +68,7 @@ dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, targ
     if (cycle %% 4L == 0L || cycle == 1L || cycle == control[["fe_max_iter"]] || restart) {
       projected = rows(state, g, columns, subtract = TRUE)
       certificate = moments(projected, columns, r, info)
-      row = dbglm_get_query(conn, paste("SELECT", paste(sprintf("MAX(ABS(%s))/%s AS r%d", r, dbglm_number(scales), index), collapse = ","), "FROM", certificate))
+      row = backend_get_query(conn, paste("SELECT", paste(sprintf("MAX(ABS(%s))/%s AS r%d", r, dbglm_number(scales), index), collapse = ","), "FROM", certificate))
       residual_columns = as.numeric(row[1, ])
       residual = max(residual_columns)
       active = residual_columns > target
@@ -91,7 +91,7 @@ dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, targ
       drop(certificate)
     }
     if (!restart) {
-      new_rr = as.numeric(dbglm_get_query(conn, paste("SELECT", paste(sprintf("FSUM(%1$s*%1$s) AS r%2$d", r, index), collapse = ","), "FROM", state))[1, ])
+      new_rr = as.numeric(backend_get_query(conn, paste("SELECT", paste(sprintf("FSUM(%1$s*%1$s) AS r%2$d", r, index), collapse = ","), "FROM", state))[1, ])
       beta = ifelse(active & rr > floor_rr, new_rr / rr, 0)
       next_state = create(paste("SELECT * EXCLUDE(", paste(d, collapse = ","), "),",
         paste(sprintf("((%s)*%s+(%s)*%s) AS %s", dbglm_number(as.numeric(active)), r, dbglm_number(beta), d, d), collapse = ","), "FROM", state))
@@ -107,7 +107,7 @@ dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, targ
 dbglm_project_window = function(conn, table, columns, fe, control, create, drop, response) {
   if (!length(columns)) return(list(table = create(paste("SELECT __dbglm_key,",
     paste(c(fe, "w"), collapse = ","), "FROM", table)), cycles = 0L, residual = 0, method = "window"))
-  norm = dbglm_get_query(conn, paste("SELECT", paste(sprintf("SUM(w*POWER(%s,2)) AS n%d",
+  norm = backend_get_query(conn, paste("SELECT", paste(sprintf("SUM(w*POWER(%s,2)) AS n%d",
     columns, seq_along(columns)), collapse = ","), "FROM", table))
   scales = sqrt(pmax(as.numeric(norm[1, ]), .Machine[["double.xmin"]]))
   target = control[["fe_tol"]]
@@ -137,7 +137,7 @@ dbglm_project_window = function(conn, table, columns, fe, control, create, drop,
         " FROM ", cur_table, " GROUP BY ", fe_k, ") dbreg_ap_conv")
     }, character(1))
     convergence_query = paste0("SELECT GREATEST(", paste(sprintf("(%s)", diagnostics), collapse = ", "), ") AS max_abs")
-    max_abs = as.numeric(dbglm_get_query(conn, convergence_query)[1, 1L])
+    max_abs = as.numeric(backend_get_query(conn, convergence_query)[1, 1L])
   }
   result = create(paste("SELECT __dbglm_key,", paste(c(fe, "__w AS w",
     sprintf("%s_tilde AS %s", columns, columns)), collapse = ","), "FROM", cur_table))

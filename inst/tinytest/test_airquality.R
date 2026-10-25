@@ -29,7 +29,7 @@ aq_fe1_demean = dbreg(
   strategy = "demean"
 )$coeftable
 
-aq_fe1_feols = feols(
+aq_fe1_feols = fixest::feols(
   Temp ~ Wind | Month,
   data = airquality,
   lean = TRUE,

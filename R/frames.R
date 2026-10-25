@@ -22,6 +22,62 @@ frame_select = function(y, x_sql, x_names, id_cols = NULL, extra = NULL) {
   )
 }
 
+# Global location/weight normalization shared by compressed OLS and IV.
+# Grouped sums then retain the within-cell variation instead of subtracting
+# raw outcome squares at the scale of a possibly enormous intercept.
+compression_moment_source = function(conn, from, y, weights, intercept = TRUE) {
+  w = sql_weight_expr(weights)
+  location = paste0("SELECT ", if (intercept) paste0("AVG(", sql_cast_double(y, conn), ")") else "MAX(0.0)",
+    " AS dbreg_cell_center__, ", if (is.null(w)) "MAX(1.0)" else paste0("MAX(", w, ")"),
+    " AS dbreg_cell_scale__ ", from)
+  list(from = paste0("FROM (SELECT * ", from, ") dbreg_cell_source CROSS JOIN (", location, ") dbreg_cell_location"),
+    y = paste0("(", sql_cast_double(y, conn), "-dbreg_cell_center__)"),
+    weights = if (!is.null(w)) paste0("(", w, ")/dbreg_cell_scale__"),
+    prefix = c("MAX(dbreg_cell_center__) AS dbreg_cell_center__", "MAX(dbreg_cell_scale__) AS dbreg_cell_scale__"))
+}
+
+restore_compressed_data = function(dat) {
+  c = dat[["dbreg_cell_center__"]]
+  scale = dat[["dbreg_cell_scale__"]]
+  if (is.null(c)) return(dat)
+  for (suffix in c("", "2")) {
+    w = paste0("sum_w", suffix)
+    wy = paste0(w, "y")
+    yy = paste0(wy, "_sq")
+    if (!all(c(w, wy, yy) %in% names(dat))) next
+    dat[[yy]] = (dat[[yy]]+2*c*dat[[wy]]+c*c*dat[[w]])*scale^(if (suffix == "2") 2 else 1)
+    dat[[wy]] = (dat[[wy]]+c*dat[[w]])*scale^(if (suffix == "2") 2 else 1)
+    dat[[w]] = dat[[w]]*scale^(if (suffix == "2") 2 else 1)
+  }
+  if ("mean_Y" %in% names(dat)) dat[["mean_Y"]] = dat[["mean_Y"]]+c
+  if ("wts" %in% names(dat)) dat[["wts"]] = sqrt(dat[["sum_w"]])
+  dat
+}
+
+# Translate the cell design's actual contrasts into SQL. This also handles
+# numeric FE labels and exact integer dictionaries without string round-trips.
+compressed_score_expressions = function(conn, formula, dat, X, classes) {
+  assign = attr(X, "assign")
+  terms = attr(stats::terms(formula), "term.labels")
+  out = vapply(seq_len(ncol(X)), function(j) {
+    if (assign[[j]] == 0L) return("1.0")
+    variable = terms[[assign[[j]]]]
+    values = dat[[variable]]
+    if (!is.factor(values) && !is.character(values) && !is.logical(values)) return(variable)
+    levels = if (is.factor(values)) levels(values) else sort(unique(values))
+    first = match(as.character(levels), as.character(values))
+    raw = attr(values, "dbreg_key_values")
+    if (is.null(raw)) raw = levels
+    type = if (identical(attr(values, "dbreg_key_type"), "integer")) "integer64" else classes[[variable]]
+    literals = sql_factor_literals(conn, setNames(list(raw), variable), setNames(type, variable))[[variable]]
+    loads = as.numeric(X[first, j])
+    keep = which(!is.na(first) & is.finite(loads) & loads != 0)
+    if (!length(keep)) return("0.0")
+    paste0("(CASE ", paste0("WHEN ", variable, "=", literals[keep], " THEN ", dbglm_number(loads[keep]), collapse = " "), " ELSE 0.0 END)")
+  }, character(1))
+  setNames(out, colnames(X))
+}
+
 # Rank distinct typed FE tuples, then join their IDs to the rows. Sorting the
 # bounded level dictionaries avoids a window sort over the full observation set.
 sql_rank_fixed_effects = function(conn, source, components, fe) {
@@ -62,7 +118,7 @@ build_base_frame = function(inputs, x_sql, x_names) {
     cols = setNames(c(y, x_names), c(y, x_names)),
     weights_expr = sql_weight_expr(weights),
     intercept = !isFALSE(intercept),
-    cast = FALSE,
+    cast = TRUE,
     prefix_terms = sql_count(conn, "n_total"),
     cleanup = function() invisible(NULL)
   )
@@ -175,7 +231,8 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
       vapply(seq_along(fe), function(k) sql_count(conn, sprintf("n_fe%d", k), fe[k], distinct = TRUE), character(1))
     ),
     cleanup = cleanup,
-    ap_res = if (use_ap) ap_res else NULL
+    ap_res = if (use_ap) ap_res else NULL,
+    rank_source = paste0("(SELECT ", paste(frame_select(yvar, x_sql, x_names), collapse = ","), " ", from_statement, ") dbreg_rank_source")
   )
 }
 
@@ -193,16 +250,45 @@ frame_moments_sql = function(frame, y, x, conn) {
     sql = unname(frame[["cols"]][v])
     if (frame[["cast"]]) sql_cast_double(sql, conn) else sql
   }
+  # Center before multiplying: reconstructing a variance from raw squares loses
+  # all useful digits when a variable has a large location and small variation.
+  variables = c(x, y)
+  center_fields = paste0("dbreg_moment_center_", seq_along(variables))
+  rank_fields = paste0("dbreg_moment_original_", seq_along(variables))
+  tokens = c(frame[["cols"]], frame[["prefix_terms"]], frame[["weights_expr"]])
+  taken = unique(unlist(regmatches(tokens, gregexpr("[A-Za-z_][A-Za-z_0-9]*", tokens))))
+  private = safe_identifiers(c(center_fields, "dbreg_moment_weight_scale", rank_fields), taken = taken, fold_case = TRUE)
+  centers = private[seq_along(variables)]
+  weight_field = private[[length(variables)+1L]]
+  rank_names = utils::tail(private, length(variables))
+  center_terms = if (isTRUE(frame[["intercept"]])) paste0("AVG(", vapply(variables, col, character(1)), ")") else rep("MAX(0.0)", length(variables))
+  w = frame[["weights_expr"]]
+  scale = if (is.null(w)) "MAX(1.0)" else paste0("MAX(", sql_cast_double(w, conn), ")")
+  stats = paste0(",\ndbreg_moment_location AS (SELECT ", paste(c(paste(center_terms, "AS", centers),
+    paste(scale, "AS", weight_field)), collapse = ","), " FROM ", frame[["cte_name"]], ")")
+  centered = setNames(paste0("(", vapply(variables, col, character(1)), "-", centers, ")"), variables)
+  rank_terms = character()
+  rank_join = ""
+  if (!is.null(frame[["rank_source"]])) {
+    # Projection noise must not be normalized into an identified column. Bound
+    # that noise in each variable's original units, rather than using the scale
+    # of an unrelated regressor as an absolute rank threshold.
+    stats = paste0(stats, ",\ndbreg_moment_original AS (SELECT ",
+      paste(paste0("MAX(ABS(", sql_cast_double(variables, conn), ")) AS ", rank_names), collapse = ","),
+      " FROM ", frame[["rank_source"]], ")")
+    rank_terms = paste0("MAX(", rank_names, ") AS ", rank_fields)
+    rank_join = " CROSS JOIN dbreg_moment_original"
+  }
   terms = build_weighted_moment_terms(
-    y_sql = col(y),
-    x_sql = col(x),
-    weights_expr = frame[["weights_expr"]],
+    y_sql = centered[[y]],
+    x_sql = unname(centered[x]),
+    weights_expr = if (!is.null(w)) paste0("(", sql_cast_double(w, conn), ")/", weight_field),
     intercept = frame[["intercept"]],
     prefix_terms = frame[["prefix_terms"]]
   )
   paste0(
-    frame[["cte_sql"]], ",\nmoments AS (\n  SELECT\n    ",
-    paste(terms, collapse = ",\n    "),
-    "\n  FROM ", frame[["cte_name"]], "\n)\nSELECT * FROM moments"
+    frame[["cte_sql"]], stats, ",\nmoments AS (\n  SELECT\n    ",
+    paste(c(terms, rank_terms, paste0("MAX(", c(centers, weight_field), ") AS ", c(center_fields, "dbreg_moment_weight_scale"))), collapse = ",\n    "),
+    "\n  FROM ", frame[["cte_name"]], " CROSS JOIN dbreg_moment_location", rank_join, "\n)\nSELECT * FROM moments"
   )
 }

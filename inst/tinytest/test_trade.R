@@ -21,7 +21,7 @@ trade_dbreg = dbreg(
   vcov = 'hc1'
 )
 
-trade_feols = feols(
+trade_feols = fixest::feols(
   trade_fml,
   data = trade,
   vcov = 'hc1',
@@ -79,7 +79,7 @@ trade_demean1 = dbreg(
   vcov = "hc1"
 )
 
-trade_feols1 = feols(
+trade_feols1 = fixest::feols(
   trade_fml1,
   data = trade,
   vcov = 'hc1',
@@ -109,7 +109,7 @@ trade_mundlak = dbreg(
 )
 
 # Manual Mundlak with feols (no FE, just group means as covariates)
-trade_mundlak_manual = feols(
+trade_mundlak_manual = fixest::feols(
   Euros ~ dist_km + dist_km_mean_dest + dist_km_mean_orig,
   data = trade,
   vcov = "hc1",
@@ -138,11 +138,11 @@ trade_cluster_compress = dbreg(
   vcov = ~Destination
 )
 
-trade_cluster_feols = feols(
+trade_cluster_feols = fixest::feols(
   trade_fml,
   data = trade,
   vcov = ~Destination,
-  ssc = ssc(K.fixef = "full"),
+  ssc = fixest::ssc(K.fixef = "full"),
   lean = TRUE
 )
 
@@ -181,7 +181,7 @@ trade_cluster_nested = dbreg(
   ssc = "nested"
 )
 
-trade_cluster_feols_nested = feols(
+trade_cluster_feols_nested = fixest::feols(
   trade_fml,
   data = trade,
   vcov = ~Destination,
@@ -202,11 +202,11 @@ trade_cluster_demean = dbreg(
   vcov = ~Destination
 )
 
-trade_cluster_demean_feols = feols(
+trade_cluster_demean_feols = fixest::feols(
   trade_fml1,
   data = trade,
   vcov = ~Destination,
-  ssc = ssc(K.fixef = "full"),
+  ssc = fixest::ssc(K.fixef = "full"),
   lean = TRUE
 )
 
@@ -231,7 +231,7 @@ trade_cluster_mundlak = dbreg(
 )
 
 # Manual Mundlak with feols and clustered SEs
-trade_cluster_mundlak_manual = feols(
+trade_cluster_mundlak_manual = fixest::feols(
   Euros ~ dist_km + dist_km_mean_dest + dist_km_mean_orig,
   data = trade,
   vcov = ~Destination,
@@ -265,7 +265,7 @@ trade_3fe = dbreg(
   data = trade,
   vcov = "iid"
 )
-trade_3fe_feols = feols(
+trade_3fe_feols = fixest::feols(
   Euros ~ dist_km | Origin + Destination + Product,
   data = trade,
   vcov = "iid",
@@ -291,7 +291,7 @@ trade_4fe = dbreg(
   data = trade,
   vcov = "iid"
 )
-trade_4fe_feols = feols(
+trade_4fe_feols = fixest::feols(
   Euros ~ dist_km | Origin + Destination + Product + Year,
   data = trade,
   vcov = "iid",
@@ -324,7 +324,7 @@ trade_cluster_moments = dbreg(
   vcov = ~Destination
 )
 
-trade_cluster_moments_feols = feols(
+trade_cluster_moments_feols = fixest::feols(
   trade_fml_nofe,
   data = trade,
   vcov = ~Destination,

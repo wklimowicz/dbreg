@@ -96,7 +96,10 @@
 #'   iterative projection fallback; other strategies return their primary query.
 #'   Schema and strategy-selection queries may still run. Default is `FALSE`.
 #' @param data_only Logical indicating whether only the compressed dataset
-#'   should be returned (i.e., no regression is run). Default is `FALSE`.
+#'   or moment summary should be returned (i.e., no regression is run).
+#'   Moment summaries use centered coordinates when an intercept is present
+#'   and normalized weights; their `dbreg_moment_center_*` and
+#'   `dbreg_moment_weight_scale` fields record the transformation. Default is `FALSE`.
 #' @param drop_missings Logical indicating whether incomplete cases (i.e., rows
 #'   where any of the dependent, independent or FE variables are
 #'   missing) should be dropped. The default is `TRUE`, according with standard
@@ -233,11 +236,15 @@
 #' `dbreg.ap_max_iter` (default `100`) limits projection iterations.
 #' The bounded solver uses `dbreg.duckdb_ap_max_edges` (default `1e6` summary
 #' rows), `dbreg.duckdb_ap_max_entries` (default `2e6` FE-by-design entries),
-#' and `dbreg.ap_moment_max_cells` (default `8e6` rectangular transfer cells)
+#' and `dbreg.ap_moment_max_cells` (default `8e6` compact transfer cells)
 #' on both backends. Its dense system also shares the GLM limits
 #' `dbreg.glm_fe_dense_max` (default `4096` remaining FE levels after absorbing
 #' the largest block) and `dbreg.glm_fe_cross_max` (default `5e7` cross entries).
-#' Exceeding a limit selects iterative AP. Successful bounded projections
+#' `dbreg.projection_max_bytes` (default `512 * 1024^2`) bounds conservative
+#' working-memory estimates; it is not a hard cap on process RSS. On DuckDB,
+#' automatic two-way projection can try bounded sparse PCG before iterative AP.
+#' `projection_diagnostics` records attempted methods and rejection reasons.
+#' Successful bounded moment projections
 #' report `ap_method = "bounded_moments"`; `ap_iterations` counts solve and
 #' refinement steps and `ap_max_abs` reports the certified group-mean residual.
 #' 
@@ -461,7 +468,7 @@ dbreg = function(
       stop("`sample_table` cannot be combined with `sql_only` or `data_only`.", call. = FALSE)
     }
   }
-  sample_resources = if (!is.null(sample_table) || retain_prediction(retain) || retain_sample(retain) || fixef_rm != "none") dbglm_resources() else NULL
+  sample_resources = if (!is.null(sample_table) || retain_prediction(retain) || retain_sample(retain) || fixef_rm != "none") fit_resources() else NULL
   retained_data = prepare_retained_data(data, table, retain)
   data = retained_data[["data"]]
 
@@ -482,7 +489,7 @@ dbreg = function(
   # Release any connection/registration we create, including on errors during
   # input processing (process_dbreg_inputs() records them in `inputs` first)
   on.exit({
-    dbglm_release_resources(inputs[["sample_resources"]])
+    release_fit_resources(inputs[["sample_resources"]])
     release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]])
   }, add = TRUE)
 
@@ -614,7 +621,8 @@ process_dbreg_inputs = function(inputs) {
     from_statement,
     vars = c(yvar, xvars, source_fes, cluster_var),
     weights = weights,
-    drop_missings = drop_missings
+    drop_missings = drop_missings,
+    conn = conn
   )
   if (inputs[["fixef_rm"]] == "singletons" && length(fe)) {
     pruning = linear_prune_source(inputs, from_statement, fe, yvar)
@@ -673,7 +681,7 @@ resolve_compress_ratio = function(compress_ratio, fe) {
 #' Validate a weights argument
 #'
 #' Checks that `weights` names a single column and, where cheap, that its
-#' values are finite (in-memory data) and non-negative.
+#' values are finite (in-memory data and DuckDB/Spark SQL) and non-negative.
 #' @keywords internal
 validate_weights = function(weights, data, conn, from_statement) {
   if (is.null(weights)) {
@@ -694,17 +702,21 @@ validate_weights = function(weights, data, conn, from_statement) {
       stop("Weights must be non-negative.")
     }
   } else {
+    backend = detect_backend(conn)[["name"]]
+    nonfinite = if (backend %in% c("duckdb", "spark"))
+      glue(" OR (NOT isfinite({weights}) AND NOT isnan({weights}))") else ""
     neg_sql = sql_limit(
-      glue("SELECT 1 AS neg FROM (SELECT * {from_statement}) t WHERE {weights} < 0"),
+      glue("SELECT CASE WHEN {weights} < 0 THEN 1 ELSE 2 END AS invalid FROM (SELECT * {from_statement}) t WHERE {weights} < 0{nonfinite}"),
       1,
-      detect_backend(conn)[["name"]]
+      backend
     )
-    has_neg = tryCatch(nrow(dbGetQuery(conn, neg_sql)) > 0, error = function(e) {
+    invalid = tryCatch(backend_get_query(conn, neg_sql), error = function(e) {
       stop("Could not validate weight column '", weights, "': ", conditionMessage(e), call. = FALSE)
     })
-    if (isTRUE(has_neg)) {
+    if (nrow(invalid) && invalid[["invalid"]][[1L]] == 1) {
       stop("Weights must be non-negative.")
     }
+    if (nrow(invalid)) stop("Weights must be finite.")
   }
   invisible(NULL)
 }
@@ -714,12 +726,19 @@ validate_weights = function(weights, data, conn, from_statement) {
 #' Appends a WHERE clause dropping rows with missing `vars` (if
 #' `drop_missings`) and non-positive weights.
 #' @keywords internal
-filter_estimation_sample = function(from_statement, vars, weights = NULL, drop_missings = TRUE) {
+filter_estimation_sample = function(from_statement, vars, weights = NULL, drop_missings = TRUE, conn = NULL) {
   vars = unique(vars[!is.na(vars) & nzchar(vars)])
   where_clauses = c(
     if (isTRUE(drop_missings)) paste0(vars, " IS NOT NULL"),
     if (!is.null(weights)) paste0(weights, " > 0")
   )
+  if (!is.null(conn) && detect_backend(conn)[["name"]] %in% c("duckdb", "spark")) {
+    missing = if (isTRUE(drop_missings)) vars else character()
+    missing = unique(c(missing, weights))
+    schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from_statement), 0, detect_backend(conn)[["name"]]))
+    numeric = missing[vapply(missing, function(name) is.numeric(schema[[name]]) && !inherits(schema[[name]], "integer64"), logical(1))]
+    if (length(numeric)) where_clauses = c(where_clauses, paste0("NOT isnan(CAST(", numeric, " AS DOUBLE))"))
+  }
   if (!length(where_clauses)) {
     return(from_statement)
   }
@@ -880,6 +899,7 @@ dbreg_alternating_projections = function(
     stop('`dbreg.ap_solver` must be "auto", "moments" or "iterative".', call. = FALSE)
   }
   backend = detect_backend(conn)[["name"]]
+  inputs[["projection_limits"]] = projection_limits()
   if (backend == "duckdb") {
     method = getOption("dbreg.duckdb_ap_method", "join")
     if (!is.character(method) || length(method) != 1L || is.na(method) ||
@@ -887,10 +907,11 @@ dbreg_alternating_projections = function(
       stop('`dbreg.duckdb_ap_method` must be "join" or "cg".', call. = FALSE)
     }
     if (method == "cg" && length(fe) == 2L && solver != "moments") {
-      projected = dbreg_duckdb_cg_projections(
+      attempt = projection_attempt("bounded_pcg", dbreg_duckdb_cg_projections(
         conn, from_statement, fe, yvar, xvars_sql, xvar_names, weights,
         unique(c(cluster_var, inputs[["retained_key_safe"]])), verbose, max_iter, tol
-      )
+      ))
+      projected = record_projection_attempt(inputs, attempt)
       if (!is.null(projected)) return(projected)
       if (verbose) message("[dbreg] Bounded DuckDB projection unavailable; using join AP")
     }
@@ -898,9 +919,17 @@ dbreg_alternating_projections = function(
   explicit_method = !is.null(getOption("dbreg.ap_method")) ||
     (backend == "duckdb" && !is.null(getOption("dbreg.duckdb_ap_method")))
   if (solver == "moments" || (solver == "auto" && !explicit_method)) {
-    projected = dbreg_moment_projections(inputs, xvars_sql, xvar_names, max_iter, tol)
+    attempt = projection_attempt("bounded_moments", dbreg_moment_projections(inputs, xvars_sql, xvar_names, max_iter, tol))
+    projected = record_projection_attempt(inputs, attempt)
     if (!is.null(projected)) return(projected)
     if (verbose) message("[dbreg] Bounded FE moments unavailable; using iterative AP")
+    if (solver == "auto" && !explicit_method && backend == "duckdb" && length(fe) == 2L) {
+      attempt = projection_attempt("bounded_pcg", dbreg_duckdb_cg_projections(
+        conn, from_statement, fe, yvar, xvars_sql, xvar_names, weights,
+        unique(c(cluster_var, inputs[["retained_key_safe"]])), verbose, max_iter, tol))
+      projected = record_projection_attempt(inputs, attempt)
+      if (!is.null(projected)) return(projected)
+    }
   }
   use_windows = ap_method(backend) == "window"
   batch_size = 1L
@@ -950,6 +979,9 @@ dbreg_alternating_projections = function(
   create_temp_table_as(conn, base_table, base_sql, backend)
 
   vars_all = c(yvar, xvar_names)
+  original = dbGetQuery(conn, sql_ap_original_scale(base_table, vars_all, conn))
+  original_scale = vapply(original, as.numeric, numeric(1))
+  roundoff = 128*.Machine[["double.eps"]]*original_scale
   tilde_names = paste0(vars_all, "_tilde")
   mean_names = paste0(vars_all, "_mean")
 
@@ -1002,7 +1034,16 @@ dbreg_alternating_projections = function(
       message("[AP] iter ", iter, ": max abs mean = ", sprintf("%.4e", max_abs))
     }
 
+    max_relative = Inf
     if (is.finite(max_abs) && max_abs < tol) {
+      rms = vapply(dbGetQuery(conn, sql_ap_rms(cur_table, vars_all, conn)), as.numeric, numeric(1))
+      # Absolute convergence alone can normalize a decaying FE-only column
+      # into a spurious identified regressor. Continue until its remainder is
+      # below roundoff, or its group equations converge relative to its RMS.
+      identified = is.finite(rms) & rms > roundoff
+      max_relative = if (any(identified)) max(vapply(res, as.numeric, numeric(1))[identified]/rms[identified]) else 0
+    }
+    if (is.finite(max_abs) && max_abs < tol && is.finite(max_relative) && max_relative <= tol) {
       success = TRUE
       return(list(
         table = cur_table,
@@ -1010,6 +1051,7 @@ dbreg_alternating_projections = function(
         all_tables = c(cur_table, base_table),
         iterations = iter,
         max_abs = max_abs,
+        max_relative = max_relative,
         method = if (use_windows) "window" else "row_tables"
       ))
     }
@@ -1107,6 +1149,10 @@ choose_strategy = function(inputs) {
 
   # Auto logic
   if (strategy == "auto") {
+    if (!length(fe) && isTRUE(any_continuous)) {
+      inputs[["compression_ratio_est"]] = NA_real_
+      return("moments")
+    }
     if (verbose) {
       message(sprintf("[%s] Auto strategy:", tag))
     }

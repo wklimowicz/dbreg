@@ -24,7 +24,7 @@ expect_iv_match = function(db_fit, fx_fit, tol_coef = 1e-6, tol_se = 1e-6, label
     info = paste(label, "coefficients match fixest")
   )
 
-  fx_se = rename_fixest_iv(se(fx_fit))
+  fx_se = rename_fixest_iv(fixest::se(fx_fit))
   expect_true(
     max(abs(db_fit$coeftable[names(fx_se), "std.error"] - fx_se)) < tol_se,
     info = paste(label, "standard errors match fixest")
@@ -69,7 +69,7 @@ db_iid = dbivreg(
   vcov = "iid",
   strategy = "moments"
 )
-fx_iid = feols(y ~ x | d ~ z, data = dat, weights = ~w, vcov = "iid")
+fx_iid = fixest::feols(y ~ x | d ~ z, data = dat, weights = ~w, vcov = "iid")
 expect_iv_match(db_iid, fx_iid, tol_coef = tol, tol_se = tol, label = "No-FE IID")
 fs_iid = fitstat(fx_iid, ~ ivf1 + sargan, simplify = TRUE)
 expect_equal(
@@ -90,7 +90,7 @@ db_hc1 = dbivreg(
   vcov = "hc1",
   strategy = "moments"
 )
-fx_hc1 = feols(y ~ x | d ~ z, data = dat, weights = ~w, vcov = "hc1")
+fx_hc1 = fixest::feols(y ~ x | d ~ z, data = dat, weights = ~w, vcov = "hc1")
 expect_iv_match(db_hc1, fx_hc1, tol_coef = tol, tol_se = tol, label = "No-FE HC1")
 
 db_cl = dbivreg(
@@ -100,7 +100,7 @@ db_cl = dbivreg(
   vcov = ~cluster,
   strategy = "moments"
 )
-fx_cl = feols(y ~ x | d ~ z, data = dat, weights = ~w, vcov = ~cluster)
+fx_cl = fixest::feols(y ~ x | d ~ z, data = dat, weights = ~w, vcov = ~cluster)
 expect_iv_match(db_cl, fx_cl, tol_coef = tol, tol_se = tol_cluster, label = "No-FE cluster")
 fs_cl = fitstat(fx_cl, ~ ivf1 + ivwald1, simplify = TRUE)
 expect_equal(
@@ -147,7 +147,7 @@ db_comp_hc1 = dbivreg(
   vcov = "hc1",
   strategy = "compress"
 )
-fx_comp_hc1 = feols(y ~ x | d ~ z, data = dat_comp, weights = ~w, vcov = "hc1")
+fx_comp_hc1 = fixest::feols(y ~ x | d ~ z, data = dat_comp, weights = ~w, vcov = "hc1")
 expect_iv_match(db_comp_hc1, fx_comp_hc1, tol_coef = 1e-10, tol_se = 1e-10, label = "Compressed IV HC1")
 expect_true(
   db_comp_hc1$nobs < db_comp_hc1$nobs_orig && db_comp_hc1$compression_ratio < 1,
@@ -168,7 +168,7 @@ db_comp_cl = dbivreg(
   vcov = ~cluster,
   strategy = "compress"
 )
-fx_comp_cl = feols(y ~ x | d ~ z, data = dat_comp, weights = ~w, vcov = ~cluster)
+fx_comp_cl = fixest::feols(y ~ x | d ~ z, data = dat_comp, weights = ~w, vcov = ~cluster)
 expect_iv_match(db_comp_cl, fx_comp_cl, tol_coef = 1e-10, tol_se = 1e-10, label = "Compressed IV cluster")
 
 sql_comp = invisible(capture.output(
@@ -199,7 +199,7 @@ dat_comp_ov$cl = sample(1:40, nrow(dat_comp_ov), replace = TRUE)
 for (vc in list("iid", "hc1", ~cl)) {
   lbl = paste("Unweighted compressed IV", format(vc))
   db_ov = dbivreg(y ~ x | d ~ z1 + z2, data = dat_comp_ov, vcov = vc, strategy = "compress")
-  fx_ov = feols(y ~ x | d ~ z1 + z2, data = dat_comp_ov, vcov = vc)
+  fx_ov = fixest::feols(y ~ x | d ~ z1 + z2, data = dat_comp_ov, vcov = vc)
   expect_iv_match(db_ov, fx_ov, tol_coef = 1e-10, tol_se = 1e-10, label = lbl)
   # Diagnostics only use the cell-based meat under robust/clustered SEs
   if (identical(vc, "iid")) next
@@ -241,7 +241,7 @@ db_fe1 = dbivreg(
   vcov = "hc1",
   strategy = "demean"
 )
-fx_fe1 = feols(y ~ x | fe1 | d ~ z, data = dat_fe1, weights = ~w, vcov = "hc1")
+fx_fe1 = fixest::feols(y ~ x | fe1 | d ~ z, data = dat_fe1, weights = ~w, vcov = "hc1")
 expect_iv_match(db_fe1, fx_fe1, tol_coef = tol, tol_se = tol, label = "One-way FE HC1")
 
 # Cluster on the FE itself (FE nested in cluster): ssc controls whether the
@@ -253,7 +253,7 @@ db_fe1_nested = dbivreg(
   ssc = "nested",
   strategy = "demean"
 )
-fx_fe1_nested = feols(y ~ x | fe1 | d ~ z, data = dat_fe1, vcov = ~fe1)
+fx_fe1_nested = fixest::feols(y ~ x | fe1 | d ~ z, data = dat_fe1, vcov = ~fe1)
 expect_iv_match(db_fe1_nested, fx_fe1_nested, tol_coef = tol, tol_se = tol_cluster, label = "One-way FE nested cluster")
 expect_equal(
   db_fe1_nested$diagnostics$first_stage_wald$d$stat,
@@ -269,7 +269,7 @@ db_fe1_full = dbivreg(
   ssc = "full",
   strategy = "demean"
 )
-fx_fe1_full = feols(y ~ x | fe1 | d ~ z, data = dat_fe1, vcov = ~fe1, ssc = ssc(K.fixef = "full"))
+fx_fe1_full = fixest::feols(y ~ x | fe1 | d ~ z, data = dat_fe1, vcov = ~fe1, ssc = fixest::ssc(K.fixef = "full"))
 expect_iv_match(db_fe1_full, fx_fe1_full, tol_coef = tol, tol_se = tol_cluster, label = "One-way FE full-K cluster")
 
 db_fe1_within = dbivreg(
@@ -279,7 +279,7 @@ db_fe1_within = dbivreg(
   vcov = "iid",
   strategy = "within"
 )
-fx_fe1_iid = feols(y ~ x | fe1 | d ~ z, data = dat_fe1, weights = ~w, vcov = "iid")
+fx_fe1_iid = fixest::feols(y ~ x | fe1 | d ~ z, data = dat_fe1, weights = ~w, vcov = "iid")
 expect_iv_match(db_fe1_within, fx_fe1_iid, tol_coef = tol, tol_se = tol, label = "Within alias")
 expect_true(db_fe1_within$strategy == "demean", info = "Within alias normalizes to demean")
 
@@ -316,7 +316,7 @@ db_fe2 = dbivreg(
   vcov = "iid",
   strategy = "demean"
 )
-fx_fe2 = feols(y ~ x | fe1 + fe2 | d ~ z, data = dat_fe2, vcov = "iid")
+fx_fe2 = fixest::feols(y ~ x | fe1 + fe2 | d ~ z, data = dat_fe2, vcov = "iid")
 expect_iv_match(db_fe2, fx_fe2, tol_coef = tol, tol_se = tol, label = "Two-way FE balanced IID")
 fs_fe2 = fitstat(fx_fe2, ~ ivf1 + ivwald1, simplify = TRUE)
 expect_equal(
@@ -354,7 +354,7 @@ db_ap = dbivreg(
   vcov = ~cluster,
   strategy = "demean"
 )
-fx_ap = feols(y ~ x | fe1 + fe2 | d ~ z, data = dat_ap, weights = ~w, vcov = ~cluster)
+fx_ap = fixest::feols(y ~ x | fe1 + fe2 | d ~ z, data = dat_ap, weights = ~w, vcov = ~cluster)
 expect_iv_match(db_ap, fx_ap, tol_coef = tol, tol_se = tol_cluster, label = "Two-way FE AP cluster")
 fs_ap = fitstat(fx_ap, ~ ivf1 + ivwald1, simplify = TRUE)
 expect_equal(
@@ -372,7 +372,7 @@ db_ap_nested = dbivreg(
   ssc = "nested",
   strategy = "demean"
 )
-fx_ap_nested = feols(y ~ x | fe1 + fe2 | d ~ z, data = dat_ap, weights = ~w, vcov = ~fe1)
+fx_ap_nested = fixest::feols(y ~ x | fe1 + fe2 | d ~ z, data = dat_ap, weights = ~w, vcov = ~fe1)
 expect_iv_match(db_ap_nested, fx_ap_nested, tol_coef = tol, tol_se = tol_cluster, label = "Two-way FE AP nested cluster")
 
 set.seed(2033)
@@ -401,7 +401,7 @@ db_fe3 = dbivreg(
   vcov = "iid",
   strategy = "demean"
 )
-fx_fe3 = feols(y ~ x | fe1 + fe2 + fe3 | d ~ z, data = dat_fe3, vcov = "iid")
+fx_fe3 = fixest::feols(y ~ x | fe1 + fe2 + fe3 | d ~ z, data = dat_fe3, vcov = "iid")
 expect_iv_match(db_fe3, fx_fe3, tol_coef = tol, tol_se = tol, label = "Three-way FE AP IID")
 fs_fe3 = fitstat(fx_fe3, ~ ivf1, simplify = TRUE)
 expect_equal(
@@ -440,7 +440,7 @@ db_over = dbivreg(
   vcov = "iid",
   strategy = "moments"
 )
-fx_over = feols(y ~ x | d ~ z1 + z2, data = dat_over, vcov = "iid")
+fx_over = fixest::feols(y ~ x | d ~ z1 + z2, data = dat_over, vcov = "iid")
 expect_iv_match(db_over, fx_over, tol_coef = tol, tol_se = tol, label = "Overidentified IID")
 fs_over = fitstat(fx_over, ~ ivf1 + sargan, simplify = TRUE)
 expect_equal(
@@ -520,7 +520,7 @@ db_fac = dbivreg(
   vcov = "hc1",
   strategy = "moments"
 )
-fx_fac = feols(y ~ x + g | d + d:g ~ z + z:g, data = dat_fac, vcov = "hc1")
+fx_fac = fixest::feols(y ~ x + g | d + d:g ~ z + z:g, data = dat_fac, vcov = "hc1")
 expect_iv_match(db_fac, fx_fac, tol_coef = tol, tol_se = tol, label = "Factor-expanded IV moments")
 fs_fac = fitstat(fx_fac, ~ ivf1 + ivwald1, simplify = TRUE)
 for (nm in names(db_fac$diagnostics$first_stage_wald)) {
@@ -565,7 +565,7 @@ db_fac_fe = dbivreg(
   vcov = "iid",
   strategy = "demean"
 )
-fx_fac_fe = feols(y ~ x + g | fe | d + d:g ~ z + z:g, data = dat_fac_fe, vcov = "iid")
+fx_fac_fe = fixest::feols(y ~ x + g | fe | d + d:g ~ z + z:g, data = dat_fac_fe, vcov = "iid")
 expect_iv_match(db_fac_fe, fx_fac_fe, tol_coef = tol, tol_se = tol, label = "Factor-expanded IV demean")
 
 expect_error(
@@ -631,7 +631,7 @@ dat_pred = dat
 dat_pred$g = sample(c("a", "b", "c"), nrow(dat_pred), replace = TRUE)
 expect_equal(
   as.numeric(predict(dbivreg(y ~ x + g | d ~ z, data = dat_pred), newdata = dat_pred)),
-  as.numeric(predict(feols(y ~ x + g | d ~ z, data = dat_pred), newdata = dat_pred)),
+  as.numeric(predict(fixest::feols(y ~ x + g | d ~ z, data = dat_pred), newdata = dat_pred)),
   tolerance = 1e-10,
   info = "predict matches fixest with factor terms"
 )
@@ -654,12 +654,12 @@ expect_equal(predict(db_fe3, newdata = dat_fe3), as.numeric(predict(fx_fe3, dat_
 # No-intercept IV models (#68)
 expect_iv_match(
   dbivreg(y ~ 0 + x + g | d ~ z, data = dat_pred),
-  feols(y ~ 0 + x + g | d ~ z, data = dat_pred),
+  fixest::feols(y ~ 0 + x + g | d ~ z, data = dat_pred),
   label = "No-intercept IV (first factor keeps all levels)"
 )
 expect_iv_match(
   dbivreg(y ~ 0 + x | d ~ z1 + z2, data = dat_comp_ov, strategy = "compress"),
-  feols(y ~ 0 + x | d ~ z1 + z2, data = dat_comp_ov),
+  fixest::feols(y ~ 0 + x | d ~ z1 + z2, data = dat_comp_ov),
   tol_coef = 1e-10, tol_se = 1e-10,
   label = "No-intercept compressed IV"
 )

@@ -16,7 +16,7 @@ dbglm_test_databricks_sql = function(statement, native) {
      vapply(rows,function(r)as.character(r[[j]]),character(1))
   }),stringsAsFactors=FALSE)
   names(frame)=gsub('"','',sub('.* AS ','',fields),fixed=TRUE)
-  replacement=dbreg:::dbglm_values_sql(native,frame,format='values')
+  replacement=dbreg:::sql_values_frame(native,frame,format='values')
   statement=paste0(substr(statement,1,m_pos-1),replacement,substr(sub_stmt,end_pos+1,nchar(sub_stmt)))
  }
  # The production backend owns these JSON/array functions; the local fixture
@@ -31,6 +31,9 @@ dbglm_test_databricks_sql = function(statement, native) {
   regmatches(statement, match) = paste0('[',paste(dbreg:::dbglm_number(values),collapse=','),']::DOUBLE[]')
  }
  statement = gsub('element_at(', 'list_extract(', statement, fixed=TRUE)
+ # Compact marginal transport is a native Spark JSON array; DuckDB's LIST
+ # column preserves the same numeric payload without its optional JSON module.
+ statement = gsub('to_json\\(array\\(([^()]*)\\)\\)', 'list_value(\\1)', statement, perl=TRUE)
  repeat {
   match = regexpr('to_json\\(named_struct\\([^()]*\\)\\)', statement, perl=TRUE)
   if (match[[1]] < 0) break
@@ -44,6 +47,7 @@ dbglm_test_databricks_sql = function(statement, native) {
  }
  statement=gsub('monotonically_increasing_id()','ROW_NUMBER() OVER ()',statement,fixed=TRUE)
  statement=gsub(' EXCEPT',' EXCLUDE',statement,fixed=TRUE)
+ statement=gsub('OCTET_LENGTH(', 'strlen(', statement, fixed=TRUE)
  sub('^DROP TEMP TABLE','DROP TABLE',statement)
 }
 

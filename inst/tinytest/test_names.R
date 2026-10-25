@@ -12,15 +12,15 @@ ir$`my grp` = sample(c("control", "treated group"), nrow(ir), replace = TRUE)
 
 # Dotted names (the #58 example)
 db1 = dbreg(Sepal.Length ~ Petal.Length | Species, data = ir)
-fx1 = feols(Sepal.Length ~ Petal.Length | Species, data = ir)
+fx1 = fixest::feols(Sepal.Length ~ Petal.Length | Species, data = ir)
 expect_equal(coef(db1), coef(fx1), tolerance = 1e-6, info = "dotted names: coefficients and names match fixest")
 expect_equal(db1$yvar, "Sepal.Length", info = "dotted names: outcome name restored")
 
 # Dotted weights and cluster names, plus a reserved word (moments)
 db2 = dbreg(Sepal.Length ~ Petal.Length + order, data = ir, weights = "w.t", vcov = ~cl.id, strategy = "moments")
-fx2 = feols(Sepal.Length ~ Petal.Length + order, data = ir, weights = ~w.t, vcov = ~cl.id)
+fx2 = fixest::feols(Sepal.Length ~ Petal.Length + order, data = ir, weights = ~w.t, vcov = ~cl.id)
 expect_equal(coef(db2), coef(fx2), tolerance = 1e-10, info = "weights/cluster/reserved names: coefficients")
-expect_equal(as.numeric(db2$coeftable[, "std.error"]), as.numeric(se(fx2)), tolerance = 1e-6, info = "weights/cluster/reserved names: clustered SEs")
+expect_equal(as.numeric(db2$coeftable[, "std.error"]), as.numeric(fixest::se(fx2)), tolerance = 1e-6, info = "weights/cluster/reserved names: clustered SEs")
 
 # Non-syntactic variable name with a factor level containing a space (compress)
 db3 = dbreg(Sepal.Length ~ Petal.Length + `my grp`, data = ir, strategy = "compress")
@@ -36,7 +36,7 @@ expect_equal(
 # dbivreg with dotted names, a factor (spaced levels) and FE
 # (syntactic factor name here: fixest's IV first stage drops backticks)
 ir$grp = ir$`my grp`
-fx_iv = feols(Sepal.Length ~ grp | Species | Petal.Length ~ Sepal.Width, data = ir)
+fx_iv = fixest::feols(Sepal.Length ~ grp | Species | Petal.Length ~ Sepal.Width, data = ir)
 fx_iv_coef = setNames(coef(fx_iv), sub("^fit_", "", names(coef(fx_iv))))
 expect_equal(
   coef(dbivreg(Sepal.Length ~ grp | Species | Petal.Length ~ Sepal.Width, data = ir))[names(fx_iv_coef)],
@@ -80,5 +80,5 @@ folds_orig = dbreg:::folds_identifier_case
 assignInNamespace("folds_identifier_case", function(conn) TRUE, "dbreg")
 db_fold = dbreg(Sepal.Length ~ Petal.Length + Petal.Width:`my grp` | Species, data = ir, strategy = "demean")
 assignInNamespace("folds_identifier_case", folds_orig, "dbreg")
-fx_fold = feols(Sepal.Length ~ Petal.Length + Petal.Width:`my grp` | Species, data = ir)
+fx_fold = fixest::feols(Sepal.Length ~ Petal.Length + Petal.Width:`my grp` | Species, data = ir)
 expect_equal(coef(db_fold)[names(coef(fx_fold))], coef(fx_fold), tolerance = 1e-6, info = "fold_case end to end: coefficients and names")

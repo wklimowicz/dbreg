@@ -1,5 +1,53 @@
 # Fixest compatibility (development branch)
 
+- Linear moments now center variables before forming products, normalize weights,
+  and scale rank/solve calculations. Robust score passes retain centered
+  coordinates through covariance calculation. Coefficients and covariance return
+  in the original units; SQL integer products, interactions and powers are promoted
+  before multiplication in both linear and GLM designs.
+- Native clustered tables and intervals now use the same testing degrees of
+  freedom as post-fit inference. Saturated fits and one-cluster covariance are
+  rejected explicitly. DuckDB/Spark sample filtering treats numeric NaNs as missing.
+- Compressed factor designs stay sparse during centering; an allocation-bound
+  regression test protects against dense cells-by-FE matrices.
+- Iterative FE projection checks group means relative to projected weighted RMS as well
+  as in absolute units. FE-only combinations decay below the original-value
+  roundoff bound before rank detection, preventing spurious identified columns.
+- Cluster-score cross-products stay in SQL for ordinary and compressed OLS/IV.
+  Unconstrained binscatter builds its basis in SQL and collects only bin geometry;
+  sampled-table cleanup is installed immediately. SQLite computed-column types
+  are inferred from bounded samples rather than an untyped zero-row result.
+- Binscatter automatic selection no longer forces compression. Plot intervals
+  inherit the fitted testing degrees of freedom, and simultaneous bands use the
+  covariance of the plotted contrasts with column-wise standardization. Bands
+  also work with pointwise intervals disabled.
+- Automatic no-FE fitting skips compression probes for known continuous R input.
+  Exact prediction keys are cast before collection, avoiding a second full fetch.
+  Added numerical-invariance and DBI-transfer regression tests and five benchmark
+  profiles covering translations, integer products, extreme weights and large
+  cluster dictionaries.
+
+- DuckDB/Spark SQL weights now reject infinities during input validation for
+  OLS/IV, before they reach numerical factorization. Benchmark rejection gates
+  distinguish supported validation/numerical refusals from unrelated errors.
+
+- Compression now applies the same declared full-FE degrees-of-freedom policy
+  as within estimation on disconnected/nested graphs; numerical dummy rank no
+  longer silently changes covariance corrections across strategies.
+
+- Independent references are protected against compatibility-export masking.
+  A maintained isolated benchmark corpus covers FE geometry, models and workflows,
+  with source provenance and unsuccessful results preserved.
+- FE projection, backend SQL and resource helpers are shared across estimators.
+  Compact marginal/pair/global transport avoids mostly-NULL transfers and needs no
+  optional DuckDB JSON extension. Prediction state and recovery transfer have
+  separate bounds. Automatic two-way sparse fallback on DuckDB is memory planned.
+- Projection outcomes and covariance repair expose diagnostics. Cleanup forgets
+  successful drops and keeps failed drops retryable. Lean adapters prune unused
+  source columns before transient inference retention.
+- Local Spark 4.2.0 has a small real-SQL syntax/algorithm tier, separate from
+  native Databricks ODBC validation and performance benchmarks.
+
 - R prediction explicitly sums potentially overflowing rows, avoiding BLAS- and
   batch-dependent `Inf - Inf` results. Ordinary predictions retain the matrix
   product; real infinite Poisson means and its lower bound remain supported.

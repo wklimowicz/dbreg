@@ -240,8 +240,8 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     }
   }
 
-  resources = dbglm_resources()
-  on.exit(dbglm_release_resources(resources), add = TRUE)
+  resources = fit_resources()
+  on.exit(release_fit_resources(resources), add = TRUE)
   retained_data = prepare_retained_data(data, table, retain)
   data = retained_data[["data"]]
   setup = setup_db_connection(conn, table, data, path, caller = "dbglm", resources = resources,
@@ -258,7 +258,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   if (isTRUE(backend_info[["is_databricks"]])) validate_databricks_ap_backend(backend_info)
   if (!is.null(sample_table) && sample_table_exists(conn, sample_table)) stop("Sample export table already exists.", call. = FALSE)
   quote_id = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
-  tables = dbglm_table_manager(conn, resources, backend_info)
+  tables = fit_table_manager(conn, resources, backend_info)
   create = tables[["create"]]
   drop = tables[["drop"]]
   variables = unique(c(parsed[["yvar"]], parsed[["xvars"]], unlist(parsed[["fe_components"]]), weights, offset, covariance[["cluster_var"]], unlist(normalized[["slopes"]])))
@@ -269,7 +269,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     if (!is.null(retained_source)) paste(quote_id(retained_source[["key"]]), "AS __dbglm_key") else
       if (isTRUE(backend_info[["is_databricks"]])) "monotonically_increasing_id() AS __dbglm_key" else "ROW_NUMBER() OVER () AS __dbglm_key"), collapse = ", "), source_from), materialize = !is.null(sample_table) && is.null(row_id))
   validate_source_row_id(conn, paste("FROM", snapshot), row_id)
-  schema = dbglm_get_query(conn, paste("SELECT * FROM", snapshot, "LIMIT 0"))
+  schema = backend_get_query(conn, paste("SELECT * FROM", snapshot, "LIMIT 0"))
   for (name in c(parsed[["yvar"]], weights, offset, unlist(normalized[["slopes"]]))) {
     if (!is.numeric(schema[[name]]) && !(name == parsed[["yvar"]] && is.logical(schema[[name]]))) {
       stop("Outcome, weights and offset must be numeric (the outcome may be logical).", call. = FALSE)
@@ -291,7 +291,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     paste0("SUM(CASE WHEN ", w, " < 0 THEN 1 ELSE 0 END) AS bad_w, ",
       "SUM(CASE WHEN ", elig_cond, " AND ", w, " != FLOOR(", w, ") THEN 1 ELSE 0 END) AS fractional_w, ")
   } else "0 AS bad_w, 0 AS fractional_w, "
-  snap_info = dbglm_get_query(conn, paste0(
+  snap_info = backend_get_query(conn, paste0(
     "SELECT COUNT(*) AS n_input, ", w_bad_sql,
     "MAX(CASE WHEN ", elig_cond, " THEN ", if (is.null(weights)) "1.0" else quote_id(weights), " END) AS weight_max, ",
     "SUM(CASE WHEN ", elig_cond, " THEN 1 ELSE 0 END) AS n_elig, ",
@@ -324,7 +324,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     sample = list(n = n_eligible, ymin = snap_info[["ymin"]], ymax = snap_info[["ymax"]],
       weight_max = snap_info[["weight_max"]], bad = 0)
   } else {
-    sample = dbglm_get_query(conn, paste("SELECT COUNT(*) AS n, MIN(", quote_id(parsed[["yvar"]]),
+    sample = backend_get_query(conn, paste("SELECT COUNT(*) AS n, MIN(", quote_id(parsed[["yvar"]]),
       ") AS ymin, MAX(", quote_id(parsed[["yvar"]]), ") AS ymax, SUM(CASE WHEN",
       invalid_y, "THEN 1 ELSE 0 END) AS bad, MAX(",
       if (is.null(weights)) "1.0" else quote_id(weights), ") AS weight_max", from))
@@ -343,7 +343,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   }
   for (a in setdiff(names(normalized[["factors"]]),normalized[["i_aliases"]])) {
     source = normalized[["factors"]][[a]]
-    ref = if (source %in% names(factor_refs)) factor_refs[[source]] else dbglm_get_query(conn,
+    ref = if (source %in% names(factor_refs)) factor_refs[[source]] else backend_get_query(conn,
       paste("SELECT", a, from, "GROUP BY", a, "ORDER BY", a, "LIMIT 1"))[[1]][1]
     factor_refs[[a]] = ref
   }
@@ -353,7 +353,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     pure_queries = vapply(fe, function(f) {
       paste0("SELECT 1 AS p ", from, " GROUP BY ", f, " HAVING ", pure_condition)
     }, character(1))
-    pure = dbglm_get_query(conn, paste0("SELECT COUNT(*) AS n FROM (", paste(pure_queries, collapse = " UNION ALL "), ") t"))[["n"]]
+    pure = backend_get_query(conn, paste0("SELECT COUNT(*) AS n FROM (", paste(pure_queries, collapse = " UNION ALL "), ") t"))[["n"]]
     if (pure) stop("GLM fixed-effect separation remains under fixef_rm='", fixef_rm, "'; no finite solution.", call. = FALSE)
   }
   spec = build_model_spec(parsed[["fml"]], conn, from, factor_refs = factor_refs, reserved_names = variables, absorbed = length(fe)>0L)
@@ -384,7 +384,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     dbglm_moment_terms(x, "__dbglm_a"),
     "SUM(__dbglm_a*__dbglm_y)/SUM(__dbglm_a) AS ybar"
   )
-  row = dbglm_get_query(conn, paste("SELECT", paste(base_terms, collapse = ", "), "FROM", base))
+  row = backend_get_query(conn, paste("SELECT", paste(base_terms, collapse = ", "), "FROM", base))
   if (length(x) && !is.na(row[["nonfinite"]]) && row[["nonfinite"]] > 0) {
     stop("GLM design contains nonfinite transformed values.", call. = FALSE)
   }
@@ -401,8 +401,8 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     centered_sql = paste0("SELECT * EXCLUDE(", paste(x, collapse = ","), "),",
       paste(sprintf("(%s-(%s)) AS %s", x, dbglm_number(design_center), x), collapse = ","), " FROM ", base)
     base = if (isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) create(centered_sql) else
-      paste0("(", dbglm_sql(conn, centered_sql), ")")
-    centered_row = dbglm_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "__dbglm_a"), collapse = ","), "FROM", base))
+      paste0("(", backend_sql(conn, centered_sql), ")")
+    centered_row = backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "__dbglm_a"), collapse = ","), "FROM", base))
     for (name in names(centered_row)) row[[name]] = centered_row[[name]]
   }
   if (length(fe)) {
@@ -413,7 +413,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     projection = solve_partial_wls(conn, original, x, fe, control, create, drop, response = FALSE, cache = resources, materialize = FALSE, scales = raw_scales, need_table = FALSE)
     if (length(x)) {
       H = if (!is.null(projection[["cross_reduction"]])) raw_H - projection[["cross_reduction"]] else
-        dbglm_read_information(dbglm_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", projection[["table"]])), length(x))
+        dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", projection[["table"]])), length(x))
       original_H = raw_H
       absorbed = diag(H) <= control[["collin_tol"]] * pmax(diag(original_H), .Machine[["double.xmin"]])
       candidates = which(!absorbed)
@@ -509,6 +509,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     reported_loglik = dbglm_binomial_loglik(conn, working, weight_scale)
   }
   result = list(coeftable = coeftable, vcov = V, collin.coef = full,
+    projection_diagnostics = resources[["projection_diagnostics"]],
     collin.var = setdiff(all_names, public), coef_names = public, coef_names_all = all_names,
     family = family, fml = saved_formula, model_spec = spec, has_intercept = has_intercept,
     yvar = parsed[["yvar"]], xvars = public, offset = offset, weights = weights,

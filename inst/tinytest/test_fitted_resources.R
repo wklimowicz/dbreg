@@ -3,9 +3,9 @@ local({
   on.exit(if (DBI::dbIsValid(conn)) DBI::dbDisconnect(conn, shutdown = TRUE))
   DBI::dbWriteTable(conn, "caller_data", data.frame(x = 1:3))
   DBI::dbWriteTable(conn, "caller_export", data.frame(id = 1:3))
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
-  manager = dbreg:::dbglm_table_manager(conn, resources)
+  manager = dbreg:::fit_table_manager(conn, resources)
   first = manager[["create"]]("SELECT x*2 AS learned FROM caller_data")
   second = manager[["create"]](paste("SELECT * FROM", first))
   unused = manager[["create"]]("SELECT 0 AS intermediate")
@@ -14,7 +14,7 @@ local({
   model_lease = dbreg:::retain_fit_resources(resources, names_owned[[1L]])
   output_lease = dbreg:::retain_fit_resources(resources, names_owned[[2L]])
   model = structure(list(resource_state = model_lease), class = "dbreg")
-  dbreg:::dbglm_release_resources(resources)
+  dbreg:::release_fit_resources(resources)
   expect_equal(sort(DBI::dbListTables(conn)), sort(c("caller_data", "caller_export", names_owned[1:2])))
   expect_equal(DBI::dbGetQuery(dbreg:::fitted_resource_connection(model_lease), paste("SELECT * FROM", first))[[1L]], c(2, 4, 6))
 
@@ -63,17 +63,17 @@ local({
 
 local({
   # The final output lease keeps an owned connection alive after model close.
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   setup = dbreg:::setup_db_connection(NULL, NULL, data.frame(x = 1:3), NULL,
     resources = resources)
   conn = setup[["conn"]]
   on.exit(if (DBI::dbIsValid(conn)) DBI::dbDisconnect(conn, shutdown = TRUE))
-  manager = dbreg:::dbglm_table_manager(conn, resources)
+  manager = dbreg:::fit_table_manager(conn, resources)
   first = manager[["create"]](paste("SELECT x*2 AS learned", setup[["from_statement"]]))
   second = manager[["create"]](paste("SELECT * FROM", first))
   model_lease = dbreg:::retain_fit_resources(resources, resources[["tables"]][[1L]])
   output_lease = dbreg:::retain_fit_resources(resources, resources[["tables"]][[1L]])
-  dbreg:::dbglm_release_resources(resources)
+  dbreg:::release_fit_resources(resources)
   expect_true(DBI::dbIsValid(conn))
   expect_false(DBI::dbExistsTable(conn, setup[["registered_table"]]))
   dbreg:::fitted_resource_release(model_lease)
@@ -101,7 +101,7 @@ local({
   on.exit(DBI::dbDisconnect(conn, shutdown = TRUE))
   DBI::dbExecute(conn, "CREATE TABLE owned_parent(id INTEGER PRIMARY KEY)")
   DBI::dbExecute(conn, "CREATE TABLE caller_child(id INTEGER REFERENCES owned_parent(id))")
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
   resources[["tables"]] = "owned_parent"
   lease = dbreg:::retain_fit_resources(resources, "owned_parent")
@@ -111,4 +111,23 @@ local({
   DBI::dbExecute(conn, "DROP TABLE caller_child")
   dbreg:::fitted_resource_release(lease)
   expect_false(DBI::dbExistsTable(conn, "owned_parent"))
+})
+
+local({
+  # Transient cleanup also retries failed drops and forgets successful ones.
+  conn = DBI::dbConnect(duckdb::duckdb())
+  on.exit(DBI::dbDisconnect(conn, shutdown = TRUE))
+  resources = dbreg:::fit_resources()
+  resources[["conn"]] = conn
+  DBI::dbExecute(conn, "CREATE TABLE transient_parent(id INTEGER PRIMARY KEY)")
+  DBI::dbExecute(conn, "CREATE TABLE caller_child(id INTEGER REFERENCES transient_parent(id))")
+  resources[["tables"]] = "transient_parent"
+  expect_error(dbreg:::release_fit_resources(resources, quiet = FALSE), "Could not release fit resources")
+  expect_identical(resources[["tables"]], "transient_parent")
+  DBI::dbExecute(conn, "DROP TABLE caller_child")
+  dbreg:::release_fit_resources(resources, quiet = FALSE)
+  expect_identical(resources[["tables"]], character())
+  DBI::dbWriteTable(conn, "transient_parent", data.frame(caller = 7))
+  dbreg:::release_fit_resources(resources, quiet = FALSE)
+  expect_equal(DBI::dbReadTable(conn, "transient_parent")[["caller"]], 7)
 })

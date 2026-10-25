@@ -1,13 +1,13 @@
 materialize_retained_rows = function(object, query, value_column = NULL) {
   state = retained_inference(object)
   conn = fitted_resource_connection(object[["resource_state"]])
-  resources = dbglm_resources()
+  resources = fit_resources()
   resources[["conn"]] = conn
   resources[["retained_session"]] = object[["resource_state"]][["session"]]
-  on.exit(dbglm_release_resources(resources))
+  on.exit(release_fit_resources(resources))
   table = basename(tempfile("dbreg_retained_rows_"))
   resources[["tables"]] = table
-  DBI::dbExecute(conn, sql_sample_table(conn, table, dbglm_sql(conn, query), c(state[["row_id"]], value_column)))
+  DBI::dbExecute(conn, sql_sample_table(conn, table, backend_sql(conn, query), c(state[["row_id"]], value_column)))
   lease = retain_fit_resources(resources, table)
   structure(list(conn = fitted_resource_public_connection(lease), table = table, row_id = state[["row_id"]],
     value_column = value_column, resource_state = lease), class = "dbreg_rows")
@@ -132,7 +132,7 @@ residuals.dbreg = function(object, type = c("response", "deviance", "pearson", "
   }
   value = paste0("CASE WHEN ", q(state[["estimated"]]), " THEN (", value, ") ELSE CAST(NULL AS DOUBLE) END")
   from = paste("FROM", q(state[["table"]]), if (na.rm) paste("WHERE", q(state[["estimated"]])) else "")
-  if (isTRUE(state[["r_input"]])) return(DBI::dbGetQuery(conn, dbglm_sql(conn,
+  if (isTRUE(state[["r_input"]])) return(DBI::dbGetQuery(conn, backend_sql(conn,
     paste("SELECT", value, "AS residual", from, "ORDER BY", q(state[["key"]]))))[["residual"]])
   column = safe_identifiers("residual", taken = state[["row_id"]], fold_case = folds_identifier_case(conn))
   query = paste("SELECT", paste(c(q(state[["row_id"]]), paste(value, "AS", q(column))), collapse = ","), from)

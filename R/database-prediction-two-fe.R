@@ -16,12 +16,12 @@ build_database_two_fe_state = function(conn, working, retained, fe, components, 
   columns = projection[["columns"]]
   diagnostics = if (is.null(expected_rss)) paste0("MAX(ABS(", columns[[1L]], "))*(", dbglm_number(scale[[1L]]), ") AS error") else
     paste0("FSUM(w*POWER(", columns[[1L]], "*(", dbglm_number(scale[[1L]]), "),2)) AS rss")
-  diagnostic = dbglm_get_query(conn, paste("SELECT", diagnostics, "FROM", within))
+  diagnostic = backend_get_query(conn, paste("SELECT", diagnostics, "FROM", within))
   recovery_error = if (is.null(expected_rss)) as.numeric(diagnostic[["error"]]) else abs(as.numeric(diagnostic[["rss"]]) - expected_rss)
   if (is.null(expected_rss)) {
     bound = 1e-7 * scale[[1L]]
   } else {
-    norm = dbglm_get_query(conn, paste("SELECT FSUM(w*POWER(", target, ",2)) AS norm FROM", source))[["norm"]]
+    norm = backend_get_query(conn, paste("SELECT FSUM(w*POWER(", target, ",2)) AS norm FROM", source))[["norm"]]
     bound = 1e-6 * max(1, abs(expected_rss), as.numeric(norm))
   }
   if (!is.finite(recovery_error) || recovery_error > bound) {
@@ -29,9 +29,9 @@ build_database_two_fe_state = function(conn, working, retained, fe, components, 
   }
   null = NULL
   if (p) {
-    H = dbglm_read_information(dbglm_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(columns[-1L], "w"), collapse = ","), "FROM", within)), p)
+    H = dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(columns[-1L], "w"), collapse = ","), "FROM", within)), p)
     normalized = paste0("(SELECT w,", paste(sprintf("(%s)/(%s) AS %s", x, dbglm_number(scale[-1L]), columns[-1L]), collapse = ","), " FROM ", source, ")")
-    raw = dbglm_read_information(dbglm_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(columns[-1L], "w"), collapse = ","), "FROM", normalized)), p)
+    raw = dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(columns[-1L], "w"), collapse = ","), "FROM", normalized)), p)
     null = prediction_within_null(H, raw)
   }
   labels = prediction_two_fe_components(conn, source, fe, create, drop,

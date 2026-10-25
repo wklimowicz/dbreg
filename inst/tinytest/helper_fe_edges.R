@@ -53,7 +53,7 @@ dbreg_test_fe_edges = function(conn, estimator = c("glm", "ols"), verbose = FALS
     if (verbose) message("[FE edge test] ", name)
     table = basename(tempfile("fe_edge_"))
     if (is_databricks) {
-      DBI::dbExecute(conn, paste("CREATE TEMP TABLE", table, "AS", dbreg:::dbglm_values_sql(conn, d)))
+      DBI::dbExecute(conn, paste("CREATE TEMP TABLE", table, "AS", dbreg:::sql_values_frame(conn, d)))
     } else DBI::dbWriteTable(conn, table, d, temporary = TRUE)
     tryCatch({
       # An iid and an externally clustered covariance exercise both the

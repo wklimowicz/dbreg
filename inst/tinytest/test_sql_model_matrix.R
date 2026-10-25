@@ -19,7 +19,8 @@ res = sql_model_matrix(~ x1 + x2, con, "test", expand = "all")
 
 expect_equal(res$col_names[1], "x1", info = "numeric passes through")
 expect_equal(res$col_names[2:3], c("x2b", "x2c"), info = "factor one-hot encoded (drops ref)")
-expect_equal(res$select_exprs[1], "x1", info = "numeric SQL is column name")
+expect_equal(DBI::dbGetQuery(con, paste("SELECT", res[["select_exprs"]][[1L]], "AS value FROM test ORDER BY y"))[["value"]],
+  test_df[["x1"]], info = "numeric SQL preserves values")
 expect_true(grepl("CASE WHEN", res$select_exprs[2]), info = "factor SQL uses CASE WHEN")
 
 #
@@ -55,7 +56,8 @@ expect_equal(res$factor_levels$x2, c("a", "b", "c"), info = "factor levels captu
 res = sql_model_matrix(~ x1:x3, con, "test", expand = "all")
 
 expect_equal(res$col_names, "x1_x_x3", info = "numeric × numeric interaction name")
-expect_equal(res$select_exprs, "(x1) * (x3)", info = "numeric × numeric SQL")
+expect_equal(DBI::dbGetQuery(con, paste("SELECT", res[["select_exprs"]][[1L]], "AS value FROM test ORDER BY y"))[["value"]],
+  test_df[["x1"]]*test_df[["x3"]], info = "numeric interactions preserve values")
 
 #
 ## Test SQL-safe aliases for factor levels with spaces ----

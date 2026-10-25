@@ -13,8 +13,15 @@ compute_vcov = function(
   n_params = NULL, # K (for CR1 correction)
   X = NULL,
   rss_g = NULL,
-  meat = NULL
+  meat = NULL,
+  sandwich_bread = NULL
 ) {
+  if (!is.finite(df_res) || df_res <= 0) stop("Insufficient residual degrees of freedom.", call. = FALSE)
+  if (!is.finite(rss) || rss < 0) stop("Residual sum of squares is invalid; numerical precision was lost.", call. = FALSE)
+  weight_scale = attr(meat, "weight_scale")
+  if (is.null(weight_scale)) weight_scale = 1
+  if (is.null(sandwich_bread)) sandwich_bread = XtX_inv
+  sandwich_bread = sandwich_bread * weight_scale
   if (vcov_type == "hc1") {
     if (strategy == "compress" && is.null(meat)) {
       # Compress strategy: HC1 with grouped residuals
@@ -25,7 +32,7 @@ compute_vcov = function(
       stop("HC1 requires meat matrix for non-compress strategies")
     }
     scale_hc1 = nobs_orig / df_res
-    vcov_mat = scale_hc1 * (XtX_inv %*% meat %*% XtX_inv)
+    vcov_mat = scale_hc1 * (sandwich_bread %*% meat %*% t(sandwich_bread))
     attr(vcov_mat, "type") = "hc1"
   } else if (vcov_type == "cluster") {
     # Cluster-robust (CR1) standard errors
@@ -36,10 +43,11 @@ compute_vcov = function(
     if (is.null(n_clusters)) {
       stop("Meat matrix missing n_clusters attribute")
     }
+    if (any(n_clusters < 2)) stop("Clustered covariance requires at least two clusters.", call. = FALSE)
     if (is.null(n_params)) n_params = ncol(XtX_inv)
     # CR1 small-sample correction: (G/(G-1)) * ((N-1)/(N-K)), as in fixest
     scale_cr1 = (n_clusters / (n_clusters - 1)) * ((nobs_orig - 1) / (nobs_orig - n_params))
-    vcov_mat = scale_cr1 * (XtX_inv %*% meat %*% XtX_inv)
+    vcov_mat = scale_cr1 * (sandwich_bread %*% meat %*% t(sandwich_bread))
     attr(vcov_mat, "type") = "cluster"
     attr(vcov_mat, "n_clusters") = n_clusters
   } else {
@@ -49,6 +57,7 @@ compute_vcov = function(
     attr(vcov_mat, "type") = "iid"
   }
   attr(vcov_mat, "n_params") = if (is.null(n_params)) ncol(XtX_inv) else n_params
+  attr(vcov_mat, "df.t") = if (vcov_type == "cluster") min(n_clusters)-1 else df_res
   dimnames(vcov_mat) = dimnames(XtX_inv)
   vcov_mat
 }
@@ -111,6 +120,9 @@ compute_score_meat = function(
   cte_sql = frame[["cte_sql"]]
   cte_name = frame[["cte_name"]]
   weights_expr = frame[["weights_expr"]]
+  weight_scale = frame[["weight_scale"]]
+  if (is.null(weight_scale)) weight_scale = 1
+  if (!is.null(weights_expr)) weights_expr = paste0("(", weights_expr, ")/(", dbglm_number(weight_scale), ")")
   vcov_type = inputs[["vcov_type_req"]]
   if (!vcov_type %in% c("hc1", "cluster")) {
     return(NULL)
@@ -126,9 +138,9 @@ compute_score_meat = function(
     paste(x[!is.na(x)], collapse = " * ")
   }
 
+  pairs = which(upper.tri(diag(length(idx)), diag = TRUE), arr.ind = TRUE)
   if (vcov_type == "hc1") {
     w_sq = if (is.null(weights_expr)) NULL else as_double(sprintf("(%s) * (%s)", weights_expr, weights_expr))
-    pairs = which(upper.tri(diag(length(idx)), diag = TRUE), arr.ind = TRUE)
     terms = unlist(lapply(seq_along(resid), function(r) {
       sprintf(
         "SUM(%s) AS meat_%d_%d_%d",
@@ -148,111 +160,28 @@ compute_score_meat = function(
         r, idx
       )
     }))
+    cross_terms = unlist(lapply(seq_along(resid), function(r) sprintf("SUM(score_%d_%d * score_%d_%d) AS meat_%d_%d_%d",
+      r, pairs[, 1], r, pairs[, 2], r, pairs[, 1], pairs[, 2])))
     sql = paste0(
       cte_sql,
       ",\ncluster_scores AS (\n  SELECT ", cluster_var, ", ", paste(terms, collapse = ", "),
-      "\n  FROM ", cte_name, "\n  GROUP BY ", cluster_var, "\n)\nSELECT * FROM cluster_scores"
+      "\n  FROM ", cte_name, "\n  GROUP BY ", cluster_var, "\n)\nSELECT COUNT(*) AS n_clusters, ",
+      paste(cross_terms, collapse = ","), " FROM cluster_scores"
     )
   }
   res = dbGetQuery(conn, sql)
 
   meats = lapply(seq_along(resid), function(r) {
-    if (vcov_type == "hc1") {
-      meat = matrix(0, length(idx), length(idx), dimnames = list(s_names, s_names))
-      for (k in seq_len(nrow(pairs))) {
-        i = pairs[k, 1]
-        j = pairs[k, 2]
-        meat[i, j] = meat[j, i] = res[[sprintf("meat_%d_%d_%d", r, i, j)]]
-      }
-    } else {
-      scores = as.matrix(res[, sprintf("score_%d_%d", r, idx), drop = FALSE])
-      meat = crossprod(scores)
-      dimnames(meat) = list(s_names, s_names)
-      attr(meat, "n_clusters") = nrow(res)
+    meat = matrix(0, length(idx), length(idx), dimnames = list(s_names, s_names))
+    for (k in seq_len(nrow(pairs))) {
+      i = pairs[k, 1]
+      j = pairs[k, 2]
+      meat[i, j] = meat[j, i] = res[[sprintf("meat_%d_%d_%d", r, i, j)]]
     }
+    if (vcov_type == "cluster") attr(meat, "n_clusters") = as.numeric(res[["n_clusters"]])
+    attr(meat, "weight_scale") = weight_scale
     meat
   })
   names(meats) = names(resid_sql)
   meats
-}
-
-#' Compute cluster-robust meat matrix for compress strategy
-#'
-#' For compress strategy, we need to query cluster-by-cell stats from the
-#' original data, then compute cluster scores using the cell-level fitted values.
-#'
-#' @keywords internal
-compute_meat_cluster_compress = function(inputs, from_statement, group_cols, compressed_dat, X, yhat) {
-  cells = query_cluster_cells(inputs, from_statement, group_cols)
-  cluster_meat_from_cells(cells, compressed_dat, group_cols, inputs[["cluster_var"]], X, yhat)
-}
-
-#' Cluster-by-cell sufficient statistics for compressed cluster meats
-#'
-#' Returns one row per (cluster, cell) with the summed weights `sum_w_gc` (the
-#' count if unweighted) and the weighted outcome sum `sum_wy_gc`.
-#' @keywords internal
-query_cluster_cells = function(inputs, from_statement, group_cols) {
-  env2env(inputs, environment(), c("conn", "yvar", "cluster_var", "weights"))
-  group_cols_sql = paste(group_cols, collapse = ", ")
-  weights_expr = sql_weight_expr(weights)
-  sql = paste0(
-    "SELECT ", cluster_var, ", ", group_cols_sql, ",\n",
-    if (is.null(weights_expr)) "  COUNT(*) AS sum_w_gc,\n" else paste0("  SUM(", weights_expr, ") AS sum_w_gc,\n"),
-    "  ", sql_weighted_sum(yvar, weights_expr, "sum_wy_gc"), "\n",
-    from_statement, "\n",
-    "GROUP BY ", cluster_var, ", ", group_cols_sql
-  )
-  read_compressed_frame(inputs, sql, from_statement,
-    integer_keys = unique(c(inputs[["fe"]], cluster_var)))[["data"]]
-}
-
-#' Cluster meat from cluster-by-cell statistics
-#'
-#' @param cells Result of [query_cluster_cells()].
-#' @param X Cell-level score matrix (rows aligned with `compressed_dat`).
-#' @param yhat Cell-level fitted values.
-#' @param y_cell Optional cell-level outcome column. Use when the outcome is
-#'   itself constant within cells (e.g. a first-stage outcome in compressed
-#'   IV), in which case `cells$sum_wy_gc` is not needed.
-#' @keywords internal
-cluster_meat_from_cells = function(cells, compressed_dat, group_cols, cluster_var, X, yhat, y_cell = NULL) {
-  # Use fitted numeric FE values rather than their display labels. Length
-  # prefixes distinguish arbitrary string tuples, and double keys round-trip.
-  cell_key = function(df) {
-    values = df[, group_cols, drop = FALSE]
-    types = vapply(compressed_dat[, group_cols, drop = FALSE], function(value) {
-      type = attr(value, "dbreg_key_type")
-      if (!is.null(type)) return(type)
-      if (inherits(value, "integer64") || is.integer(value) && !is.factor(value)) "integer" else
-        if (is.numeric(value)) "numeric" else "character"
-    }, character(1))
-    for (name in group_cols) {
-      if (is.factor(values[[name]])) {
-        raw = attr(values[[name]], "dbreg_key_values")
-        values[[name]] = if (is.null(raw)) as.character(values[[name]]) else raw[as.integer(values[[name]])]
-      }
-    }
-    prediction_tuple_key(values, types)
-  }
-  cell_to_row = setNames(seq_len(nrow(compressed_dat)), cell_key(compressed_dat))
-  row = cell_to_row[cell_key(cells)]
-  if (anyNA(row)) stop("Cluster cells do not match the fitted compression sample.", call. = FALSE)
-
-  # Summed residuals per (cluster, cell): sum_wy_gc - sum_w_gc * yhat
-  sum_wy_gc = if (is.null(y_cell)) cells[["sum_wy_gc"]] else cells[["sum_w_gc"]] * y_cell[row]
-  u_sum_gc = sum_wy_gc - cells[["sum_w_gc"]] * yhat[row]
-
-  # Cluster scores s_g = sum over the cluster's cells of X_cell * u_sum_gc,
-  # for all clusters at once via a sparse cluster-indicator matrix (works for
-  # dense and sparse X), then meat = sum_g s_g s_g'
-  cluster_factor = exact_numeric_factor(cells[[cluster_var]])
-  cluster_id = as.integer(cluster_factor)
-  if (anyNA(cluster_id)) cluster_id[is.na(cluster_id)] = nlevels(cluster_factor) + 1L
-  indicator = Matrix::sparseMatrix(i = seq_along(cluster_id), j = cluster_id, x = 1)
-  scores = crossprod(indicator, Diagonal(x = u_sum_gc) %*% X[row, , drop = FALSE])
-  meat_mat = as.matrix(crossprod(scores))
-  dimnames(meat_mat) = list(colnames(X), colnames(X))
-  attr(meat_mat, "n_clusters") = ncol(indicator)
-  meat_mat
 }

@@ -11,7 +11,7 @@ mod_db = dbreg(
   vcov = 'hc1'
 )
 
-mod_fe = feols(
+mod_fe = fixest::feols(
   Euros ~ dist_km | Destination + Origin,
   data = trade,
   vcov = 'hc1'

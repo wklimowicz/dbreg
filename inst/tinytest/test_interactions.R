@@ -24,7 +24,7 @@ test_df = within(data.frame(
 
 fml_int = y1 ~ x1 * x2 | fe
 
-fe_int = feols(fml_int, data = test_df, vcov = "hc1")
+fe_int = fixest::feols(fml_int, data = test_df, vcov = "hc1")
 db_compress = dbreg(fml_int, data = test_df, vcov = "hc1", strategy = "compress")
 db_demean = dbreg(fml_int, data = test_df, vcov = "hc1", strategy = "demean")
 
@@ -74,7 +74,7 @@ expect_equal(
 ## Test interaction-only without main effect (all factor levels retained) ----
 
 fml_colon_only = y ~ x2:x1
-fe_colon_only = feols(fml_colon_only, data = test_df)
+fe_colon_only = fixest::feols(fml_colon_only, data = test_df)
 db_colon_only = dbreg(fml_colon_only, data = test_df, strategy = "moments")
 
 # Should have all factor levels (a, b, c) since x1 is not a main effect
@@ -96,7 +96,7 @@ for (coef in rownames(fe_colon_only$coeftable)) {
 ## Test compress strategy with interaction + main effect (x:z + z) ----
 
 fml_compress_int = y1 ~ x2:x1 + x2 | fe
-fe_compress_int = feols(fml_compress_int, data = test_df)
+fe_compress_int = fixest::feols(fml_compress_int, data = test_df)
 db_compress_int = dbreg(fml_compress_int, data = test_df, strategy = "compress")
 
 for (coef in rownames(fe_compress_int$coeftable)) {
@@ -113,7 +113,7 @@ for (coef in rownames(fe_compress_int$coeftable)) {
 
 fml_num = y2 ~ x1 * x3 | fe
 
-fe_num = feols(fml_num, data = test_df, vcov = "hc1")
+fe_num = fixest::feols(fml_num, data = test_df, vcov = "hc1")
 db_num_compress = dbreg(fml_num, data = test_df, vcov = "hc1", strategy = "compress")
 db_num_demean = dbreg(fml_num, data = test_df, vcov = "hc1", strategy = "demean")
 
@@ -137,7 +137,7 @@ for (coef in rownames(fe_num$coeftable)) {
 
 fml_moments = y ~ x1 * x2
 
-fe_moments = feols(fml_moments, data = test_df, vcov = "hc1")
+fe_moments = fixest::feols(fml_moments, data = test_df, vcov = "hc1")
 db_moments = dbreg(fml_moments, data = test_df, vcov = "hc1", strategy = "moments")
 
 for (coef in rownames(fe_moments$coeftable)) {
@@ -161,7 +161,7 @@ for (coef in rownames(fe_moments$coeftable)) {
 # With one FE, Mundlak equals FE when every regressor column (incl. factor
 # dummies and interactions) gets a group mean
 for (fml_mundlak in list(y2 ~ x1 * x3 | fe, y1 ~ x1 * x2 | fe, y1 ~ x1 + x2 | fe)) {
-  fe_mundlak = coef(feols(fml_mundlak, data = test_df))
+  fe_mundlak = coef(fixest::feols(fml_mundlak, data = test_df))
   expect_equal(
     coef(dbreg(fml_mundlak, data = test_df, strategy = "mundlak"))[names(fe_mundlak)],
     fe_mundlak,
@@ -175,7 +175,7 @@ set.seed(77)
 dat_tw = expand.grid(id = 1:30, t = 1:6)
 dat_tw = transform(dat_tw, x = rnorm(180) + id / 10, z = rnorm(180), g = sample(c("a", "b", "c"), 180, TRUE))
 dat_tw$y = dat_tw$x * dat_tw$z + (dat_tw$g == "c") + dat_tw$id / 5 + dat_tw$t + rnorm(180)
-fe_tw = coef(feols(y ~ x * z + g | id + t, data = dat_tw))
+fe_tw = coef(fixest::feols(y ~ x * z + g | id + t, data = dat_tw))
 expect_equal(
   coef(dbreg(y ~ x * z + g | id + t, data = dat_tw, strategy = "mundlak"))[names(fe_tw)],
   fe_tw,
@@ -208,8 +208,8 @@ set.seed(68)
 dat68 = data.frame(x = rnorm(200), x2 = sample(1:5, 200, TRUE), g = sample(c("a", "b", "c"), 200, TRUE))
 dat68$y = 1 + 2 * dat68$x + (dat68$g == "b") + rnorm(200)
 db68 = dbreg(y ~ 0 + x, data = dat68, strategy = "moments")
-expect_equal(coef(db68, fe = TRUE), coef(feols(y ~ 0 + x, data = dat68)), tolerance = 1e-10, info = "moments honours no intercept")
-fx68c = feols(y ~ 0 + x2 + g, data = dat68)
+expect_equal(coef(db68, fe = TRUE), coef(fixest::feols(y ~ 0 + x, data = dat68)), tolerance = 1e-10, info = "moments honours no intercept")
+fx68c = fixest::feols(y ~ 0 + x2 + g, data = dat68)
 expect_equal(
   coef(dbreg(y ~ 0 + x2 + g, data = dat68, strategy = "compress"), fe = TRUE)[names(coef(fx68c))],
   coef(fx68c),
@@ -248,7 +248,7 @@ expect_equal(
 )
 expect_equal(
   as.numeric(predict(dbreg(y ~ x1 * x3 | fe, data = dat67, strategy = "demean"), newdata = dat67)),
-  as.numeric(predict(feols(y ~ x1 * x3 | fe, data = dat67), newdata = dat67)),
+  as.numeric(predict(fixest::feols(y ~ x1 * x3 | fe, data = dat67), newdata = dat67)),
   tolerance = 1e-6,
   info = "demean predict with interactions matches fixest"
 )
@@ -263,7 +263,7 @@ for (s_pf in c("moments", "demean")) {
   f_pf = if (s_pf == "moments") y ~ x + g else y ~ x + g | fe
   expect_equal(
     coef(dbreg(f_pf, data = dat_pf, strategy = s_pf)),
-    coef(feols(f_pf, data = dat_pf)),
+    coef(fixest::feols(f_pf, data = dat_pf)),
     tolerance = 1e-6,
     info = paste(s_pf, "handles a plain factor regressor")
   )

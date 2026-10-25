@@ -1,5 +1,13 @@
 # Mathematical fitted state stays in plain lists. Only this separate lease
 # owns database handles; its finalizer must never capture a fitting frame.
+drop_owned_relation = function(conn, name, kind = "tables") {
+  quoted = as.character(DBI::dbQuoteIdentifier(conn, name))
+  if (kind == "views") return(DBI::dbExecute(conn, paste("DROP VIEW IF EXISTS", quoted)))
+  backend = detect_backend(conn)
+  DBI::dbExecute(conn, paste(if (isTRUE(backend[["is_databricks"]])) "DROP TEMP TABLE IF EXISTS" else
+    "DROP TABLE IF EXISTS", quoted))
+}
+
 fitted_resource_valid_connection = function(conn) {
   !is.null(conn) && isTRUE(tryCatch(DBI::dbIsValid(conn), error = function(e) FALSE))
 }
@@ -96,10 +104,7 @@ fitted_resource_release = function(lease, quiet = FALSE) {
     for (kind in c("views", "tables")) {
       for (name in rev(lease[[kind]])) {
         error = tryCatch({
-          quoted = as.character(DBI::dbQuoteIdentifier(conn, name))
-          if (kind == "views") DBI::dbExecute(conn, paste("DROP VIEW IF EXISTS", quoted)) else
-            DBI::dbExecute(conn, paste(if (isTRUE(backend[["is_databricks"]])) "DROP TEMP TABLE IF EXISTS" else
-              "DROP TABLE IF EXISTS", quoted))
+          drop_owned_relation(conn, name, kind)
           NULL
         }, error = identity)
         if (is.null(error)) lease[[kind]] = setdiff(lease[[kind]], name) else

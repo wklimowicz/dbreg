@@ -8,6 +8,6 @@ validate_weights(weights, data, conn, from_statement)
 }
 \description{
 Checks that `weights` names a single column and, where cheap, that its
-values are finite (in-memory data) and non-negative.
+values are finite (in-memory data and DuckDB/Spark SQL) and non-negative.
 }
 \keyword{internal}

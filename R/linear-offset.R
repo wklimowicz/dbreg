@@ -25,7 +25,7 @@ linear_offset_frame = function(conn, from, parsed, offset) {
   formula = stats::as.formula(call("~", as.name(alias), parsed[["fml"]][[3L]]), env = baseenv())
   parsed = parse_regression_formula(formula, allow_extended = TRUE)
   list(from_statement = from, parsed = parsed, alias = alias, outcome = y,
-    finite = dbglm_sql(conn, paste0("isfinite(", q(y), ") AND isfinite(", q(offset), ")")))
+    finite = backend_sql(conn, paste0("isfinite(", q(y), ") AND isfinite(", q(offset), ")")))
 }
 
 linear_prediction_offset = function(object, data) {

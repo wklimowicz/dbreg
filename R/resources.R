@@ -1,5 +1,5 @@
 # Own only fit-created resources; caller connections and sample exports survive.
-dbglm_resources = function() {
+fit_resources = function() {
   resources = new.env(parent = emptyenv())
   resources[["conn"]] = NULL
   resources[["own_conn"]] = FALSE
@@ -9,38 +9,49 @@ dbglm_resources = function() {
   resources
 }
 
-dbglm_release_resources = function(resources) {
+release_fit_resources = function(resources, quiet = TRUE) {
+  errors = character()
   if (!is.null(resources[["conn"]])) {
-    for (name in rev(resources[["views"]])) {
-      try(DBI::dbExecute(resources[["conn"]], paste("DROP VIEW IF EXISTS", DBI::dbQuoteIdentifier(resources[["conn"]], name))), silent = TRUE)
-    }
-    for (name in rev(resources[["tables"]])) {
-      try(drop_ap_table_if_exists(resources[["conn"]], as.character(DBI::dbQuoteIdentifier(resources[["conn"]], name)),
-        detect_backend(resources[["conn"]])), silent = TRUE)
+    for (kind in c("views", "tables")) for (name in rev(resources[[kind]])) {
+      error = tryCatch({ drop_owned_relation(resources[["conn"]], name, kind); NULL }, error = identity)
+      if (is.null(error)) resources[[kind]] = setdiff(resources[[kind]], name) else
+        errors = c(errors, conditionMessage(error))
     }
     if (!is.null(resources[["registered_table"]])) {
-      try(duckdb_unregister(resources[["conn"]], resources[["registered_table"]]), silent = TRUE)
+      error = tryCatch({ duckdb_unregister(resources[["conn"]], resources[["registered_table"]]); NULL }, error = identity)
+      if (is.null(error)) resources[["registered_table"]] = NULL else errors = c(errors, conditionMessage(error))
     }
-    if (isTRUE(resources[["own_conn"]])) try(DBI::dbDisconnect(resources[["conn"]], shutdown = TRUE), silent = TRUE)
+    if (isTRUE(resources[["own_conn"]])) {
+      error = tryCatch({ DBI::dbDisconnect(resources[["conn"]], shutdown = TRUE); NULL }, error = identity)
+      if (is.null(error)) {
+        resources[["own_conn"]] = FALSE
+        resources[["conn"]] = NULL
+        resources[["tables"]] = resources[["views"]] = character()
+        resources[["registered_table"]] = NULL
+        errors = character()
+      } else errors = c(errors, conditionMessage(error))
+    }
   }
+  resources[["cleanup_errors"]] = errors
+  if (length(errors) && !quiet) stop("Could not release fit resources: ", paste(errors, collapse = "; "), call. = FALSE)
   invisible(NULL)
 }
 
 # Databricks inline expressions can still reference earlier physical tables.
 # Defer their removal until fit cleanup; DuckDB can release them immediately.
-dbglm_table_manager = function(conn, resources, backend_info = detect_backend(conn)) {
+fit_table_manager = function(conn, resources, backend_info = detect_backend(conn)) {
   quote_id = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
   create = function(sql, materialize = TRUE, target = NULL) {
     view = isTRUE(backend_info[["is_databricks"]]) && !materialize &&
       !isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))
-    if (view) return(paste0("(", dbglm_sql(conn, sql), ")"))
+    if (view) return(paste0("(", backend_sql(conn, sql), ")"))
     if (!is.null(target) && isTRUE(backend_info[["is_databricks"]])) {
-      DBI::dbExecute(conn, dbglm_sql(conn, paste("CREATE OR REPLACE TEMP TABLE", target, "AS", sql)))
+      DBI::dbExecute(conn, backend_sql(conn, paste("CREATE OR REPLACE TEMP TABLE", target, "AS", sql)))
       return(target)
     }
     name = basename(tempfile("dbglm_"))
     resources[["tables"]] = c(resources[["tables"]], name)
-    DBI::dbExecute(conn, dbglm_sql(conn, paste("CREATE TEMP TABLE", quote_id(name), "AS", sql)))
+    DBI::dbExecute(conn, backend_sql(conn, paste("CREATE TEMP TABLE", quote_id(name), "AS", sql)))
     quote_id(name)
   }
   drop = function(table) {
@@ -48,10 +59,10 @@ dbglm_table_manager = function(conn, resources, backend_info = detect_backend(co
     name = gsub('["`]', "", table)
     if (isTRUE(backend_info[["is_databricks"]])) return(invisible(NULL))
     if (name %in% resources[["views"]]) {
-      DBI::dbExecute(conn, paste("DROP VIEW IF EXISTS", table))
+      drop_owned_relation(conn, name, "views")
       resources[["views"]] = setdiff(resources[["views"]], name)
     } else {
-      drop_ap_table_if_exists(conn, table, backend_info)
+      drop_owned_relation(conn, name)
       resources[["tables"]] = setdiff(resources[["tables"]], name)
     }
     invisible(NULL)
@@ -73,8 +84,8 @@ dbglm_coefficient_frame = function(info, coefficients) {
 # `tables` lists physical objects owned by the fit; inline SQL owns nothing.
 dbglm_coefficient_lookup = function(conn, frame, create, inline = FALSE) {
   if (isTRUE(detect_backend(conn)[["is_databricks"]])) {
-    sql = dbglm_values_sql(conn, frame)
-    if (is.null(sql)) stop("FE coefficient lookup exceeds the SQL transfer limit.", call. = FALSE)
+    sql = sql_values_frame(conn, frame)
+    if (is.null(sql)) projection_abort("upload_limit", "FE coefficient lookup exceeds the SQL transfer limit.")
     if (inline) return(list(source = paste0("(", sql, ")"), tables = character()))
     lookup = create(sql, materialize = TRUE)
   } else {

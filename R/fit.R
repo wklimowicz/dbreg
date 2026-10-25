@@ -5,6 +5,10 @@
 #   coef, bread, rss, x (regressors kept), scores (score columns for the
 #   sandwich meat), project_meat (maps score-space meat to coefficient space)
 # so the score pass and vcov scaling are shared by every estimator.
+# Centered moments carry location/weight metadata. bread is the inverse
+# information in source coordinates; sandwich_bread maps centered score
+# coordinates to source coefficients and need not be symmetric. Score passes
+# keep their centered columns until the final covariance transformation.
 
 #' Assemble a cross-moment matrix from aggregated SQL sums
 #'
@@ -39,7 +43,49 @@ cross_moments = function(moment_df, vars, y, intercept = TRUE) {
       S[1, vars[i]] = S[vars[i], 1] = moment_df[[sprintf("sum_w%d", i)]]
     }
   }
+  centers = paste0("dbreg_moment_center_", seq_along(c(vars, y)))
+  original = paste0("dbreg_moment_original_", seq_along(vars))
+  if (length(vars) && all(original %in% names(moment_df))) {
+    maximum = vapply(original, function(name) moment_df[[name]], numeric(1))
+    floor = moment_df[["sum_w"]]*(128*.Machine[["double.eps"]]*maximum)^2
+    absorbed = vars[diag(S[vars, vars, drop = FALSE]) <= floor]
+    S[absorbed, ] = 0
+    S[, absorbed] = 0
+  }
+  if (all(centers %in% names(moment_df))) {
+    attr(S, "centers") = setNames(vapply(centers, function(name) moment_df[[name]], numeric(1)), c(vars, y))
+    attr(S, "weight_scale") = moment_df[["dbreg_moment_weight_scale"]]
+  }
   S
+}
+
+# Map centered coefficients back to source coordinates without reconstructing
+# the ill-conditioned raw Gram matrix. The same map applies to OLS and IV.
+moment_coordinates = function(S, names) {
+  A = diag(length(names))
+  dimnames(A) = list(names, names)
+  centers = attr(S, "centers")
+  if ("(Intercept)" %in% names && !is.null(centers)) {
+    slopes = setdiff(names, "(Intercept)")
+    A["(Intercept)", slopes] = -centers[slopes]
+  }
+  A
+}
+
+restore_moment_fit = function(fit, S, y) {
+  A = moment_coordinates(S, fit[["x"]])
+  scale = attr(S, "weight_scale")
+  if (is.null(scale)) scale = 1
+  fit[["moment_coef"]] = fit[["coef"]]
+  fit[["centers"]] = attr(S, "centers")
+  fit[["sandwich_bread"]] = (A %*% fit[["bread"]])/scale
+  fit[["coef"]] = A %*% fit[["coef"]]
+  if ("(Intercept)" %in% fit[["x"]] && !is.null(attr(S, "centers")))
+    fit[["coef"]]["(Intercept)", 1L] = fit[["coef"]]["(Intercept)", 1L] + attr(S, "centers")[[y]]
+  fit[["bread"]] = (A %*% fit[["bread"]] %*% t(A))/scale
+  fit[["rss"]] = fit[["rss"]]*scale
+  fit[["weight_scale"]] = scale
+  fit
 }
 
 # RSS from moments: y'y - 2b'X'y + b'X'Xb
@@ -49,11 +95,11 @@ moment_rss = function(S, y, x, beta) {
 
 # TSS from moments: centered if S carries an intercept, else uncentered
 moment_tss = function(S, y) {
-  if ("(Intercept)" %in% rownames(S)) {
-    S[y, y] - S["(Intercept)", y]^2 / S["(Intercept)", "(Intercept)"]
-  } else {
-    S[y, y]
-  }
+  total = S[y, y]
+  if ("(Intercept)" %in% rownames(S)) total = total-S["(Intercept)", y]^2/S["(Intercept)", "(Intercept)"]
+  scale = attr(S, "weight_scale")
+  if (is.null(scale)) scale = 1
+  total*scale
 }
 
 #' OLS on sufficient statistics
@@ -75,7 +121,7 @@ fit_ols = function(S, y, x, drop_collinear = FALSE, verbose = FALSE) {
   sol = solve_with_fallback(S[x, x, drop = FALSE], S[x, y, drop = FALSE])
   beta = sol[["betahat"]]
   rownames(beta) = x
-  list(
+  fit = list(
     coef = beta,
     bread = sol[["XtX_inv"]],
     rss = moment_rss(S, y, x, beta),
@@ -84,6 +130,7 @@ fit_ols = function(S, y, x, drop_collinear = FALSE, verbose = FALSE) {
     scores = x,
     project_meat = function(meat) meat
   )
+  restore_moment_fit(fit, S, y)
 }
 
 #' Linear GMM on sufficient statistics
@@ -102,13 +149,13 @@ fit_gmm = function(S, y, x, z, W) {
   S_zx = S[z, x, drop = FALSE]
   P = t(S_zx) %*% W
   A = P %*% S_zx
-  if (qr(A, tol = 1e-10)$rank < ncol(A)) {
+  if (length(detect_collinearity(A, S[x, y, drop = FALSE])[["drop_names"]])) {
     stop("IV system is not identified or regressors are collinear after instrumentation.")
   }
   sol = solve_with_fallback(A, P %*% S[z, y, drop = FALSE])
   beta = sol[["betahat"]]
   rownames(beta) = x
-  list(
+  fit = list(
     coef = beta,
     bread = sol[["XtX_inv"]],
     rss = moment_rss(S, y, x, beta),
@@ -121,9 +168,11 @@ fit_gmm = function(S, y, x, z, W) {
       }
       out = P %*% meat %*% t(P)
       attr(out, "n_clusters") = attr(meat, "n_clusters")
+      attr(out, "weight_scale") = attr(meat, "weight_scale")
       out
     }
   )
+  restore_moment_fit(fit, S, y)
 }
 
 #' 2SLS on sufficient statistics
@@ -134,7 +183,7 @@ fit_gmm = function(S, y, x, z, W) {
 #' @keywords internal
 fit_2sls = function(S, y, x, z) {
   S_zz = S[z, z, drop = FALSE]
-  if (qr(S_zz, tol = 1e-10)$rank < ncol(S_zz)) {
+  if (length(detect_collinearity(S_zz, S[z, y, drop = FALSE])[["drop_names"]])) {
     stop("Instrument matrix is rank deficient.")
   }
   fit_gmm(S, y, x, z, W = solve_with_fallback(S_zz, diag(ncol(S_zz)))[["XtX_inv"]])
@@ -157,30 +206,47 @@ fit_2sls = function(S, y, x, z) {
 #' @return List of meat matrices (or `NULL`s for iid), one per fit.
 #' @keywords internal
 fit_meats = function(fits, frame, ys, inputs) {
+  if (!inputs[["vcov_type_req"]] %in% c("hc1", "cluster")) return(vector("list", length(fits)))
+  frame[["weight_scale"]] = fits[[1L]][["weight_scale"]]
   scores = fits[[1]][["scores"]]
   if (!all(vapply(fits, function(f) identical(f[["scores"]], scores), logical(1)))) {
     stop("fit_meats() requires fits that share the same score columns.")
   }
-  cols = frame[["cols"]]
   resid_sql = vapply(seq_along(fits), function(k) {
-    b = fits[[k]][["coef"]][, 1]
-    slopes = setdiff(fits[[k]][["x"]], "(Intercept)")
-    sprintf(
-      "(%s - %s)",
-      cols[[ys[k]]],
-      sql_linear_predictor(unname(cols[slopes]), b[slopes], if ("(Intercept)" %in% fits[[k]][["x"]]) b[["(Intercept)"]])
-    )
+    fit_residual_sql(fits[[k]], frame, ys[[k]], inputs[["conn"]])
   }, character(1))
   score_cols = setdiff(scores, "(Intercept)")
   meats = compute_score_meat(
     inputs = inputs,
     frame = frame,
     resid_sql = resid_sql,
-    score_sql = unname(cols[score_cols]),
+    score_sql = vapply(score_cols, function(name) fit_column_sql(fits[[1L]], frame, name, inputs[["conn"]]), character(1)),
     score_names = score_cols,
     score_intercept = "(Intercept)" %in% scores
   )
   if (is.null(meats)) vector("list", length(fits)) else unname(meats)
+}
+
+fit_column_sql = function(fit, frame, name, conn) {
+  expression = frame[["cols"]][[name]]
+  center = fit[["centers"]][[name]]
+  if (is.null(center)) center = 0
+  paste0("(", sql_cast_double(paste0("(", expression, ")"), conn), "-(", dbglm_number(center), "))")
+}
+
+fit_residual_sql = function(fit, frame, y, conn) {
+  b = fit[["moment_coef"]]
+  if (is.null(b)) {
+    b = fit[["coef"]]
+    if ("(Intercept)" %in% fit[["x"]] && !is.null(fit[["centers"]])) {
+      slopes = setdiff(fit[["x"]], "(Intercept)")
+      b["(Intercept)", 1L] = b["(Intercept)", 1L]-fit[["centers"]][[y]]+sum(fit[["centers"]][slopes]*b[slopes, 1L])
+    }
+  }
+  slopes = setdiff(fit[["x"]], "(Intercept)")
+  paste0("(", fit_column_sql(fit, frame, y, conn), "-", sql_linear_predictor(
+    vapply(slopes, function(name) fit_column_sql(fit, frame, name, conn), character(1)), b[slopes, 1L],
+    if ("(Intercept)" %in% fit[["x"]]) b["(Intercept)", 1L]), ")")
 }
 
 #' @rdname fit_meats
@@ -188,4 +254,26 @@ fit_meats = function(fits, frame, ys, inputs) {
 fit_meat = function(fit, frame, y, inputs) {
   retain_linear_score_frame(fit, frame, y, inputs)
   fit_meats(list(fit), frame, y, inputs)[[1]]
+}
+
+center_compressed_design = function(X, center) {
+  columns = which(center != 0)
+  if (length(columns)) X[, columns] = sweep(as.matrix(X[, columns, drop = FALSE]), 2L, center[columns], "-")
+  X
+}
+
+compressed_cross_moments = function(X, dat, y, center_columns = seq_len(ncol(X))) {
+  center = setNames(rep(0, ncol(X)), colnames(X))
+  center_columns = setdiff(center_columns, match("(Intercept)", colnames(X)))
+  if ("(Intercept)" %in% names(center) && length(center_columns)) {
+    center[center_columns] = as.numeric(Matrix::crossprod(dat[["sum_w"]], X[, center_columns, drop = FALSE])/sum(dat[["sum_w"]]))
+  }
+  C = center_compressed_design(X, center)
+  H = as.matrix(Matrix::crossprod(C, C*dat[["sum_w"]]))
+  xy = as.numeric(Matrix::crossprod(C, dat[["sum_wy"]]))
+  S = rbind(cbind(H, xy), c(xy, sum(dat[["sum_wy_sq"]])))
+  dimnames(S) = rep(list(c(colnames(X), y)), 2L)
+  attr(S, "centers") = c(center[names(center) != "(Intercept)"], setNames(dat[["dbreg_cell_center__"]][[1L]], y))
+  attr(S, "weight_scale") = dat[["dbreg_cell_scale__"]][[1L]]
+  S
 }

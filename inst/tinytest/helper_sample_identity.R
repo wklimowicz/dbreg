@@ -13,7 +13,7 @@ dbreg_test_sample_identity = function(conn) {
   bad = basename(tempfile("sample_bad_"))
   snapshot_resources = NULL
   on.exit({
-    dbreg:::dbglm_release_resources(snapshot_resources)
+    dbreg:::release_fit_resources(snapshot_resources)
     dbglm_validation_drop(conn, retained)
     dbglm_validation_drop(conn, bad)
     dbglm_validation_drop(conn, table)
@@ -105,7 +105,7 @@ dbreg_test_sample_identity = function(conn) {
   expect_identical(dbglm_validation_tables(conn), inventory)
   # Snapshot behavior is independent of the caller subsequently replacing its
   # source. This uses real SQL relations, not an R copy or a mocked connection.
-  snapshot_resources = dbreg:::dbglm_resources()
+  snapshot_resources = dbreg:::fit_resources()
   inputs = new.env(parent = emptyenv())
   inputs[["conn"]] = conn
   inputs[["row_id"]] = keys
@@ -116,7 +116,7 @@ dbreg_test_sample_identity = function(conn) {
     names(schema), replace = TRUE))
   expect_equal(as.numeric(DBI::dbGetQuery(conn, paste("SELECT COUNT(*) AS n", snapshot_from))[["n"]]), nrow(d))
   expect_equal(as.numeric(DBI::dbGetQuery(conn, paste("SELECT COUNT(*) AS n FROM", table))[["n"]]), nrow(d) - 10)
-  dbreg:::dbglm_release_resources(snapshot_resources)
+  dbreg:::release_fit_resources(snapshot_resources)
   expect_identical(dbglm_validation_tables(conn), inventory)
   expect_true(DBI::dbIsValid(conn))
 }

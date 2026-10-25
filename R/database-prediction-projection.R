@@ -4,7 +4,7 @@
 prediction_two_fe_projection = function(conn, source, fe, targets, create, drop, tol = 1e-10, max_iter = 100L) {
   native = isTRUE(detect_backend(conn)[["is_databricks"]])
   names = paste0("r", seq_along(targets))
-  scale_row = dbglm_get_query(conn, paste("SELECT", paste(sprintf("MAX(ABS(%s)) AS s%d", targets, seq_along(targets)), collapse = ","), "FROM", source))
+  scale_row = backend_get_query(conn, paste("SELECT", paste(sprintf("MAX(ABS(%s)) AS s%d", targets, seq_along(targets)), collapse = ","), "FROM", source))
   scales = pmax(1, as.numeric(scale_row[1L, ]))
   residual = create(paste("SELECT", paste(c(fe, "w", sprintf("(%s)/(%s) AS %s", targets, dbglm_number(scales), names)), collapse = ","), "FROM", source))
   dictionaries = lapply(fe, function(f) create(paste("SELECT", f, "AS id,", paste0("CAST(0.0 AS DOUBLE) AS ", names, collapse = ","), "FROM", source, "GROUP BY", f)))
@@ -37,7 +37,7 @@ prediction_two_fe_projection = function(conn, source, fe, targets, create, drop,
     }
     terms = paste(sprintf("ABS(FSUM(w*%s)/FSUM(w)) AS %s", names, names), collapse = ",")
     branches = vapply(fe, function(f) paste("SELECT", terms, "FROM", residual, "GROUP BY", f), character(1))
-    diagnostic = dbglm_get_query(conn, paste0("SELECT ", paste(sprintf("MAX(%s) AS %s", names, names), collapse = ","),
+    diagnostic = backend_get_query(conn, paste0("SELECT ", paste(sprintf("MAX(%s) AS %s", names, names), collapse = ","),
       " FROM (", paste(branches, collapse = " UNION ALL "), ") errors"))
     error = max(as.numeric(diagnostic[1L, ]))
     if (is.finite(error) && error <= tol) break
@@ -73,7 +73,7 @@ prediction_two_fe_components = function(conn, source, fe, create, drop, max_iter
       drop(old_right)
       drop(next_left)
     }
-    mismatch = dbglm_get_query(conn, paste("SELECT 1 AS mismatch FROM", edges, "e JOIN", left,
+    mismatch = backend_get_query(conn, paste("SELECT 1 AS mismatch FROM", edges, "e JOIN", left,
       "l ON e.a=l.id JOIN", right, "r ON e.b=r.id WHERE l.component<>r.component LIMIT 1"))
     if (!nrow(mismatch)) break
   }

@@ -64,7 +64,7 @@ inference_fe_nesting = function(conn, state, clusters) {
       sql_distinct_tuple_count(conn, cluster), " AS n FROM ", q(state[["table"]]), " WHERE ", q(state[["estimated"]]),
       " GROUP BY ", paste(q(state[["fe_components"]][[i]]), collapse = ","), ") g"), character(1))
   }), use.names = FALSE)
-  rows = dbglm_get_query(conn, paste(queries, collapse = " UNION ALL "))
+  rows = backend_get_query(conn, paste(queries, collapse = " UNION ALL "))
   nested[as.integer(rows[["fe"]][as.numeric(rows[["maximum"]]) == 1])] = TRUE
   nested
 }
@@ -86,12 +86,21 @@ inference_repair_vcov = function(V, fix = TRUE) {
   if (!length(V)) return(V)
   if (any(!is.finite(V))) stop("Post-fit covariance is nonfinite.", call. = FALSE)
   e = eigen(V, symmetric = TRUE)
-  if (all(e[["values"]] > 0)) return(V)
+  diagnostics = list(min_eigenvalue = min(e[["values"]]), requested_fix = fix,
+    repaired = FALSE, max_adjustment = 0)
+  if (all(e[["values"]] > 0)) {
+    attr(V, "repair") = diagnostics
+    return(V)
+  }
   repaired = tcrossprod(e[["vectors"]] %*% diag(pmax(e[["values"]], 1e-16), nrow(V)), e[["vectors"]])
   dimnames(repaired) = dimnames(V)
   if (max(abs(V - repaired)) > 1e-8) warning(if (fix)
     "The VCOV matrix is not positive definite and was 'fixed'." else "The VCOV matrix is not positive definite.", call. = FALSE)
-  if (fix) repaired else V
+  diagnostics[["max_adjustment"]] = max(abs(V-repaired))
+  diagnostics[["repaired"]] = fix
+  result = if (fix) repaired else V
+  attr(result, "repair") = diagnostics
+  result
 }
 
 retained_covariance = function(object, vcov = "iid", cluster = NULL, ssc = NULL, vcov_fix = TRUE) {
@@ -116,24 +125,26 @@ retained_covariance = function(object, vcov = "iid", cluster = NULL, ssc = NULL,
     missing = paste0(q(columns), " IS NULL")
     numeric = columns[classes[columns] %in% c("numeric", "integer")]
     if (length(numeric)) missing = c(missing, paste0("isnan(CAST(", q(numeric), " AS DOUBLE))"))
-    bad = dbglm_get_query(conn, paste("SELECT COUNT(*) AS n", from, "AND (", paste(missing, collapse = " OR "), ")"))
+    bad = backend_get_query(conn, paste("SELECT COUNT(*) AS n", from, "AND (", paste(missing, collapse = " OR "), ")"))
     if (as.numeric(bad[["n"]]) > 0) stop("Post-fit clusters have missing values on the fitted sample; the sample cannot change.", call. = FALSE)
   }
   n = state[["nobs"]]
   K = inference_parameter_count(conn, state, request, ssc)
   if (ssc[["K.adj"]] && n <= K) stop("Insufficient residual degrees of freedom.", call. = FALSE)
   bread = state[["bread"]]
+  score_projection = state[["score_projection"]]
+  if (is.null(score_projection)) score_projection = bread
   G = numeric()
   if (request[["kind"]] == "iid") {
     if (state[["kind"]] == "ols") V = bread*(state[["rss"]]/state[["weight_scale"]])/(if (ssc[["K.adj"]]) n-K else n-1) else if (state[["kind"]] == "gaussian")
       V = bread*state[["dispersion_scaled"]]*(if (ssc[["K.adj"]]) (n-1)/(n-K) else 1) else
       V = bread/state[["weight_scale"]]*(if (ssc[["K.adj"]]) (n-1)/(n-K) else 1)
   } else if (request[["kind"]] == "hc1") {
-    V = score_moments(conn, from, q(state[["scores"]]), projection = bread)[["matrix"]]
+    V = score_moments(conn, from, q(state[["scores"]]), projection = score_projection)[["matrix"]]
     if (ssc[["K.adj"]]) V = V*n/(n-K)
   } else {
     components = c(clusters, if (length(clusters) == 2L) list(unique(unlist(clusters))))
-    moments = lapply(components, function(columns) score_moments(conn, from, q(state[["scores"]]), q(columns), projection = bread))
+    moments = lapply(components, function(columns) score_moments(conn, from, q(state[["scores"]]), q(columns), projection = score_projection))
     G = vapply(moments, `[[`, numeric(1), "groups")
     if (any(G < 2)) stop("Clustered covariance requires at least two clusters.", call. = FALSE)
     meat = bread*0

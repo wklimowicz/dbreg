@@ -42,6 +42,7 @@ local({
   expect_equal(as.numeric(vcov(changed,cluster=~g)),as.numeric(vcov(changed_ref,cluster=~g)),tolerance=1e-8)
   close(fit)
   expect_error(dbreg::feols(y~x,conn=conn,table="absent",weigths="w"),"Unused arguments:.*weigths")
+  expect_error(dbreg::feols(y~x,d,conn=conn,table="absent"),"exactly one data source")
   expect_error(dbreg::feols(y~x,conn=conn,table="absent",vcov="bad"),"Unsupported covariance")
   expect_error(dbreg::feglm(y~x,conn=conn,table="absent",vcov=~g+z),"one-way GLM")
   expect_error(dbreg::feols(y~x,conn=conn,table="absent",weights=1:5),"Positional weights")

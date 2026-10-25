@@ -35,13 +35,13 @@ dbglm_covariance = function(conn, table, x, fit, family, kind, ssc, n) {
   }
   cte = dbglm_working_sql(table, x, fit[["beta"]], family[["link"]])
   if (kind == "hc1") {
-    row = dbglm_get_query(conn, paste0(cte, "SELECT ",
+    row = backend_get_query(conn, paste0(cte, "SELECT ",
       paste(dbglm_moment_terms(x, "score*score"), collapse = ", "), " FROM working"))
     G = NULL
   } else {
     scores = sprintf("SUM((%s)*score) AS s_%d", x, seq_along(x))
     terms = dbglm_moment_terms(paste0("s_", seq_along(x)), "1.0")
-    row = dbglm_get_query(conn, paste0(cte,
+    row = backend_get_query(conn, paste0(cte,
       ", cluster_scores AS (SELECT __dbglm_cluster, ", paste(scores, collapse = ", "),
       " FROM working GROUP BY __dbglm_cluster) SELECT COUNT(*) AS n_clusters, ",
       paste(terms, collapse = ", "), " FROM cluster_scores"))
@@ -62,7 +62,7 @@ dbglm_fe_covariance = function(conn, x, fit, kind, ssc, n, counts) {
   inverse = if (p) dbglm_solve(fit[["H"]])[["inverse"]] else matrix(numeric(), 0, 0)
   G = NULL
   if (kind == "cluster" && !p) {
-    G = as.numeric(dbglm_get_query(conn, paste("SELECT COUNT(DISTINCT __dbglm_cluster) AS n FROM", fit[["working"]]))[["n"]])
+    G = as.numeric(backend_get_query(conn, paste("SELECT COUNT(DISTINCT __dbglm_cluster) AS n FROM", fit[["working"]]))[["n"]])
     if (G < 2) stop("Clustered covariance requires at least two clusters.", call. = FALSE)
   }
   if (!p) return(list(matrix = inverse, clusters = G, K = K))
@@ -76,12 +76,12 @@ dbglm_fe_covariance = function(conn, x, fit, kind, ssc, n, counts) {
     }
     if (kind == "hc1") {
       sql = paste0("SELECT ", paste(dbglm_moment_terms(x_cols, "b.score*b.score"), collapse = ","), from)
-      row = dbglm_get_query(conn, sql)
+      row = backend_get_query(conn, sql)
     } else {
       scores = sprintf("SUM(%s*b.score) AS s%d", x_cols, seq_along(x))
       sql = paste0("SELECT COUNT(*) AS __n_clusters,", paste(dbglm_moment_terms(paste0("s", seq_along(x)), "1.0"), collapse = ","), " FROM (SELECT ",
         paste(scores, collapse = ","), from, " GROUP BY __dbglm_cluster) t")
-      row = dbglm_get_query(conn, sql)
+      row = backend_get_query(conn, sql)
       G = as.numeric(row[["__n_clusters"]])
       if (G < 2) stop("Clustered covariance requires at least two clusters.", call. = FALSE)
     }

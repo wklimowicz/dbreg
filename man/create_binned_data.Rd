@@ -4,7 +4,7 @@
 \alias{create_binned_data}
 \title{Build bin assignment CTE and fetch binned data into R}
 \usage{
-create_binned_data(inputs)
+create_binned_data(inputs, collect = TRUE)
 }
 \description{
 Build bin assignment CTE and fetch binned data into R

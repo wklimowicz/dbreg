@@ -86,7 +86,7 @@ for(cl in c("cluster","f1","fsmall","external","allcluster")) for(policy in c("n
  vc <- as.formula(paste0("~",cl))
  fml <- y~x|f1+fsmall+f2
  m <- dbglm(fml,conn=con_fe,data=d_fe,vcov=vc,ssc=list(K.fixef=policy))
- r <- reference_fe(fml,d_fe,family=binomial("cloglog"),vcov=vc,ssc=ssc(K.fixef=policy))
+ r <- reference_fe(fml,d_fe,family=binomial("cloglog"),vcov=vc,ssc=fixest::ssc(K.fixef=policy))
  check_fe(as.vector(vcov(m)),as.vector(vcov(r)),1e-8,1e-5)
  expect_equal(m$n_params_model,r$nparams)
  expect_equal(m$n_params_vcov,attr(vcov(r,attr=TRUE),"df.K"))

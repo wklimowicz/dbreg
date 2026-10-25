@@ -1,7 +1,7 @@
 dbreg_test_sql_prediction_tails = function(conn) {
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
-  on.exit(dbreg:::dbglm_release_resources(resources))
+  on.exit(dbreg:::release_fit_resources(resources))
   set.seed(929)
   d = data.frame(id = 1:240, x = rep(c(-1, 0, 1), 80), z = sin(1:240), o = 0)
   d[["y"]] = stats::rpois(nrow(d), exp(1 + 2*d[["x"]] - 2*d[["z"]]))
@@ -67,7 +67,7 @@ dbreg_test_sql_prediction_tails = function(conn) {
   input = dbreg:::prediction_upload_frame(conn, frame, resources)
   for (link in c("logit", "cloglog", "probit")) {
     query = dbreg:::sql_prediction_response(conn, gsub('["`]', "", input), "id", "prediction", link)
-    actual = dbreg:::dbglm_get_query(conn, query)
+    actual = dbreg:::backend_get_query(conn, query)
     expected = stats::binomial(link)[["linkinv"]](eta)
     expected = expected[match(actual[["id"]], frame[["id"]])]
     expect_identical(is.na(actual[["prediction"]]), is.na(expected), info = link)

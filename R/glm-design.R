@@ -241,7 +241,8 @@ glm_get_column_info = function(conn, table, term_labels, factor_refs = NULL, int
     types[[name]] = "factor"
     level_sql[[name]] = sql_factor_literals(conn,stats::setNames(list(spec[["values"]]),name),classes)[[name]]
   }
-  list(types = types, levels = levels, level_sql = level_sql, factor_classes = classes[names(levels)],i_specs=specifications)
+  list(types = types, levels = levels, level_sql = level_sql, factor_classes = classes[names(levels)],
+    numeric_sql = setNames(sql_cast_double(vars, conn), vars), i_specs = specifications)
 }
 
 glm_expand_term = function(term, col_info, expand, sep = "_x_", all_terms = character(), fe_vars = character()) {
@@ -291,13 +292,17 @@ glm_expand_variable = function(var, col_info, expand, in_interaction, drop_ref =
       )
     })
   } else if (!is.null(power)) {
+    source = col_info[["numeric_sql"]][[source_var]]
+    if (is.null(source)) source = source_var
     list(list(
-      sql = power[["sql"]],
+      sql = sprintf("POWER(%s, %d)", source, power[["exponent"]]),
       name = power[["name"]],
       display = sprintf("I(%s^%d)", power[["variable"]], power[["exponent"]])
     ))
   } else {
-    list(list(sql = var, name = var, display = var))
+    sql = if (!is_factor) col_info[["numeric_sql"]][[var]] else NULL
+    if (is.null(sql)) sql = var
+    list(list(sql = sql, name = var, display = var))
   }
 }
 

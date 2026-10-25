@@ -6,7 +6,7 @@ dbglm_fe_state_builder = function(conn, base, x, link, create) {
     if (isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) {
       create(sql, materialize = TRUE)
     } else {
-      paste0("(", dbglm_sql(conn, sql), ")")
+      paste0("(", backend_sql(conn, sql), ")")
     }
   }
   function(beta_val, c_eta_val, gamma_val = NULL, ops = NULL, info = NULL,
@@ -49,32 +49,40 @@ dbglm_fe_working = function(conn, table, link, create, target = NULL) {
   create(paste0(dbglm_working_sql(table, character(), numeric(), link, eta = "__dbglm_eta"), "SELECT * FROM working"), target = target)
 }
 
-dbglm_fe_evaluate = function(conn, working, x, fe, collect_fe_moments = FALSE, moment_rows = NULL) {
+dbglm_fe_evaluate = function(conn, working, x, fe, collect_fe_moments = FALSE, moment_rows = NULL, fe_sizes = NULL, limits = projection_limits()) {
   cols = c(x, "z")
   terms = c(dbglm_deviance_term(conn), "MIN(mu) AS mu_min", "MAX(mu) AS mu_max",
     "SUM(CASE WHEN NOT isfinite(w) OR w<=0 OR NOT isfinite(eta) THEN 1 ELSE 0 END) AS bad",
     dbglm_moment_terms(cols, "w"))
   if (length(x)) {
-    x_score = vapply(paste0(x, "*score"), function(e) dbglm_exact_sum(conn, e), character(1))
+    x_score = vapply(paste0(x, "*score"), function(e) sql_stable_sum(conn, e), character(1))
     terms = c(terms, sprintf("%s AS raw_s%d", x_score, seq_along(x)),
       sprintf("ABS(%s)/SQRT(SUM(w*%s*%s)) AS s%d", x_score, x, x, seq_along(x)))
   }
   if (collect_fe_moments && length(fe) >= 2L && !length(unlist(attr(fe, "slopes")))) {
-    max_edges = getOption("dbreg.duckdb_ap_max_edges", 1e6)
-    max_entries = getOption("dbreg.duckdb_ap_max_entries", 2e6)
-    dbglm_validate_moment_limits(max_edges, max_entries)
+    max_edges = limits[["summary_rows"]]
+    max_entries = limits[["design_entries"]]
+    # Six wire fields include the marginal/global payload slots. Reserve their
+    # decoded numbers, the global row and an overflow probe before fetching.
+    payload = if (is.null(fe_sizes)) max_entries*(length(cols)+1L)/max(1L,length(cols)) else sum(fe_sizes)*(length(cols)+1L)
+    row_cap = min(max_edges, floor((limits[["transfer_cells"]]-payload-length(terms))/6L)-2L)
+    scalar = function() {
+      dbglm_fe_evaluate(conn, working, x, fe, collect_fe_moments = FALSE)
+    }
+    if (row_cap < 1L || (length(moment_rows) == 1L && is.finite(moment_rows) && moment_rows > row_cap)) return(scalar())
+    validate_moment_limits(max_edges, max_entries)
     K = length(fe)
     # The initial projector bounds support on the owned immutable base table.
     # A working predictor preserves every key, so reuse that verified bound.
     # Without it, fetch only the cap plus the global row and an overflow row.
     known_bound = length(moment_rows) == 1L && is.finite(moment_rows) &&
-      moment_rows >= 0 && moment_rows == floor(moment_rows) && moment_rows <= max_edges
-    res = dbglm_read_fe_moments(conn, dbglm_fe_moments_sql(conn, working, fe,
-      dbglm_fe_value_terms(conn, cols, "score"), terms, limit = if (known_bound) NULL else max_edges + 2),
-    max_rows = if (known_bound) moment_rows + 1 else max_edges + 1)
+      moment_rows >= 0 && moment_rows == floor(moment_rows) && moment_rows <= row_cap
+    res = read_fe_moments(conn, fe_moments_sql(conn, working, fe,
+      fe_value_terms(conn, cols, "score"), terms, limit = if (known_bound) NULL else row_cap + 2, compact = TRUE),
+    max_rows = if (known_bound) moment_rows + 1 else row_cap + 1)
     if (is.null(res)) {
       if (known_bound) stop("The fixed-effect moment support changed within fitting.", call. = FALSE)
-      return(dbglm_fe_evaluate(conn, working, x, fe, collect_fe_moments = FALSE))
+      return(scalar())
     }
     if (known_bound && nrow(res) != moment_rows + 1) {
       stop("The fixed-effect moment support changed within fitting.", call. = FALSE)
@@ -84,16 +92,19 @@ dbglm_fe_evaluate = function(conn, working, x, fe, collect_fe_moments = FALSE, m
     if (is.null(row)) row = res[sets == 0L, , drop = FALSE]
     fe_moments = NULL
     if (!is.na(row[["bad"]]) && row[["bad"]] == 0 && sum(sets != 0L) <= max_edges) {
-      unpacked = dbglm_unpack_fe_moments(res, K, length(cols), 1L)
+      unpacked = unpack_fe_moments(res, K, length(cols), 1L)
       if (!is.null(unpacked) && unpacked[["n"]] * max(1L, length(cols)) <= max_entries) fe_moments = unpacked
     }
     singles = sets >= 1L & sets <= K
     h = as.numeric(res[["__h"]][singles])
+    compact = attr(res, "fe_values", exact = TRUE)
+    score = if (is.null(compact)) res[["__ex1"]][singles] else
+      compact[["values"]][match(which(singles), compact[["rows"]]), length(cols) + 1L]
     # Also certify the Newton-scale group equation. A square-root information
     # score alone vanishes with a group's weight even when its predictor is
     # far from its finite solution. This uses the already collected moments.
-    s_val = ifelse(is.finite(h) & h > 0 & is.finite(res[["__ex1"]][singles]),
-      abs(res[["__ex1"]][singles]) / sqrt(h) / pmin(1, sqrt(h)), 0)
+    s_val = ifelse(is.finite(h) & h > 0 & is.finite(score),
+      abs(score) / sqrt(h) / pmin(1, sqrt(h)), 0)
     result = dbglm_fe_diagnostics(row, x, if (length(s_val)) max(s_val) else 0)
     # Retain the explicit NULL when a bounded summary cannot be used.
     result["fe_moments"] = list(fe_moments)
@@ -101,13 +112,13 @@ dbglm_fe_evaluate = function(conn, working, x, fe, collect_fe_moments = FALSE, m
   }
   fe_queries = character()
   for (i in seq_along(fe)) for (v in c("1.0", attr(fe, "slopes")[[i]])) {
-    fe_queries = c(fe_queries, paste0("SELECT COALESCE(ABS(", dbglm_exact_sum(conn, paste0("score*(", v, ")")),
+    fe_queries = c(fe_queries, paste0("SELECT COALESCE(ABS(", sql_stable_sum(conn, paste0("score*(", v, ")")),
       ")/NULLIF(SQRT(SUM(w*(", v, ")*(", v, ")))*LEAST(1.0,SQRT(SUM(w))),0),0) AS s FROM ", working, " GROUP BY ", fe[i]))
   }
   if (length(fe_queries)) {
     terms = c(terms, paste0("(SELECT MAX(s) FROM (", paste(fe_queries, collapse = " UNION ALL "), ") t) AS fe_score_max"))
   }
-  row = dbglm_get_query(conn, paste("SELECT", paste(terms, collapse = ","), "FROM", working))
+  row = backend_get_query(conn, paste("SELECT", paste(terms, collapse = ","), "FROM", working))
   fe_score = if (length(fe_queries) && !is.na(row[["fe_score_max"]])) as.numeric(row[["fe_score_max"]]) else 0
   dbglm_fe_diagnostics(row, x, fe_score)
 }

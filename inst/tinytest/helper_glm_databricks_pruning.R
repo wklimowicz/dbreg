@@ -5,7 +5,7 @@ dbglm_test_databricks_pruning = function(conn) {
   on.exit(try(DBI::dbExecute(conn, paste("DROP TEMP TABLE", stored)), silent = TRUE))
   d = expand.grid(f = c("O'Brien", "é / ^"), g = c(10, 20), y = c(0, 1), stringsAsFactors = FALSE)
   d[["id"]] = seq_len(nrow(d))
-  DBI::dbExecute(conn, paste("CREATE TEMP TABLE", stored, "AS", dbreg:::dbglm_values_sql(conn, d)))
+  DBI::dbExecute(conn, paste("CREATE TEMP TABLE", stored, "AS", dbreg:::sql_values_frame(conn, d)))
   f = as.character(DBI::dbQuoteIdentifier(conn, "f group"))
   # Delta's default physical column mapping forbids spaces; a query alias
   # exercises quoted identifier handling without changing storage properties.

@@ -5,9 +5,9 @@ local({
   on.exit(DBI::dbDisconnect(conn, shutdown = TRUE))
   DBI::dbWriteTable(conn, "caller_data", data.frame(x = 1:3))
 
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
-  manager = dbreg:::dbglm_table_manager(conn, resources)
+  manager = dbreg:::fit_table_manager(conn, resources)
   create = manager[["create"]]
 
   # Integer64 IDs must be decoded before combining groups, including when
@@ -32,10 +32,10 @@ local({
 
   # A failed CREATE is tracked before execution; cleanup tolerates its absence.
   expect_error(create("SELECT missing_column FROM caller_data"), "missing_column")
-  dbreg:::dbglm_release_resources(resources)
+  dbreg:::release_fit_resources(resources)
   expect_true(DBI::dbIsValid(conn))
   expect_equal(DBI::dbListTables(conn), "caller_data")
   expect_equal(DBI::dbReadTable(conn, "caller_data"), data.frame(x = 1:3))
-  dbreg:::dbglm_release_resources(resources)
+  dbreg:::release_fit_resources(resources)
   expect_equal(DBI::dbListTables(conn), "caller_data")
 })

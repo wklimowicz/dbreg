@@ -1,8 +1,8 @@
 dbreg_test_retained_inference = function(conn) {
   before = dbglm_validation_tables(conn)
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
-  on.exit(dbreg:::dbglm_release_resources(resources), add = TRUE)
+  on.exit(dbreg:::release_fit_resources(resources), add = TRUE)
   original = options(dbreg.prediction_max_entries = 1e6)
   on.exit(options(original), add = TRUE)
   set.seed(394)
@@ -133,7 +133,7 @@ dbreg_test_retained_inference = function(conn) {
   }
   for (fit in fits) close(fit)
   for (fit in fits) expect_error(predict(fit), "released")
-  dbreg:::dbglm_release_resources(resources)
+  dbreg:::release_fit_resources(resources)
   resources[["tables"]] = character()
   expect_identical(dbglm_validation_tables(conn), before)
   expect_true(DBI::dbIsValid(conn))

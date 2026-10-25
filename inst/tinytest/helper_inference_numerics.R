@@ -1,8 +1,8 @@
 dbreg_test_inference_numerics = function(conn) {
   before = dbglm_validation_tables(conn)
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
-  on.exit(dbreg:::dbglm_release_resources(resources), add = TRUE)
+  on.exit(dbreg:::release_fit_resources(resources), add = TRUE)
   set.seed(399)
   n = 240L
   d = data.frame(id = seq_len(n), x = rnorm(n), z = rnorm(n), g = rep(1:12, each = 20),
@@ -62,7 +62,7 @@ dbreg_test_inference_numerics = function(conn) {
   expect_true(all(actual[["text_key"]] == "NaN"))
   close(output)
   close(fit)
-  dbreg:::dbglm_release_resources(resources)
+  dbreg:::release_fit_resources(resources)
   resources[["tables"]] = character()
   expect_identical(dbglm_validation_tables(conn), before)
   expect_true(DBI::dbIsValid(conn))

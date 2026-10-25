@@ -1,7 +1,7 @@
 dbreg_test_gaussian = function(conn) {
-  resources = dbreg:::dbglm_resources()
+  resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
-  on.exit(dbreg:::dbglm_release_resources(resources), add = TRUE)
+  on.exit(dbreg:::release_fit_resources(resources), add = TRUE)
   models = outputs = list()
   on.exit({ for (output in outputs) close(output); for (model in models) close(model) }, add = TRUE)
   set.seed(567)

@@ -5,12 +5,12 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
   slopes = attr(fe, "slopes")
   if (is.null(cache)) cache = new.env(parent = emptyenv())
   if (length(fe) > 1) {
-    dbglm_moments_enabled(conn, table, fe, control, cache)
+    dbglm_moments_enabled(conn, table, fe, control, cache, length(columns))
     if (!cache[["moment_enabled"]] && length(fe) == 2L && !length(unlist(slopes)) &&
       identical(control[["projection_method"]], "auto") && length(columns)) {
       identifiers = unique(c(fe, unlist(slopes)))
       if (is.null(scales)) {
-        norm = as.numeric(dbglm_get_query(conn, paste("SELECT", paste(sprintf(
+        norm = as.numeric(backend_get_query(conn, paste("SELECT", paste(sprintf(
           "FSUM(w*POWER(%s,2)) AS n%d", columns, seq_along(columns)), collapse = ","), "FROM", table))[1, ])
         scales = sqrt(pmax(norm, .Machine[["double.xmin"]]))
       }
@@ -19,9 +19,10 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
       first = utils::tail(columns, 1)
       rest = utils::head(columns, -1)
       order = match(c(first, rest), columns)
-      projected = dbreg_duckdb_cg_projections(conn, paste("FROM", table), fe, first, rest, rest, "w",
+      attempt = projection_attempt("bounded_pcg", dbreg_duckdb_cg_projections(conn, paste("FROM", table), fe, first, rest, rest, "w",
         cluster_var = "__dbglm_key", max_iter = control[["fe_max_iter"]], tol = target, scales = scales[order],
-        materialize_result = FALSE, inline_result = !materialize, extra_sums = extra_sums)
+        materialize_result = FALSE, inline_result = !materialize, extra_sums = extra_sums))
+      projected = record_projection_attempt(cache, attempt)
       if (!is.null(projected)) {
         on.exit(for (t in rev(projected[["all_tables"]])) {
           if (!materialize && isTRUE(backend_info[["is_databricks"]]) && !isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) next
@@ -50,13 +51,14 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
       for (i in seq_along(fe)) for (v in slopes[[i]]) ops[[length(ops) + 1]] = list(f = fe[i], v = v)
       identifiers = unique(c(fe, unlist(slopes)))
       if (is.null(scales)) {
-        norm = if (length(columns)) as.numeric(dbglm_get_query(conn, paste("SELECT", paste(sprintf("FSUM(w*POWER(%s,2)) AS n%d", columns, seq_along(columns)), collapse = ","), "FROM", table))[1, ]) else numeric()
+        norm = if (length(columns)) as.numeric(backend_get_query(conn, paste("SELECT", paste(sprintf("FSUM(w*POWER(%s,2)) AS n%d", columns, seq_along(columns)), collapse = ","), "FROM", table))[1, ]) else numeric()
         scales = sqrt(pmax(norm, .Machine[["double.xmin"]]))
       }
       target = control[["fe_tol"]]
       if (response) target = min(target, control[["score_tol"]] / (100 * max(1, utils::tail(scales, 1))))
-      ans = dbglm_project_moments(conn, table, columns, identifiers, ops, scales, target, control, create, drop, cache,
-        materialize = materialize, extra_sums = extra_sums, need_table = need_table, precomputed = precomputed)
+      attempt = projection_attempt("bounded_moments", project_fe_moments(conn, table, columns, identifiers, ops, scales, target, control, create, drop, cache,
+        materialize = materialize, extra_sums = extra_sums, need_table = need_table, precomputed = precomputed))
+      ans = record_projection_attempt(cache, attempt)
       if (!is.null(ans)) return(ans)
       cache[["moment_enabled"]] = FALSE
     }
@@ -91,7 +93,7 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
   }
   identifiers = unique(c(fe, unlist(slopes), basis))
   if (!length(columns)) return(list(table = projection, cycles = 0L, residual = 0, method = "group"))
-  norm = dbglm_get_query(conn, paste("SELECT", paste(sprintf("SUM(w*POWER(%s,2)) AS n%d", columns, seq_along(columns)), collapse = ","), "FROM", projection))
+  norm = backend_get_query(conn, paste("SELECT", paste(sprintf("SUM(w*POWER(%s,2)) AS n%d", columns, seq_along(columns)), collapse = ","), "FROM", projection))
   scales = sqrt(pmax(as.numeric(norm[1, ]), .Machine[["double.xmin"]]))
   target = control[["fe_tol"]]
   if (response) target = min(target, control[["score_tol"]] / (100 * max(1, utils::tail(scales, 1))))
@@ -111,7 +113,7 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
       f = op[["f"]]
       v = op[["v"]]
       terms = sprintf("COALESCE(ABS(SUM(w*(%3$s)*%1$s))/NULLIF(SQRT(SUM(w*(%3$s)*(%3$s))),0),0)/%2$s AS r%4$d", columns, dbglm_number(scales), v, seq_along(columns))
-      row = dbglm_get_query(conn, paste0("SELECT ", paste(sprintf("MAX(r%d) AS r%d", seq_along(columns), seq_along(columns)), collapse = ","),
+      row = backend_get_query(conn, paste0("SELECT ", paste(sprintf("MAX(r%d) AS r%d", seq_along(columns), seq_along(columns)), collapse = ","),
         " FROM (SELECT ", paste(terms, collapse = ","), " FROM ", projection, " GROUP BY ", f, ") t"))
       residual = max(residual, as.numeric(row[1, ]))
     }
@@ -121,18 +123,25 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
 }
 
 # Direct FE moments need the non-absorbed levels to fit a dense solve in R;
-# see dbglm_fe_dense_feasible(). The decision is cached for the whole fit.
-dbglm_moments_enabled = function(conn, table, fe, control, cache) {
+# see fe_dense_feasible(). The decision is cached for the whole fit.
+dbglm_moments_enabled = function(conn, table, fe, control, cache, columns = 1L) {
   if (!is.null(cache[["moment_enabled"]])) return(cache[["moment_enabled"]])
   if (identical(control[["projection_method"]], "sql")) {
     cache[["moment_enabled"]] = FALSE
     return(FALSE)
   }
+  if (is.null(cache[["projection_limits"]])) cache[["projection_limits"]] = projection_limits()
   sizes = cache[["fe_sizes"]]
   if (is.null(sizes)) {
-    count = dbglm_get_query(conn, paste("SELECT", paste(sprintf("COUNT(DISTINCT %s) AS n%d", fe, seq_along(fe)), collapse = ","), "FROM", table))
+    count = backend_get_query(conn, paste("SELECT", paste(sprintf("COUNT(DISTINCT %s) AS n%d", fe, seq_along(fe)), collapse = ","), "FROM", table))
     sizes = vapply(count, as.numeric, numeric(1))
   }
-  cache[["moment_enabled"]] = dbglm_fe_dense_feasible(rep(sizes, 1 + lengths(attr(fe, "slopes"))))
+  cache[["fe_sizes"]] = sizes
+  op_sizes = rep(sizes, 1 + lengths(attr(fe, "slopes")))
+  cache[["moment_enabled"]] = sum(op_sizes)*max(1L,columns) <= cache[["projection_limits"]][["design_entries"]] &&
+    fe_dense_feasible(op_sizes, columns, limits = cache[["projection_limits"]])
+  if (!cache[["moment_enabled"]]) record_projection_attempt(cache,
+    list(method = "bounded_moments", status = "declined", reason = "system_limit",
+      details = list(fe_sizes = op_sizes, estimated_bytes = projection_memory(op_sizes, columns), limits = cache[["projection_limits"]])))
   cache[["moment_enabled"]]
 }

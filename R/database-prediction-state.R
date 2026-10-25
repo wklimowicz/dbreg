@@ -26,7 +26,7 @@ build_database_prediction_state = function(conn, working, retained, fe, componen
   diagnostics = if (is.null(expected_rss)) paste0("MAX(ABS(", residual,
     ")) AS error,MAX(ABS(", target, ")) AS scale") else
     paste0("FSUM(s.__dbglm_a*POWER(", residual, ",2)) AS rss,FSUM(s.__dbglm_a*POWER(", target, ",2)) AS scale")
-  diagnostic = dbglm_get_query(conn, paste("SELECT", diagnostics, join))
+  diagnostic = backend_get_query(conn, paste("SELECT", diagnostics, join))
   recovery_error = if (is.null(expected_rss)) as.numeric(diagnostic[["error"]]) else abs(as.numeric(diagnostic[["rss"]]) - expected_rss)
   tolerance = if (is.null(expected_rss)) 1e-7 else 1e-6
   scale = max(1, as.numeric(diagnostic[["scale"]]), if (!is.null(expected_rss)) abs(expected_rss))
@@ -36,8 +36,8 @@ build_database_prediction_state = function(conn, working, retained, fe, componen
   null = NULL
   if (p) {
     within = paste0("(", paste("SELECT s.__dbglm_a AS w,", paste(sprintf("(s.%s-g.%s) AS %s", x, mx, x), collapse = ","), join), ")")
-    H = dbglm_read_information(dbglm_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", within)), p)
-    raw = dbglm_read_information(dbglm_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "__dbglm_a"), collapse = ","), "FROM", working)), p)
+    H = dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", within)), p)
+    raw = dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "__dbglm_a"), collapse = ","), "FROM", working)), p)
     null = prediction_within_null(H, raw)
   }
   list(version = 1L, specification = list(design_names = design_names, design_center = unname(center),
@@ -94,14 +94,14 @@ prediction_database_lookup_one = function(conn, dictionary, data) {
     rows = seq.int(first, min(nrow(data), first + batch - 1L))
     requested = data.frame(i = as.numeric(rows))
     requested[keys] = lapply(values, function(value) value[rows])
-    values_sql = dbglm_values_sql(conn, requested, max_bytes = 2 * 1024^2, format = format)
+    values_sql = sql_values_frame(conn, requested, max_bytes = 2 * 1024^2, format = format)
     if (is.null(values_sql)) {
       stop("Prediction key batch exceeds the SQL transfer limit.", call. = FALSE)
     }
     source = paste0("(", values_sql, ") v")
     sql = paste0("SELECT v.i,", paste0("g.", fields, collapse = ","), " FROM ", source,
       " LEFT JOIN ", dictionary[["table"]], " g ON ", join, " ORDER BY v.i")
-    found = dbglm_get_query(conn, sql)
+    found = backend_get_query(conn, sql)
     if (nrow(found) != length(rows) || !identical(as.numeric(found[["i"]]), as.numeric(rows))) {
       stop("Prediction dictionary no longer has unique fitted keys.", call. = FALSE)
     }
@@ -141,6 +141,6 @@ prediction_within_null = function(H, raw) {
   H[, absorbed] = 0
   system = list(n = p + 1L, big = 1L, rest = 1L + seq_len(p), Dg = 1,
     Cm = matrix(0, 1L, p), E = H, diag = c(1, diag(raw)))
-  solver = dbglm_fe_solver(system, new.env(parent = emptyenv()), retain_null = TRUE)
+  solver = fe_solver(system, new.env(parent = emptyenv()), retain_null = TRUE)
   if (is.null(solver[["null_basis"]])) NULL else solver[["null_basis"]][-1L, , drop = FALSE]
 }

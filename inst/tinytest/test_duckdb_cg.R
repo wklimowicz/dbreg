@@ -30,7 +30,7 @@ library(fixest)
       ref_args$weights = ~w
     }
     got = do.call(dbreg, args)
-    ref = do.call(feols, ref_args)
+    ref = do.call(fixest::feols, ref_args)
     ref_names = sub("^I\\(I\\((.*)\\)\\)$", "I(\\1)", names(coef(ref)))
     order = match(names(coef(got)), ref_names)
     expect_true(!anyNA(order))
@@ -114,8 +114,8 @@ library(fixest)
   options(dbreg.duckdb_ap_method = "cg")
   multi = dbreg(y ~ x1 + x2 | fe1 + fe2 + fe3, conn = con,
     table = "cg_fixture", weights = "w", strategy = "demean")
-  ref = feols(y ~ x1 + x2 | fe1 + fe2 + fe3, data = dat, weights = ~w,
-    fixef.rm = "none", ssc = ssc(K.fixef = "full"))
+  ref = fixest::feols(y ~ x1 + x2 | fe1 + fe2 + fe3, data = dat, weights = ~w,
+    fixef.rm = "none", ssc = fixest::ssc(K.fixef = "full"))
   expect_identical(multi$ap_method, "row_tables")
   expect_equal(coef(multi), coef(ref), tolerance = 1e-6)
   expect_true(max(abs(vcov(multi) - unclass(vcov(ref)))) < 1e-6)

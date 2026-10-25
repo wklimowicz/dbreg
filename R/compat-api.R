@@ -54,6 +54,9 @@ compat_fit = function(estimator, fml, data, family, vcov, weights, offset, subse
     table = data
     data = NULL
   }
+  if (sum(!vapply(list(data, table, path), is.null, logical(1))) != 1L) {
+    stop("Specify exactly one data source: data, table or path.", call. = FALSE)
+  }
   source = compat_input_vectors(data, table, weights, offset, subset)
   normalized = dbglm_formula(fml)
   parsed = parse_regression_formula(normalized[["fml"]], allow_empty = TRUE, allow_i = TRUE)
@@ -66,6 +69,18 @@ compat_fit = function(estimator, fml, data, family, vcov, weights, offset, subse
     predicate = if (is.null(source[["subset"]])) TRUE else if (is.character(source[["subset"]])) as.name(source[["subset"]]) else source[["subset"]][[2L]]
     for (column in unique(unlist(request[["clusters"]]))) predicate = call("&",predicate,call("!",call("is.na",as.name(column))))
     source[["subset"]] = stats::as.formula(call("~",predicate), env = baseenv())
+  }
+  if (lean) {
+    needed = unique(c(all.vars(fml), source[["weights"]], source[["offset"]],
+      subset_variables(source[["subset"]]), row_id, unlist(request[["clusters"]])))
+    if (is.data.frame(source[["data"]])) {
+      absent = setdiff(needed, names(source[["data"]]))
+      if (length(absent)) stop("Source is missing columns: ", paste(absent, collapse = ", "), call. = FALSE)
+      source[["data"]] = source[["data"]][needed]
+    } else if (is.character(table) && !is.null(conn)) {
+      columns = as.character(DBI::dbQuoteIdentifier(conn, needed))
+      table = paste0("(SELECT ", paste(columns, collapse = ","), " FROM ", table, ") dbreg_lean_source")
+    }
   }
   gaussian_ols = estimator == "feols" && (length(normalized[["factors"]]) || length(normalized[["slopes"]]) || !length(parsed[["xvars"]]))
   if (gaussian_ols && strategy != "auto") stop("These OLS designs use the shared Gaussian projector; strategy must be auto.", call. = FALSE)

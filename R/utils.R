@@ -40,7 +40,9 @@ gen_coeftable = function(betahat, vcov_mat, df_residual) {
   names(coefs) = standardize_coef_names(rownames(betahat))
   ses = sqrt(Matrix::diag(vcov_mat))
   tstats = coefs / ses
-  pvals = 2 * pt(-abs(tstats), df_residual)
+  df = attr(vcov_mat, "df.t")
+  if (is.null(df)) df = df_residual
+  pvals = 2 * pt(-abs(tstats), df)
   cbind(estimate = coefs, std.error = ses, statistic = tstats, p.value = pvals)
 }
 
@@ -54,7 +56,8 @@ detect_collinearity = function(XtX, Xty, tol = 1e-10, verbose = FALSE) {
   p = ncol(XtX)
   var_names = colnames(XtX)
   
-  qr_decomp = qr(XtX, tol = tol)
+  scales = sqrt(pmax(as.numeric(Matrix::diag(XtX)), .Machine[["double.xmin"]]))
+  qr_decomp = qr(XtX / outer(scales, scales), tol = tol)
   rank = qr_decomp[["rank"]]
   
   if (rank < p) {
@@ -92,6 +95,9 @@ detect_collinearity = function(XtX, Xty, tol = 1e-10, verbose = FALSE) {
 #' Solve linear system using Cholesky with QR fallback
 #' @keywords internal
 solve_with_fallback = function(XtX, Xty) {
+  scales = sqrt(pmax(as.numeric(Matrix::diag(XtX)), .Machine[["double.xmin"]]))
+  XtX = XtX/outer(scales, scales)
+  Xty = Xty/scales
   Rch = tryCatch(chol(XtX), error = function(e) NULL)
   if (is.null(Rch)) {
     # Cholesky failed, use QR fallback
@@ -104,7 +110,7 @@ solve_with_fallback = function(XtX, Xty) {
     XtX_inv = chol2inv(Rch)
   }
   dimnames(XtX_inv) = dimnames(XtX)
-  list(betahat = betahat, XtX_inv = XtX_inv)
+  list(betahat = betahat/scales, XtX_inv = XtX_inv/outer(scales, scales))
 }
 
 
@@ -833,13 +839,6 @@ backend_supports_count_big = function(conn) {
   grepl("sql server|azure sql|microsoft sql server", dbms)
 }
 
-#' Detect SQL backend from connection
-#' 
-#' Returns backend name and capabilities for SQL dialect handling.
-#' 
-#' @param conn A DBI database connection object.
-#' @return List with `name` (character) and `supports_count_big` (logical).
-#' @keywords internal
 #' Backend metadata parser
 #'
 #' @param info A list returned by `DBI::dbGetInfo()`.
@@ -905,7 +904,7 @@ backend_info_from_metadata = function(
     "sqlserver"
   } else if (grepl("postgres", dbms)) {
     "postgres"
-  } else if (grepl("sqlite", dbms)) {
+  } else if (grepl("sqlite", dbms) || "SQLiteConnection" %in% connection_class) {
     "sqlite"
   } else if (grepl("mysql|mariadb", dbms)) {
     "mysql"
@@ -1167,9 +1166,11 @@ create_temp_table_as = function(conn, table_name, select_sql, backend) {
     sql = paste0(sql, ") AS __subq")
     dbExecute(conn, sql)
   } else if (backend == "spark") {
-    # Spark/Databricks: CREATE OR REPLACE TEMPORARY TABLE ... (session temp
-    # tables can linger across scopes, so replace rather than fail)
-    sql = glue("CREATE OR REPLACE TEMPORARY TABLE {table_name} AS {select_sql}")
+    # Databricks has session temporary tables. OSS Spark uses owned managed
+    # Parquet tables so repeated AP sweeps do not accumulate a lazy view plan.
+    sql = if (isTRUE(detect_backend(conn)[["is_databricks"]]))
+      glue("CREATE OR REPLACE TEMPORARY TABLE {table_name} AS {select_sql}") else
+      glue("CREATE TABLE {table_name} USING PARQUET AS {select_sql}")
     dbExecute(conn, sql)
   } else {
     # Standard SQL: CREATE TEMPORARY TABLE name AS SELECT ...
@@ -1190,7 +1191,8 @@ drop_table_if_exists = function(conn, table_name, backend) {
   if (backend == "sqlserver") {
     sql = glue("IF OBJECT_ID('tempdb..{table_name}') IS NOT NULL DROP TABLE {table_name}")
   } else if (backend == "spark") {
-    sql = glue("DROP TEMPORARY TABLE IF EXISTS {table_name}")
+    sql = if (isTRUE(detect_backend(conn)[["is_databricks"]])) glue("DROP TEMP TABLE IF EXISTS {table_name}") else
+      glue("DROP TABLE IF EXISTS {table_name}")
   } else {
     sql = glue("DROP TABLE IF EXISTS {table_name}")
   }

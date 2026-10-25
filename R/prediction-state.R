@@ -2,7 +2,7 @@
 # remain fit-owned and are released by the usual fitting resource manager.
 prediction_state_limit = function() {
   limit = getOption("dbreg.prediction_max_entries", 2e6)
-  dbglm_validate_moment_limits(limit, limit)
+  validate_moment_limits(limit, limit)
   limit
 }
 
@@ -60,7 +60,7 @@ prediction_key_fields = function(conn, components) {
 
 prediction_key_metadata = function(conn, retained, components) {
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
-  sql_types = dbglm_get_query(conn, paste0("SELECT ", paste0("typeof(", q(components), ") AS t", seq_along(components), collapse = ","),
+  sql_types = backend_get_query(conn, paste0("SELECT ", paste0("typeof(", q(components), ") AS t", seq_along(components), collapse = ","),
     " FROM ", retained, " LIMIT 1"))
   types = vapply(sql_types, function(type) {
     type = tolower(type[[1]])
@@ -85,7 +85,7 @@ prediction_fe_dictionary = function(conn, retained, fe, components, limit, publi
   }, character(1))
   max_rows = floor(limit / (length(components) + 1L))
   if (max_rows < 1L) prediction_state_overflow()
-  dictionary = dbglm_get_query(conn, paste0("SELECT DISTINCT ", fe, " AS id,", paste(fields, collapse = ","),
+  dictionary = backend_get_query(conn, paste0("SELECT DISTINCT ", fe, " AS id,", paste(fields, collapse = ","),
     " FROM ", retained, " ORDER BY id LIMIT ", sprintf("%.0f", max_rows + 1)))
   if (nrow(dictionary) > max_rows) prediction_state_overflow()
   keys = prediction_tuple_key(dictionary[paste0("k", seq_along(components))], types)
@@ -121,13 +121,14 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
                                   dictionary_components = components, beta = NULL,
                                   expected_rss = NULL, constant = 0) {
   limit = prediction_state_limit()
-  max_rows = getOption("dbreg.duckdb_ap_max_edges", 1e6)
-  dbglm_validate_moment_limits(max_rows, limit)
+  limits = projection_limits()
+  max_rows = limits[["summary_rows"]]
+  validate_moment_limits(max_rows, limit)
   used = 0
   bounded_query = function(sql, width) {
     remaining = min(max_rows - used, floor(limit / width))
     if (remaining < 1) prediction_state_overflow()
-    result = dbglm_get_query(conn, paste0(sql, " LIMIT ", sprintf("%.0f", remaining + 1)))
+    result = backend_get_query(conn, paste0(sql, " LIMIT ", sprintf("%.0f", remaining + 1)))
     if (nrow(result) > remaining) prediction_state_overflow()
     used = used + nrow(result)
     result
@@ -137,22 +138,27 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
     ops[[length(ops) + 1L]] = list(f = fe[i], v = variable, group = i,
       variable = names(trend_aliases)[match(variable, trend_aliases)])
   }
-  source = paste0("(", dbglm_sql(conn, paste0("SELECT * EXCLUDE(w), __dbglm_a AS w,",
+  source = paste0("(", backend_sql(conn, paste0("SELECT * EXCLUDE(w), __dbglm_a AS w,",
     "(eta-__dbglm_o) AS __dbglm_prediction_target FROM ", working)), ")")
   columns = c(x, "__dbglm_prediction_target")
   op_sizes = sizes[vapply(ops, `[[`, integer(1), "group")]
   total = sum(op_sizes) + length(x)
   rest = total - max(op_sizes)
-  if (!dbglm_fe_dense_feasible(c(op_sizes, rep(1, length(x)))) || total * max(1, rest, length(columns)) > limit) {
+  if (!fe_dense_feasible(c(op_sizes, rep(1, length(x))), length(columns), limits) || total * max(1, rest, length(columns)) > limit) {
     prediction_state_overflow()
   }
   if (length(fe) >= 2L && length(ops) == length(fe)) {
-    sql = dbglm_fe_moments_sql(conn, source, fe, dbglm_fe_value_terms(conn, columns),
-      limit = min(max_rows, floor(limit / (length(columns) + 4L))) + 1)
-    res = dbglm_read_fe_moments(conn, sql)
-    if (nrow(res) > min(max_rows, floor(limit / (length(columns) + 4L)))) prediction_state_overflow()
+    payload = sum(sizes)*length(columns)
+    # Recovery's transient sufficient statistics use the shared transfer budget;
+    # prediction_max_entries bounds the retained matrices and key dictionaries.
+    row_cap = min(max_rows, floor((limits[["transfer_cells"]] - payload)/5L) - 1L)
+    if (row_cap < 1L) prediction_state_overflow()
+    sql = fe_moments_sql(conn, source, fe, fe_value_terms(conn, columns),
+      limit = row_cap + 1, compact = TRUE)
+    res = read_fe_moments(conn, sql)
+    if (nrow(res) > row_cap) prediction_state_overflow()
     used = nrow(res)
-    moments = dbglm_unpack_fe_moments(res, length(fe), length(columns), 0L)
+    moments = unpack_fe_moments(res, length(fe), length(columns), 0L)
     if (is.null(moments)) prediction_state_overflow()
     info = moments[["info"]]
     sys = moments[["sys"]]
@@ -172,11 +178,11 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
       pairs[[length(pairs) + 1L]] = list(i = i, j = j, h = as.numeric(edge[["h"]]),
         ir = match(edge[["i"]], info[[i]][["id"]]), jr = match(edge[["j"]], info[[j]][["id"]]))
     }
-    sys = dbglm_fe_system(info, pairs)
+    sys = fe_system(info, pairs)
     if (is.null(sys)) prediction_state_overflow()
     B = do.call(rbind, lapply(info, function(group) as.matrix(group[paste0("b", seq_along(columns))])))
   }
-  global = dbglm_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(columns, "w"), collapse = ","), "FROM", source))
+  global = backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(columns, "w"), collapse = ","), "FROM", source))
   cross = dbglm_read_information(global, length(columns))
   p = length(x)
   fe_n = sys[["n"]]
@@ -192,23 +198,23 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
     sys[["diag"]] = c(sys[["diag"]], diag(cross)[seq_len(p)])
   }
   rhs = matrix(c(B[, p + 1L], if (p) cross[seq_len(p), p + 1L]), ncol = 1L)
-  solver = dbglm_fe_solver(sys, new.env(parent = emptyenv()), retain_null = TRUE)
+  solver = fe_solver(sys, new.env(parent = emptyenv()), retain_null = TRUE)
   if (is.null(beta)) {
     rhs = solver[["project"]](rhs)
     coefficients = solver[["solve"]](rhs)
     # Recover the fitted GLM predictor, independently of its fitting projector.
-    for (i in seq_len(3L)) coefficients = coefficients + solver[["solve"]](rhs - dbglm_fe_multiply(sys, coefficients))
+    for (i in seq_len(3L)) coefficients = coefficients + solver[["solve"]](rhs - fe_multiply(sys, coefficients))
   } else {
     # OLS already supplies its fitted slopes. Solve only the nuisance equations
     # for y-Xb, preserving those slopes and their original estimation strategy.
     if (length(beta) != p || any(!is.finite(beta)) || is.null(expected_rss)) {
       stop("OLS prediction recovery requires fitted slopes and residual sum of squares.", call. = FALSE)
     }
-    fe_solver = dbglm_fe_solver(fe_system, new.env(parent = emptyenv()))
+    fe_solver = fe_solver(fe_system, new.env(parent = emptyenv()))
     residual_rhs = matrix(B[, p + 1L] - B[, seq_len(p), drop = FALSE] %*% beta, ncol = 1L)
     residual_rhs = fe_solver[["project"]](residual_rhs)
     gamma = fe_solver[["solve"]](residual_rhs)
-    for (i in seq_len(3L)) gamma = gamma + fe_solver[["solve"]](residual_rhs - dbglm_fe_multiply(fe_system, gamma))
+    for (i in seq_len(3L)) gamma = gamma + fe_solver[["solve"]](residual_rhs - fe_multiply(fe_system, gamma))
     coefficients = matrix(c(gamma, beta), ncol = 1L)
   }
   if (any(!is.finite(coefficients))) stop("Prediction coefficient recovery is nonfinite.", call. = FALSE)
@@ -222,7 +228,7 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
   diagnostics = if (is.null(expected_rss)) paste0("MAX(ABS(", residual,
     ")) AS error,MAX(ABS(s.__dbglm_prediction_target)) AS scale") else
     paste0("FSUM(s.w*POWER(", residual, ",2)) AS rss")
-  error = dbglm_get_query(conn, paste0("WITH ", paste(ctes, collapse = ","), " SELECT ", diagnostics, " FROM ",
+  error = backend_get_query(conn, paste0("WITH ", paste(ctes, collapse = ","), " SELECT ", diagnostics, " FROM ",
     source, " s", paste(joins, collapse = "")))
   for (table in lookup[["tables"]]) drop(table)
   if (is.null(expected_rss)) {

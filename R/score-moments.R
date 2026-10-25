@@ -18,7 +18,7 @@ sql_score_moments = function(from_statement, score_sql, cluster_sql = character(
 }
 
 score_moments = function(conn, from_statement, score_sql, cluster_sql = character(), projection = NULL) {
-  row = dbglm_get_query(conn, sql_score_moments(from_statement, score_sql, cluster_sql, projection))
+  row = backend_get_query(conn, sql_score_moments(from_statement, score_sql, cluster_sql, projection))
   if (nrow(row) != 1L) stop("Score moment aggregation must return one row.", call. = FALSE)
   list(matrix = dbglm_read_information(lapply(row, as.numeric), length(score_sql)), groups = as.numeric(row[["n_groups"]]))
 }

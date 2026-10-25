@@ -117,12 +117,12 @@ clustered standard errors (e.g., \code{~cluster_var}).}
 \item{level}{Numeric in the range \verb{[0,1]}, giving the confidence level for
 the confidence levels and/or bands. Default is \code{0.95}.}
 
-\item{nsims}{Number of simulation draws for confidence band computation.
+\item{nsims}{Integer of at least two giving the number of simulation draws for confidence band computation.
 Default is 500. Only used when \code{cb = TRUE}.}
 
-\item{strategy}{Acceleration strategy passed to \code{\link{dbreg}}. Only
-\code{"compress"} is currently supported; \code{"auto"} (the default) maps to
-\code{"compress"}. Included for API consistency with \code{\link{dbreg}}.
+\item{strategy}{Acceleration strategy passed to \code{\link{dbreg}}.
+\code{"auto"} (the default) selects a strategy from the bin design's cardinality;
+\code{"compress"} explicitly requests cell aggregation.
 Ignored when smoothness \code{s > 0}, since spline basis construction requires
 row-level data (i.e., no pre-aggregation).}
 
@@ -210,8 +210,8 @@ derivatives up to order \eqn{s-1}) at bin boundaries. For example, \code{c(1,1)}
 gives a piecewise linear fit that is continuous; \code{c(2,2)} gives a piecewise
 quadratic with continuous first derivatives.
 
-\strong{Important:} Unlike \code{s = 0} (which uses the \code{"compress"} strategy for fast
-aggregation), \code{s > 0} requires row-level spline basis construction and can
+\strong{Important:} Unlike \code{s = 0} (which constructs its bin basis in SQL),
+\code{s > 0} requires row-level spline basis construction and can
 be very slow on large datasets. As a result, \code{dbbinsreg} re-uses the
 random sample (used to compute the bin boundaries) for estimating the spline
 fits in these cases, ensuring much faster computation at the cost of reduced
@@ -232,17 +232,17 @@ sup-\eqn{t} procedure:
 \item Use the (\eqn{1-\alpha}) quantile of these suprema as the critical value
 }
 
-The confidence band is wider than pointwise CIs and provides simultaneous
-coverage: with (\eqn{1-\alpha}) probability, the entire true function lies
-within the band. This is useful for making statements about the overall shape
-of the relationship rather than individual point estimates.
+Pointwise CIs use the fitted covariance's testing degrees of freedom.
+Bands use asymptotic Gaussian simulation of the fitted values at bin means,
+including the polynomial terms. Their simultaneous coverage applies to these
+evaluation points under that approximation. Bands can be requested with
+\code{ci = FALSE}.
 
 There are two important caveats, regarding \code{dbbinsreg}'s CB support:
 \itemize{
 \item Unlike \code{\link[binsreg]{binsreg}}, which evaluates CB on a fine
 grid within each bin, \code{dbbinsreg} computes CB only at bin means (same points
-as CI). This is much simpler for our backend SQL implementation and should be
-sufficient for most applications.
+as CI).
 \item CBs are currently only supported for unconstrained estimation (smoothness
 \code{s = 0}). When \code{cb = TRUE} with \code{s > 0}, a warning is issued and CB is skipped.
 }

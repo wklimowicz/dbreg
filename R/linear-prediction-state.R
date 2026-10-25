@@ -29,7 +29,7 @@ finalize_linear_prediction = function(result, inputs) {
     paste0("AVG(CAST(", q(inputs[["yvar"]]), " AS DOUBLE)) AS y_center"),
     sprintf("AVG(CAST((%s) AS DOUBLE)) AS center%d", design[["select_exprs"]], seq_along(x)),
     sprintf("COUNT(DISTINCT %s) AS size%d", fe, seq_along(fe)))
-  row = dbglm_get_query(conn, paste("SELECT", paste(summary_terms, collapse = ","), "FROM", ranked))
+  row = backend_get_query(conn, paste("SELECT", paste(summary_terms, collapse = ","), "FROM", ranked))
   n = as.numeric(row[["n"]])
   if (n != result[["nobs_orig"]]) stop("The OLS sample changed before prediction recovery.", call. = FALSE)
   center = vapply(seq_along(x), function(i) as.numeric(row[[paste0("center", i)]]), numeric(1))
@@ -45,8 +45,8 @@ finalize_linear_prediction = function(result, inputs) {
     paste0("CAST(", weights, " AS DOUBLE)/(", dbglm_number(weight_scale), ") AS __dbglm_a"),
     "CAST(1.0 AS DOUBLE) AS w",
     sprintf("(CAST((%s) AS DOUBLE)-(%s)) AS %s", design[["select_exprs"]], dbglm_number(center), x))
-  frame = paste0("(", dbglm_sql(conn, paste("SELECT", paste(fields, collapse = ","), "FROM", ranked)), ")")
-  manager = dbglm_table_manager(conn, inputs[["sample_resources"]])
+  frame = paste0("(", backend_sql(conn, paste("SELECT", paste(fields, collapse = ","), "FROM", ranked)), ")")
+  manager = fit_table_manager(conn, inputs[["sample_resources"]])
   public_components = lapply(components, restore_names, map = inputs[["source_map"]])
   result[["fitted_state"]] = build_prediction_state(conn, frame, frame, fe, public_components,
     x, design_names, center, character(), sizes, manager[["create"]], manager[["drop"]], n,

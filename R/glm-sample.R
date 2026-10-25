@@ -82,7 +82,7 @@ dbglm_prune = function(conn, table, fe, y, mode, create, drop, family = "binomia
       paste(joins, collapse = ""), ")")
     condition = switch(mode, perfect_fit = paste0("(", flags[[1L]], " OR ", flags[[2L]], ")"),
       singletons = flags[[1L]], infinite_coef = flags[[2L]])
-    info = dbglm_get_query(conn, paste0("SELECT COUNT(*) FILTER (WHERE ", condition, ") AS removed, ",
+    info = backend_get_query(conn, paste0("SELECT COUNT(*) FILTER (WHERE ", condition, ") AS removed, ",
       "COUNT(*) FILTER (WHERE ", condition, " AND ", flags[[1L]], ") AS single FROM ", flagged, " __dbglm_f"))
     if (info[["removed"]] == 0) break
     counts = counts + c(singleton = as.numeric(info[["single"]]), infinite_coef = as.numeric(info[["removed"]] - info[["single"]]))
@@ -101,7 +101,7 @@ dbglm_prune = function(conn, table, fe, y, mode, create, drop, family = "binomia
 dbglm_fe_counts = function(conn, table, fe, p, kind, ssc, fe_names = NULL, cluster_var = NULL, sizes = NULL) {
   if (!length(fe)) return(list(model = p, covariance = p, sizes = integer(), nested = logical()))
   if (is.null(sizes)) {
-    size_row = dbglm_get_query(conn, paste("SELECT",
+    size_row = backend_get_query(conn, paste("SELECT",
       paste(sprintf("COUNT(DISTINCT %s) AS n%d", fe, seq_along(fe)), collapse = ", "),
       "FROM", table))
     sizes = vapply(size_row, as.numeric, numeric(1))
@@ -116,7 +116,7 @@ dbglm_fe_counts = function(conn, table, fe, p, kind, ssc, fe_names = NULL, clust
       paste0("SELECT ", i, " AS idx, MAX(n) AS max_n FROM (SELECT COUNT(DISTINCT __dbglm_cluster) AS n FROM ",
         table, " GROUP BY ", fe[i], ") t")
     }, character(1))
-    nest_df = dbglm_get_query(conn, paste(nest_queries, collapse = " UNION ALL "))
+    nest_df = backend_get_query(conn, paste(nest_queries, collapse = " UNION ALL "))
     nested[nest_df[["idx"]]] = (nest_df[["max_n"]] == 1)
   }
   K = model

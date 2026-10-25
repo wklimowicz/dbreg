@@ -1,7 +1,7 @@
 # Translate only generated SQL tokens, preserving quoted source identifiers and
 # literals. DuckDB retains its compensated aggregates; Spark uses double SUM.
-dbglm_sql = function(conn, sql) {
-  if (!isTRUE(detect_backend(conn)[["is_databricks"]])) return(sql)
+backend_sql = function(conn, sql) {
+  if (!identical(detect_backend(conn)[["name"]], "spark")) return(sql)
   # Consume quoted runs in chunks, without backtracking over each character.
   # FE coefficient lookups can contain megabytes of base64 in one literal;
   # character-by-character alternatives exhaust PCRE's match limit there.
@@ -38,8 +38,8 @@ dbglm_sql = function(conn, sql) {
 # noise exceeds the line-search deviance tolerance and the score tolerance
 # (sum(x*score) cancels heavily). Fixed-point DECIMAL addition is exact, so
 # these sums no longer depend on summation order.
-dbglm_exact_sum = function(conn, expr) {
-  if (!isTRUE(detect_backend(conn)[["is_databricks"]])) return(sprintf("FSUM(%s)", expr))
+sql_stable_sum = function(conn, expr) {
+  if (!identical(detect_backend(conn)[["name"]], "spark")) return(sprintf("FSUM(%s)", expr))
   ok = sprintf("isfinite(%1$s) AND ABS(%1$s) < 1e10", paste0("(", expr, ")"))
   # DECIMAL(38,18) stabilizes distributed cancellation but rounds very small
   # scores to zero. When every term is small, ordinary double aggregation
@@ -49,14 +49,13 @@ dbglm_exact_sum = function(conn, expr) {
     "CAST(SUM(CAST(CASE WHEN %1$s THEN (%2$s) END AS DECIMAL(38,18))) AS DOUBLE) ELSE SUM(%2$s) END)"), ok, expr)
 }
 
-dbglm_deviance_term = function(conn) paste(dbglm_exact_sum(conn, "dev"), "AS deviance")
 
-dbglm_get_query = function(conn, sql) DBI::dbGetQuery(conn, dbglm_sql(conn, sql))
+backend_get_query = function(conn, sql) DBI::dbGetQuery(conn, backend_sql(conn, sql))
 
 # Bounded lookup literals hold FE coefficients or requested prediction keys,
 # never training observation state. A size limit bounds SQL text. The caller
 # owns materialization and cleanup just as for every other projector state.
-dbglm_values_sql = function(conn, frame, max_bytes = 8 * 1024^2,
+sql_values_frame = function(conn, frame, max_bytes = 8 * 1024^2,
                              format = getOption("dbreg.glm_databricks_lookup", "json")) {
   if (!nrow(frame)) stop("A coefficient lookup cannot be empty.", call. = FALSE)
   if (!is.character(format) || length(format) != 1 || !format %in% c("json", "values")) {
@@ -93,19 +92,4 @@ dbglm_values_sql = function(conn, frame, max_bytes = 8 * 1024^2,
   if (sum(nchar(rows, type = "bytes")) + 3 * nrow(frame) > max_bytes) return(NULL)
   names = paste(DBI::dbQuoteIdentifier(conn, names(frame)), collapse = ",")
   paste0("SELECT * FROM VALUES ", paste0("(", rows, ")", collapse = ","), " AS lookup(", names, ")")
-}
-
-dbglm_saturated_loglik = function(conn, base) {
-  if (!isTRUE(detect_backend(conn)[["is_databricks"]])) return(dbglm_get_query(conn, paste0(
-    "SELECT FSUM(__dbglm_a*(CASE WHEN __dbglm_y=0 THEN 0.0 ELSE ",
-    "__dbglm_y*LN(__dbglm_y)-__dbglm_y-lgamma(__dbglm_y+1) END)) AS ll FROM ", base))[["ll"]])
-  # Databricks has no lgamma builtin. A bounded count histogram is sufficient
-  # for the likelihood constant, with R's canonical lgamma evaluation.
-  n = dbglm_get_query(conn, paste("SELECT COUNT(DISTINCT __dbglm_y) AS n FROM", base))[["n"]]
-  if (n > 1e6) stop("Poisson count histogram exceeds the likelihood transfer limit.", call. = FALSE)
-  h = dbglm_get_query(conn, paste("SELECT __dbglm_y AS y,SUM(__dbglm_a) AS a FROM", base, "GROUP BY __dbglm_y"))
-  value = numeric(nrow(h))
-  positive = h[["y"]] > 0
-  value[positive] = h[["y"]][positive] * log(h[["y"]][positive]) - h[["y"]][positive] - lgamma(h[["y"]][positive] + 1)
-  sum(h[["a"]] * value)
 }

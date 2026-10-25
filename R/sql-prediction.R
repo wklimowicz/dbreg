@@ -35,8 +35,8 @@ predict_sql = function(object, newdata, conn, table, path, row_id, prediction_ta
     newdata = incoming[["data"]]
     labels = incoming[["labels"]]
   }
-  resources = dbglm_resources()
-  on.exit(dbglm_release_resources(resources), add = TRUE)
+  resources = fit_resources()
+  on.exit(release_fit_resources(resources), add = TRUE)
   if (database) resources[["retained_session"]] = object[["resource_state"]][["session"]]
   # Upload incoming R values as typed text on both engines. This also avoids
   # bigint="numeric" registrations reinterpreting integer64 storage bits.
@@ -68,7 +68,7 @@ predict_sql = function(object, newdata, conn, table, path, row_id, prediction_ta
   create = function(query) {
     name = basename(tempfile("dbreg_prediction_"))
     resources[["tables"]] = c(resources[["tables"]], name)
-    DBI::dbExecute(conn, sql_sample_table(conn, name, dbglm_sql(conn, query), c(row_id, prediction)))
+    DBI::dbExecute(conn, sql_sample_table(conn, name, backend_sql(conn, query), c(row_id, prediction)))
     name
   }
   output = create(query)
@@ -109,24 +109,28 @@ collect_sql_prediction = function(x, n = NULL) {
   conn = fitted_resource_connection(x[["resource_state"]])
   q = function(value) as.character(DBI::dbQuoteIdentifier(conn, value))
   from = paste("FROM", q(x[["table"]]), if (!is.null(n)) paste("LIMIT", format(n, scientific = FALSE)) else "")
-  output = DBI::dbGetQuery(conn, paste("SELECT *", from))
-  if (!nrow(output)) return(output)
+  # Inspect types before collection so exact keys are cast in the first fetch.
+  schema = DBI::dbGetQuery(conn, paste("SELECT * FROM", q(x[["table"]]), "LIMIT 0"))
   keys = x[["row_id"]]
   types = DBI::dbGetQuery(conn, paste("SELECT", paste0("typeof(", q(keys), ") AS t", seq_along(keys), collapse = ","), "FROM", q(x[["table"]]), "LIMIT 1"))
+  if (!nrow(types)) return(schema)
   exact_text = vapply(seq_along(keys), function(i) {
     type = tolower(types[[i]][[1L]])
-    value = output[[keys[[i]]]]
-    startsWith(type, "decimal") || (prediction_sql_kind(type) == "integer" &&
-      is.numeric(value) && !inherits(value, "integer64") && any(abs(value) >= 2^53, na.rm = TRUE))
+    if (startsWith(type, "decimal")) return(TRUE)
+    value = schema[[keys[[i]]]]
+    if (prediction_sql_kind(type) != "integer" || !is.numeric(value) || inherits(value, "integer64")) return(FALSE)
+    range = DBI::dbGetQuery(conn, paste0("SELECT MAX(ABS(CAST(", q(keys[[i]]), " AS DOUBLE))) AS maximum FROM (SELECT ",
+      q(keys[[i]]), " ", from, ") dbreg_key_range"))[["maximum"]]
+    isTRUE(as.numeric(range) >= 2^53)
   }, logical(1))
+  fields = names(schema)
+  select = q(fields)
   if (any(exact_text)) {
-    fields = names(output)
     text = if (isTRUE(detect_backend(conn)[["is_databricks"]])) "STRING" else "VARCHAR"
-    select = q(fields)
     index = match(keys[exact_text], fields)
     select[index] = paste0("CAST(", q(fields[index]), " AS ", text, ") AS ", q(fields[index]))
-    output = DBI::dbGetQuery(conn, paste("SELECT", paste(select, collapse = ","), from))
   }
+  output = DBI::dbGetQuery(conn, paste("SELECT", paste(select, collapse = ","), from))
   output
 }
 

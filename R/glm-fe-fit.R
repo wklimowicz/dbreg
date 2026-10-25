@@ -1,15 +1,16 @@
 # Fisher-scoring IRLS with absorbed fixed effects.
 dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, verbose, cache = NULL, ybar = NULL, vcov_type = "iid") {
-  if (is.null(ybar)) ybar = dbglm_get_query(conn, paste("SELECT SUM(__dbglm_a*__dbglm_y)/SUM(__dbglm_a) AS y FROM", base))[["y"]]
+  if (is.null(ybar)) ybar = backend_get_query(conn, paste("SELECT SUM(__dbglm_a*__dbglm_y)/SUM(__dbglm_a) AS y FROM", base))[["y"]]
   intercept = family[["linkfun"]](ybar)
   slopes = attr(fe, "slopes")
   if (is.null(cache)) cache = new.env(parent = emptyenv())
-  if (length(fe) > 1L) dbglm_moments_enabled(conn, base, fe, control, cache)
+  if (length(fe) > 1L) dbglm_moments_enabled(conn, base, fe, control, cache, length(x)+1L)
   use_moments = length(fe) > 1L && isTRUE(cache[["moment_enabled"]])
   collect_fe_moments = use_moments && !length(unlist(slopes))
   evaluate_working = function(table, collect = FALSE) {
     bound = if (identical(cache[["moment_fe"]], as.character(fe))) cache[["moment_rows"]] else NULL
-    dbglm_fe_evaluate(conn, table, x, fe, collect_fe_moments = collect, moment_rows = bound)
+    dbglm_fe_evaluate(conn, table, x, fe, collect_fe_moments = collect, moment_rows = bound,
+      fe_sizes = cache[["fe_sizes"]], limits = cache[["projection_limits"]])
   }
   build_state = dbglm_fe_state_builder(conn, base, x, family[["link"]], create)
   make_working = function(beta_val, c_eta_val, gamma_val = NULL, ops = NULL, info = NULL) {
@@ -38,6 +39,8 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
     initial_halvings = initial_halvings + 1L
   }
   if (collect_fe_moments && is.null(current[["fe_moments"]])) {
+    record_projection_attempt(cache, list(method = "bounded_moments", status = "declined", reason = "transfer_limit",
+      details = list(limits = cache[["projection_limits"]])))
     cache[["moment_enabled"]] = FALSE
     use_moments = FALSE
     collect_fe_moments = FALSE
@@ -65,7 +68,7 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
         b_step = as.numeric(M_tilde[seq_len(p), p + 1L])
         candidate = dbglm_solve(H_step, b_step)[["beta"]]
       } else {
-        row = dbglm_get_query(conn, paste("SELECT", paste(c(dbglm_moment_terms(x, "w"), sprintf("SUM(w*%s*z) AS b_%d", x, seq_along(x))), collapse = ","), "FROM", projected[["table"]]))
+        row = backend_get_query(conn, paste("SELECT", paste(c(dbglm_moment_terms(x, "w"), sprintf("SUM(w*%s*z) AS b_%d", x, seq_along(x))), collapse = ","), "FROM", projected[["table"]]))
         candidate = dbglm_solve(dbglm_read_information(row, p), vapply(seq_len(p), function(i) as.numeric(row[[paste0("b_", i)]]), numeric(1)))[["beta"]]
       }
     } else candidate = numeric()
@@ -167,7 +170,7 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
         need_table = !use_moments || (p > 0L && (vcov_type != "iid" || isTRUE(cache[["retain_scores"]]))), precomputed = current[["fe_moments"]])
       H = if (p) {
         if (!is.null(final[["cross_reduction"]])) current[["raw_moments"]][seq_len(p), seq_len(p), drop = FALSE] - final[["cross_reduction"]] else
-          dbglm_read_information(dbglm_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", final[["table"]])), p)
+          dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", final[["table"]])), p)
       } else matrix(numeric(), 0, 0)
       total_cycles = total_cycles + final[["cycles"]]
       profiled_score = 0
@@ -176,7 +179,7 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
         if (!is.null(final[["extra_reduction"]])) {
           s_tilde = current[["raw_score"]] - final[["extra_reduction"]][, 1L]
         } else {
-          score_row = dbglm_get_query(conn, paste0("SELECT ", paste(sprintf("%s AS s%d", vapply(sprintf("p.%s*b.score", x), function(e) dbglm_exact_sum(conn, e), character(1)), seq_along(x)), collapse = ","),
+          score_row = backend_get_query(conn, paste0("SELECT ", paste(sprintf("%s AS s%d", vapply(sprintf("p.%s*b.score", x), function(e) sql_stable_sum(conn, e), character(1)), seq_along(x)), collapse = ","),
             " FROM ", working, " b JOIN ", final[["table"]], " p USING (__dbglm_key)"))
           s_tilde = as.numeric(score_row[1, ])
         }

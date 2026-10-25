@@ -194,10 +194,19 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   normalized = dbglm_formula(fml)
   # Replace only display names; fitted SQL/R design continues to use aliases.
   display = function(names) {
-    for (a in names(normalized[["factors"]])) names = gsub(a, paste0("factor(", normalized[["factors"]][[a]], ")"), names, fixed = TRUE)
+    names = as.character(names)
+    i_columns = rep(FALSE,length(names))
+    for (a in normalized[["i_aliases"]]) {
+      selected = startsWith(names,paste0(a,"::"))
+      i_columns = i_columns | selected
+      names[selected] = paste0(normalized[["factor_display"]][[a]],substring(names[selected],nchar(a)+1L))
+    }
+    for (a in setdiff(names(normalized[["factors"]]),normalized[["i_aliases"]])) {
+      names[!i_columns] = gsub(a, normalized[["factor_display"]][[a]], names[!i_columns], fixed = TRUE)
+    }
     names
   }
-  parsed = parse_regression_formula(normalized[["fml"]], allow_empty = TRUE)
+  parsed = parse_regression_formula(normalized[["fml"]], allow_empty = TRUE, allow_i = TRUE)
   unique_fe = !duplicated(parsed[["fe_labels"]])
   parsed[["fe"]] = parsed[["fe"]][unique_fe]
   parsed[["fe_labels"]] = parsed[["fe_labels"]][unique_fe]
@@ -332,7 +341,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     family[["family"]] == "binomial" && sample[["ymin"]] == sample[["ymax"]])) {
     stop("Constant outcome with an intercept has no finite ", family[["family"]], " solution.", call. = FALSE)
   }
-  for (a in names(normalized[["factors"]])) {
+  for (a in setdiff(names(normalized[["factors"]]),normalized[["i_aliases"]])) {
     source = normalized[["factors"]][[a]]
     ref = if (source %in% names(factor_refs)) factor_refs[[source]] else dbglm_get_query(conn,
       paste("SELECT", a, from, "GROUP BY", a, "ORDER BY", a, "LIMIT 1"))[[1]][1]
@@ -347,12 +356,13 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     pure = dbglm_get_query(conn, paste0("SELECT COUNT(*) AS n FROM (", paste(pure_queries, collapse = " UNION ALL "), ") t"))[["n"]]
     if (pure) stop("GLM fixed-effect separation remains under fixef_rm='", fixef_rm, "'; no finite solution.", call. = FALSE)
   }
-  spec = build_model_spec(parsed[["fml"]], conn, from, factor_refs = factor_refs, reserved_names = variables)
-  if (!has_intercept && length(spec[["factor_levels"]])) {
+  spec = build_model_spec(parsed[["fml"]], conn, from, factor_refs = factor_refs, reserved_names = variables, absorbed = length(fe)>0L)
+  if (!has_intercept && length(setdiff(names(spec[["factor_levels"]]),names(spec[["i_specs"]])))) {
     stop("Categorical no-intercept designs are not implemented yet.", call. = FALSE)
   }
   has_intercept = has_intercept && !length(fe)
   public = c(if (has_intercept) "(Intercept)", spec[["columns"]][["name"]])
+  if (anyDuplicated(display(public))) stop("Formula terms produce duplicate public coefficient names.",call.=FALSE)
   x = c(if (has_intercept) "__dbglm_intercept", spec[["columns"]][["alias"]])
   if (!length(x) && !length(fe)) stop("No GLM design columns were specified.", call. = FALSE)
   prediction_keys = if (retain_prediction(retain) && length(fe)) prediction_key_fields(conn, parsed[["fe_components"]]) else

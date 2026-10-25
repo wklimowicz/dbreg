@@ -32,8 +32,9 @@ sql_factor_literals = function(conn, levels, classes = character()) {
     value = sql_value_literals(conn, levels[[name]])
     # Spark's stacked category query returns exact integer text. Restore the
     # numeric SQL type explicitly so comparison never promotes BIGINT to double.
-    if (identical(unname(classes[name]), "integer64") && is.character(levels[[name]])) {
-      value = paste0("CAST(", value, " AS BIGINT)")
+    if (is.character(levels[[name]])) {
+      type = switch(unname(classes[name]),integer64="BIGINT",integer="DOUBLE",numeric="DOUBLE",logical="BOOLEAN",Date="DATE",NULL)
+      if (!is.null(type)) value = paste0("CAST(", value, " AS ",type,")")
     }
     value
   })

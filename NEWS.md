@@ -1,5 +1,13 @@
 # Fixest compatibility (development branch)
 
+- Added supported additive `i()` indicators/numeric group slopes with fitted
+  references and literal `ref`/`keep` controls. Bounded typed dictionaries drive
+  R/SQL prediction, preserving large integer and adjacent-double categories.
+  Malformed/unseen keys and ambiguous public names fail explicitly. OLS designs
+  using the shared Gaussian projector report OLS; native strategy defaults stay
+  unchanged, and compatibility adapters reject the native Mundlak alternative.
+- Added a support/difference table and executable R/SQL lifecycle examples.
+
 - Shared SQL Boolean literals now use `TRUE`/`FALSE`, avoiding native ODBC
   numeric quoting in subset/cluster predicates. Exported SSC policies use the
   reference `ssc_type` class for direct fixest interoperability.

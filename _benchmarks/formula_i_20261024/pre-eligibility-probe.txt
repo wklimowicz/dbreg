@@ -1,0 +1,8 @@
+ℹ Loading dbreg
+[1]        NA        NA 0.5757971
+Error : newdata contains unseen i() levels.
+[1] "Error : newdata contains unseen i() levels.\n"
+attr(,"class")
+[1] "try-error"
+attr(,"condition")
+<simpleError: newdata contains unseen i() levels.>

@@ -1,0 +1,4 @@
+"mode","assertions","failures","elapsed_seconds","error"
+"full",0,1,37.7504937648773,"<text>:1:2: unexpected input
+1: __
+     ^"

@@ -1,0 +1,42 @@
+ℹ Loading dbreg
+Failed to connect to system scope bus via local transport: Operation not permitted (consider using --machine=<user>@.host --user to connect to bus of other user)
+Warning message:
+In system("timedatectl", intern = TRUE) :
+  running command 'timedatectl' had status 1
+[1] 0
+Constructing traceable class “nonstandardGenericFunctionWithTrace”
+Environment of class “nonstandardGenericFunction” is locked; using global environment for new class
+Tracing function "dbGetQuery" in package "namespace:DBI"
+[1] "dbGetQuery"
+Tracing function "dbExecute" in package "namespace:DBI"
+[1] "dbExecute"
+baseline repetition 0: 0.606s
+baseline repetition 1: 0.104s
+baseline repetition 2: 0.1s
+baseline repetition 3: 0.103s
+Untracing function "dbGetQuery" in package "namespace:DBI"
+Untracing function "dbExecute" in package "namespace:DBI"
+[1] 0
+	Command being timed: "Rscript _benchmarks/formula_i_20261024/large-fit.R /tmp/dbreg-two-fe-prediction-perf.duckdb baseline"
+	User time (seconds): 4.34
+	System time (seconds): 0.33
+	Percent of CPU this job got: 110%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:04.25
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 390308
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 125365
+	Voluntary context switches: 132
+	Involuntary context switches: 99
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 96
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

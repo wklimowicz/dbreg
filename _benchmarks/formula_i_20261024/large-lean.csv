@@ -1,0 +1,4 @@
+"repetition","mode","elapsed","fit_read_calls","fit_execute_calls","max_rows","query_object_bytes","model_object_bytes","rss_after_close_kib"
+1,"lean",1.577,12,10,3,21664,88048,744816
+2,"lean",0.74,12,10,3,21664,88048,837584
+3,"lean",0.715,12,10,3,21664,88048,842168

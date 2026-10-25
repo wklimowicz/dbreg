@@ -5,7 +5,49 @@ task **“Make dbreg a drop-in replacement for fixest OLS and GLM regression cal
 (`6hqR4rv693M8FH44`). It describes the full target, existing foundations, work
 already started, remaining implementation, and acceptance tests.
 
-## 0. Continuation checkpoint — latest status
+## Final supported scope — 2026-10-24 23:58 UTC
+
+The supported regression subset is implemented. Current source passes **5,418
+full local assertions**. Actual native Databricks passes **120 formula/prediction
+checks and 118 adapter checks**, with zero failures. Four additional current-source
+preflight checks prove that unsupported `i()` interactions reject an unusable
+connection before database setup. Native source precedes only that final guard
+and two local-only regressions; `audit-source.R` verifies the exact delta and all
+archived sources. The guard changes no supported native model calculation.
+
+The implementation includes fixest-shaped OLS/GLM entry points; fractional weights,
+offsets and restricted subsets; sample/pruning identities; supported `i()` and
+varying-slope formulas; learned-FE R/SQL prediction; retained-sample post-fit
+inference; two-way OLS clustering; extraction/default conventions; and resource
+lifetime/serialization contracts. Native compact defaults and ordinary OLS fast
+strategies remain available. Mundlak stays a native alternative and is rejected
+by the exact compatibility adapter.
+
+The support/difference table is in [the introduction](vignettes/intro.qmd), with
+an [installed contract](inst/FIXEST-COMPATIBILITY.txt) and
+[executable example](inst/examples/fixest-compatibility.R). Explicit boundaries
+include categorical/binning/interactive `i()` forms, slope-only FEs, external new
+cluster mappings, arbitrary R expressions, unrelated fixest consumers and
+oversized three-or-more-FE/varying-slope prediction recovery. These are declared
+limits of the replacement subset. The separate compact wide-AP-transfer TODO
+is unchanged.
+
+The final million-row three-level-factor fixture takes median
+**0.103s native compact,
+0.740s adapter lean and
+0.762s adapter full**, with at most three
+rows returned per query. Shared-Gaussian `i()` OLS and full row retention have a
+substantial cost for simple models. Peak RSS includes embedded DuckDB, and small
+returned R objects do not imply small total memory. Full measurements, repeated
+cleanup checks and limitations are in
+[`_benchmarks/formula_i_20261024/results.txt`](_benchmarks/formula_i_20261024/results.txt).
+
+Next is draft-PR review against `wklimowicz/dbreg:wojtek-dev` and CI. Final
+package check has zero errors/warnings and the existing optional `binsreg`
+cross-reference NOTE; its complete log is recorded with that evidence. The continuation checkpoints
+below are historical; their remaining-work lists no longer describe current scope.
+
+## 0. Continuation checkpoints — historical status
 
 The fractional-weight increment has completed local and actual native Databricks
 validation: **710 assertions on each engine, zero failures**. Its full local

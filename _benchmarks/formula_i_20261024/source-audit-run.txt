@@ -1,0 +1,59 @@
+                                                                                             verified
+manifest                                                                                      archived
+  _benchmarks/formula_i_20261024/large-baseline-source-md5.csv                                       0
+  _benchmarks/formula_i_20261024/large-full-source-md5.csv                                           0
+  _benchmarks/formula_i_20261024/large-lean-source-md5.csv                                           0
+  _benchmarks/formula_i_20261024/local-absorbed-final/full-source-md5.csv                            8
+  _benchmarks/formula_i_20261024/local-acceptance/full-source-md5.csv                                2
+  _benchmarks/formula_i_20261024/local-final-gate/full-source-md5.csv                                5
+  _benchmarks/formula_i_20261024/local-final-preflight/full-source-md5.csv                           0
+  _benchmarks/formula_i_20261024/local-final/full-source-md5.csv                                     9
+  _benchmarks/formula_i_20261024/local-frozen/full-source-md5.csv                                    6
+  _benchmarks/formula_i_20261024/local-release/full-source-md5.csv                                   7
+  _benchmarks/formula_i_20261024/local/full-source-md5.csv                                           9
+  _benchmarks/formula_i_20261024/native-acceptance/source-md5.csv                                    2
+  _benchmarks/formula_i_20261024/native-final/source-md5.csv                                         5
+  _benchmarks/formula_i_20261024/native/source-md5.csv                                               9
+  _benchmarks/formula_i_20261024/performance-before-counts/large-baseline-source-md5.csv             3
+  _benchmarks/formula_i_20261024/performance-before-counts/large-full-source-md5.csv                 3
+  _benchmarks/formula_i_20261024/performance-before-counts/large-lean-source-md5.csv                 3
+  _benchmarks/formula_i_20261024/performance-before-eligibility/large-baseline-source-md5.csv        3
+  _benchmarks/formula_i_20261024/performance-before-eligibility/large-full-source-md5.csv            3
+  _benchmarks/formula_i_20261024/performance-before-eligibility/large-lean-source-md5.csv            3
+  _benchmarks/formula_i_20261024/performance-initial/large-baseline-source-md5.csv                   6
+  _benchmarks/formula_i_20261024/performance-initial/large-full-source-md5.csv                       6
+  _benchmarks/formula_i_20261024/performance-initial/large-lean-source-md5.csv                       6
+  _benchmarks/formula_i_20261024/performance-pre-additive-guard/large-baseline-source-md5.csv        1
+  _benchmarks/formula_i_20261024/performance-pre-additive-guard/large-full-source-md5.csv            1
+  _benchmarks/formula_i_20261024/performance-pre-additive-guard/large-lean-source-md5.csv            1
+  _benchmarks/formula_i_20261024/preflight/source-md5.csv                                            0
+                                                                                             verified
+manifest                                                                                      current
+  _benchmarks/formula_i_20261024/large-baseline-source-md5.csv                                     68
+  _benchmarks/formula_i_20261024/large-full-source-md5.csv                                         68
+  _benchmarks/formula_i_20261024/large-lean-source-md5.csv                                         68
+  _benchmarks/formula_i_20261024/local-absorbed-final/full-source-md5.csv                         182
+  _benchmarks/formula_i_20261024/local-acceptance/full-source-md5.csv                             188
+  _benchmarks/formula_i_20261024/local-final-gate/full-source-md5.csv                             185
+  _benchmarks/formula_i_20261024/local-final-preflight/full-source-md5.csv                        190
+  _benchmarks/formula_i_20261024/local-final/full-source-md5.csv                                  181
+  _benchmarks/formula_i_20261024/local-frozen/full-source-md5.csv                                 184
+  _benchmarks/formula_i_20261024/local-release/full-source-md5.csv                                183
+  _benchmarks/formula_i_20261024/local/full-source-md5.csv                                        181
+  _benchmarks/formula_i_20261024/native-acceptance/source-md5.csv                                 187
+  _benchmarks/formula_i_20261024/native-final/source-md5.csv                                      184
+  _benchmarks/formula_i_20261024/native/source-md5.csv                                            180
+  _benchmarks/formula_i_20261024/performance-before-counts/large-baseline-source-md5.csv           64
+  _benchmarks/formula_i_20261024/performance-before-counts/large-full-source-md5.csv               64
+  _benchmarks/formula_i_20261024/performance-before-counts/large-lean-source-md5.csv               64
+  _benchmarks/formula_i_20261024/performance-before-eligibility/large-baseline-source-md5.csv      65
+  _benchmarks/formula_i_20261024/performance-before-eligibility/large-full-source-md5.csv          65
+  _benchmarks/formula_i_20261024/performance-before-eligibility/large-lean-source-md5.csv          65
+  _benchmarks/formula_i_20261024/performance-initial/large-baseline-source-md5.csv                 61
+  _benchmarks/formula_i_20261024/performance-initial/large-full-source-md5.csv                     61
+  _benchmarks/formula_i_20261024/performance-initial/large-lean-source-md5.csv                     61
+  _benchmarks/formula_i_20261024/performance-pre-additive-guard/large-baseline-source-md5.csv      67
+  _benchmarks/formula_i_20261024/performance-pre-additive-guard/large-full-source-md5.csv          67
+  _benchmarks/formula_i_20261024/performance-pre-additive-guard/large-lean-source-md5.csv          67
+  _benchmarks/formula_i_20261024/preflight/source-md5.csv                                         190
+Native delta is exactly the pre-query interaction guard plus two local-only regressions; current preflight tests cover both APIs.

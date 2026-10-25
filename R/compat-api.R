@@ -43,6 +43,7 @@ compat_fit = function(estimator, fml, data, family, vcov, weights, offset, subse
   fixef, fixef.rm, lean, conn, table, path, strategy, factor_refs, row_id, fixef.tol, fixef.iter,
   glm.tol = NULL, glm.iter = NULL, start = NULL, verbose = 0) {
   if (!is.logical(lean) || length(lean) != 1L || is.na(lean)) stop("lean must be TRUE or FALSE.", call. = FALSE)
+  if (estimator == "feols" && identical(strategy,"mundlak")) stop("Mundlak is a native dbreg() strategy, not an exact feols compatibility strategy.",call.=FALSE)
   if (!(is.numeric(verbose) || is.logical(verbose)) || length(verbose) != 1L || is.na(verbose) || verbose < 0 || !is.finite(verbose)) stop("verbose must be a nonnegative number or logical value.", call. = FALSE)
   fixef.rm = match.arg(fixef.rm, c("perfect_fit", "singletons", "infinite_coef", "none"))
   covariance = compat_covariance(vcov, cluster, se)
@@ -55,7 +56,7 @@ compat_fit = function(estimator, fml, data, family, vcov, weights, offset, subse
   }
   source = compat_input_vectors(data, table, weights, offset, subset)
   normalized = dbglm_formula(fml)
-  parsed = parse_regression_formula(normalized[["fml"]], allow_empty = TRUE)
+  parsed = parse_regression_formula(normalized[["fml"]], allow_empty = TRUE, allow_i = TRUE)
   request = inference_vcov_request(list(fitted_state = list(inference = list(fe_components = parsed[["fe_components"]]))),
     covariance[["vcov"]], covariance[["cluster"]])
   if (length(request[["clusters"]]) > 2L || estimator == "feglm" && length(request[["clusters"]]) > 1L) {

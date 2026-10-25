@@ -1,0 +1,3 @@
+ℹ Loading dbreg
+<environment: namespace:fixest>
+fixest loaded after dbreg: extraction dispatch and values pass

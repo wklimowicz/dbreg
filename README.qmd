@@ -60,6 +60,30 @@ We plan to submit **dbreg** to CRAN in 2026Q1. See our
 what still needs to be completed. Until then, please help us by kicking the
 tyres and creating GitHub issues for both bug reports and feature requests.
 
+## Fixest-style entry points
+
+`dbreg::feols()` and `dbreg::feglm()` replace supported fixest regression calls
+on DuckDB and native Databricks. They accept data as the second argument,
+column/formula weights and offsets, restricted subsets, additive/composite fixed
+effects, `g[x]` slopes, supported `i()` terms, and post-fit covariance requests.
+Use explicit entry-point namespaces when both packages are attached; attach
+fixest last if also fitting reference fixest models containing `i()`.
+
+```r
+fit = dbreg::feols(y ~ x + i(group, z, ref = "control") | firm + period,
+                  conn = conn, table = "observations", weights = ~w, row_id = "id")
+dbreg::coeftable(fit, cluster = ~firm + period)
+predict(fit, newdata) # Outcomes and fitting weights are not required.
+close(fit)
+```
+
+Adapters retain fitted rows and learned effects by default, with a real database
+storage/runtime cost. `lean = TRUE` releases sample-dependent state after fitting.
+Native `dbreg()`/`dbglm()` keep their compact defaults. See the
+[introduction](vignettes/intro.qmd) for the support/difference table and lifetime
+examples, and `?feols`/`?i` for the API. An executable example is installed at
+`system.file("examples/fixest-compatibility.R", package = "dbreg")`.
+
 ## Quickstart
 
 ### Small dataset

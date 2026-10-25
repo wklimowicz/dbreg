@@ -1,0 +1,27 @@
+ℹ Loading dbreg
+Starting native suite: test_formula_i_live.R
+[i() formula] y ~ x + i(f)
+[i() formula] y ~ i(f, x)
+[i() formula] y ~ x + i(f, x, ref = "Beta") | g
+[i() formula] y ~ i(f, keep = c("alpha", "Beta"))
+[i() formula] y ~ i(j, 2)
+[i() formula] y ~ i(flag)
+[i() formula] y ~ x + i(f, flag) | g
+[i() formula] b ~ x + i(f) | g
+[i() formula] y ~ x + i(f, z, ref = "alpha") | g + h
+[i() formula] y ~ i(f, x) | g[z]
+test_formula_i_live.R.........  120 tests OK 12.6s
+All ok, 120 results (12.6s)
+Starting native suite: test_compat_api_live.R
+[Compatibility API] feols y ~ x + z | g + h
+[Compatibility API] feols y ~ x | g[z]
+[Compatibility API] feols y ~ x + factor(f) | g
+[Compatibility API] feglm b ~ x + z | g + h
+[Compatibility API] feglm y ~ x + z | g
+[Compatibility API] feols y ~ x + z
+test_compat_api_live.R........  118 tests OK 5.8s
+All ok, 118 results (5.8s)
+There were 26 warnings (use warnings() to see them)
+                   suite assertions failures error elapsed_seconds
+1  test_formula_i_live.R        120        0              756.9560
+2 test_compat_api_live.R        118        0              346.2949

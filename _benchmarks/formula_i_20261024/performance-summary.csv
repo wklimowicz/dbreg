@@ -1,0 +1,4 @@
+mode,median_elapsed_seconds,min_elapsed_seconds,max_elapsed_seconds,peak_rss_kib,model_object_bytes,fit_read_calls,fit_execute_calls,max_rows,query_object_bytes,first_rss_after_close_kib,last_rss_after_close_kib
+baseline,0.103,0.1,0.104,390308,13096,4,0,3,6328,372092,373168
+lean,0.74,0.715,1.577,881508,88048,12,10,3,21664,744816,842168
+full,0.762,0.722,1.561,809036,89616,12,9,3,21664,749756,809796

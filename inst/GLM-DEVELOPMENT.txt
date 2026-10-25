@@ -254,3 +254,16 @@ response defaults, cached information criteria and conditional fixest generics.
 Wrapper SSC defaults differ intentionally from native OLS and are propagated to
 later summaries. The immutable original source supports later cluster columns;
 external new mapping data is explicitly unsupported. See compat_api_20261024.
+
+
+Final compatibility integration
+-------------------------------
+The supported feols/feglm regression subset is implemented over the existing
+estimators, shared Gaussian/projector paths and retained sample/prediction state.
+R/formula-i.R owns restricted i() declarations and typed dictionaries; fitted
+coding drives both R and SQL prediction. The final guard rejects unsupported i
+interactions before database work, preserving ordinary native normalization.
+The support matrix is in vignettes/intro.qmd and inst/FIXEST-COMPATIBILITY.txt.
+Validation/source/performance evidence is in _benchmarks/formula_i_20261024/.
+No outer-algorithm state or additional essential Imports were introduced. The
+separate wide-AP-transfer TODO remains outside this compatibility increment.

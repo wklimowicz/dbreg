@@ -2,49 +2,82 @@ Fixest replacement implementation contract
 ==========================================
 
 Branch: feat/fixest-compat, based on wojtek-dev at 00f2868.
-This is a staged implementation. The checklist below distinguishes the target
-from implemented behavior; it is not a claim of complete fixest compatibility.
+This is a bounded regression API, not unrestricted fixest emulation. Current
+behavior is described here and in vignettes/intro.qmd. Historical checkpoints
+below record the code and validation at each increment; their old remaining-work
+lists do not describe the final API.
 
-Target and boundaries
----------------------
-Provide regression-only replacements for supported feols/feglm calls on DuckDB
-and native Databricks. Include OLS/LPM, binomial cloglog/logit/probit and the
-existing Poisson family. The caller owns data preparation, external weights,
-initializations and any EM/other outer algorithm. No outer-algorithm state or
-orchestration belongs in dbreg.
+Current support and boundaries
+------------------------------
+- Entry points: dbreg::feols(fml, data, ...) and dbreg::feglm(fml, data, ...),
+  or named conn/table/path input. Backend pair: DuckDB and native Databricks.
+  Native dbreg()/dbglm() keep their defaults and existing backend contracts.
+- Models: OLS/LPM; Gaussian identity, Poisson log, binomial logit/probit/cloglog.
+  Default feglm family is Gaussian; native dbglm remains binomial-cloglog.
+- Formula: column main effects, ordinary interactions, restricted square/cube
+  powers, additive/composite FEs and g[x] group intercepts/slopes. Slope-only
+  g[[x]], panel/stepwise/multiple-model/IV adapters and arbitrary R expressions
+  are unsupported. Ordinary OLS uses existing exact strategies. Mundlak remains
+  a native dbreg strategy and is explicitly rejected by the compatibility API.
+- i(): additive indicators and numeric/logical group slopes; literal ref/keep,
+  ref=TRUE, explicit ref=NULL, partial matching and @regular expressions. Initial
+  indicators omit a reference with an intercept/absorbed effects; numeric slopes
+  keep all groups unless controls specify otherwise. Categorical second variables,
+  binning and surrounding interactions are unsupported. With no intercept the
+  first i term keeps all levels; later indicator terms use a reference. First-key
+  SQL types are character/enum, Boolean, DATE, DOUBLE and signed-BIGINT integers.
+  FLOAT32/nonintegral DECIMAL categories need an explicit source conversion.
+  Select i references inside i(ref=...); native factor_refs controls ordinary
+  factor expansion independently of i coding. Limits apply to fitted
+  dictionaries/generated columns through options(dbreg.i_max_columns=1000).
+- Inputs: column or one-column formula weights/offsets; original-length/scalar
+  R vectors normalized before filtering. SQL positional vectors and transformed
+  formulas such as ~log(w) are rejected. Subsets support restricted predicates,
+  logical columns and aligned R vectors/ordered unique positions/exclusions.
+  Duplicate/reordered positions and arbitrary R function evaluation are rejected.
+- Samples: original IDs captured before missing/zero-weight filtering and recursive
+  singleton/perfect-fit pruning. R methods preserve original positions; SQL methods
+  return keyed relations. No SQL source order is invented. Fitted sample state is
+  an immutable snapshot containing original source columns.
+- Inference: IID, HC1, one-/two-way OLS and one-way GLM clusters; supported SSC
+  parameter/group/test-df controls. Later clusters must be in the retained original
+  source. Missing later cluster values error without refitting. External new key
+  mappings, arbitrary covariance functions and exact FE-rank SSC are unsupported.
+- Extraction: native methods plus coeftable/se/pvalue/tstat/ssc/degrees_freedom,
+  named coefficient selection, supported summary/CIs and cached likelihood/AIC/BIC.
+  Conditional methods also support fixest extraction generics in either load order.
+  fixest::obs/degrees_freedom are not generic: use dbreg's versions. Models inherit
+  dbreg_fixest and the native class, never fixest/internal slots.
+- Prediction: adapter default response versus native dbglm link; R vectors or keyed
+  SQL output. Outcomes/fitting weights are unnecessary in newdata. Saved coding
+  handles reference/zero-weight rows and missing/unseen/nonestimable inputs.
+  Unknown categorical levels error; unknown/nonestimable FE combinations yield NA.
+  Integer categories above 2^53 require exact integer64/decimal-string R inputs;
+  adjacent DOUBLE values remain distinct. Malformed integer strings are rejected.
+  Existing native OLS population intervals remain available; shared Gaussian and
+  learned-FE prediction uncertainty are unsupported.
+- Retention: adapter full default saves rows/scores and learned effects, with real
+  SQL storage/runtime cost. lean=TRUE uses inference-only state transiently and
+  releases it after reporting. Native modes none/prediction/inference/all stay
+  explicit. close(model/output) releases owned state, preserving caller connections
+  and exports. Output leases can survive model close. Small learned dictionaries
+  support portable newdata prediction after serialization/release; live SQL rows,
+  output handles and dictionaries require their owning session and cannot be
+  reopened by deserializing a DBI handle. Large one-/two-FE dictionaries can stay
+  in SQL; larger FE/varying-slope prediction systems have explicit portable limits.
+  Dense slope covariance still requires quadratic memory.
 
-Keep existing dbreg/dbglm entry points compatible. Introduce fixest-shaped
-entry points for positional/named arguments and defaults rather than silently
-changing native prediction defaults or OLS small-sample policies. Unsupported
-arguments must fail explicitly. Do not pretend to be a fixest object: support
-the agreed extraction generics with real methods and document other consumers.
+Qualify entry points when both packages are attached. If also fitting reference
+fixest models with i(), attach fixest last: its formula reconstruction can resolve
+an attached i() even through a qualified fixest::feols/feglm call. The independent
+i() oracle explicitly pins fixest::i and restores the caller binding afterward.
+The supported standalone dbreg::i helper returns ordinary indicator/slope matrices;
+it does not emulate fixest's internal formula-reconstruction controls.
 
-Implementation sequence
------------------------
-1. Fractional observation weights and independently checked likelihood reporting.
-   Implemented in this increment; validation evidence is in GLM-VALIDATION.txt.
-2. Shared fitted-state contract for learned effects, sample keys and resource
-   ownership. OLS/GLM now share typed-key validation and retained-key exports;
-   OLS exports use an immutable snapshot throughout fitting. Bounded portable
-   OLS/GLM learned-effect state is implemented behind explicit retention. Large
-   one-/two-FE dictionaries and resource leases can stay in SQL; larger FE
-   systems and post-fit scores remain pending. Keyed database prediction output
-   is implemented in the subsequent checkpoint described below.
-3. Supported formula/argument normalization: i()/references, public coefficient
-   identities, OLS offsets and varying slopes, fixef.rm, weights and subset.
-   Partial existing formula support remains; compatibility entry points pending.
-   Native fitting/extraction checks now reject unsupported extra statistical
-   arguments, preserving explicit legacy aliases. Linear formulas no longer
-   capture caller or strategy environments in compact results.
-4. Fitted link/response prediction with learned effects, including estimable
-   zero-weight rows, without outcomes in newdata. Implemented for bounded GLM
-   OLS/GLM state with retain="prediction"; 149 native OLS checks and 118 native
-   GLM checks pass. Existing compact OLS population prediction remains available.
-5. Two-way OLS cluster covariance and post-fit inference on the fitted sample.
-   Not implemented. Include small-sample/FE-nesting policies and test df.
-6. Summary, se/coeftable, likelihood, sample and df extraction; convergence,
-   persistence and large-output contracts. Existing methods cover only a subset.
-7. End-to-end local/native and large-resource acceptance checks. Not complete.
+Caller-owned algorithms compute each new external weight vector and call a fresh
+fit. No EM/outer-algorithm state belongs in dbreg. Source mutation cannot change
+an existing retained sample. See the executable example installed at
+system.file("examples/fixest-compatibility.R",package="dbreg").
 
 Statistical contract
 --------------------
@@ -560,8 +593,8 @@ releases owned tables and preserves the caller connection. These local warmed
 results do not establish remote/disk-bound throughput or native resource/history
 cost. See performance-summary.csv and per-mode logs for variation and peak RSS.
 
-Remaining major implementation: i() normalization and final integrated acceptance/
-support documentation. Post-fit cluster columns must exist in the original source;
+Remaining work at that adapter checkpoint was i() normalization and final
+integrated acceptance/support documentation (completed in the later checkpoint). Post-fit cluster columns must exist in the original source;
 new external key mappings remain unsupported. Large 3+ FE/varying-slope prediction
 retention still has explicit portable-budget boundaries. Full learned-FE intervals,
 multi-model/IV compatibility adapters and arbitrary R functions remain outside the
@@ -591,3 +624,42 @@ fixes and test expansion. Four exact originals are archived. Performance runs
 preceded those two R changes; their numeric IID paths/statistical calculations
 are unchanged. audit-source.R verifies final manifests and every archived source
 difference instead of claiming all historical gates tested the final source.
+
+
+Supported i() and final acceptance, 2026-10-24/25
+-----------------------------------------------
+Supported i() coding is implemented for the declared regression subset. Shared
+bounded typed dictionaries drive fitting, R prediction and SQL prediction, with
+literal ref/keep controls and native naming/cleanup conventions. OLS uses the
+shared Gaussian projector for these designs. Reference labels containing private-
+looking text remain intact; ambiguous public coefficient names are rejected.
+Unknown categories in rows already excluded by missing regressors or unknown FE
+keys follow the native R missing-prediction behavior in SQL output too.
+
+Final full local: 5,418 assertions, zero failures, 207.00 seconds.
+Actual native i(): 120 assertions, zero failures, 756.96 seconds.
+Actual native adapters: 118 assertions, zero failures, 346.29 seconds.
+Four additional current-source preflight checks reject unsupported i() interactions
+before setup/querying. Native source differs only by that final guard and two
+local-only regressions; audit-source.R verifies the exact delta and historical
+archives. Supported native calculations are unchanged. Package-check evidence,
+complete source manifests and extra typed/budget/example/load-order probes are in
+_benchmarks/formula_i_20261024/.
+
+Million-row instrumented DuckDB medians (one warmup/three measured fits, explicit
+id, threads=2/memory_limit=2GB): native compact 0.103s,
+adapter lean 0.740s, adapter full 0.762s.
+Peak process RSS (KiB): 390308 / 881508 / 809036.
+At most three rows/query and 21664 total R query-object bytes for an
+adapter fit. Native uses 4 DBI reads/0 executes; lean uses 12/10, full
+uses 12/9 during fitting. Explicit full close is outside fit timing. Every fit
+matches native coefficients/V/N/likelihood, restores its table inventory after
+close and preserves the caller connection. Post-close RSS varies with cache and
+allocator behavior; three repeats do not prove zero long-run memory growth.
+These local results do not establish remote/disk-bound throughput. Initial runs
+are retained separately; the final performance manifests identify current source.
+
+The supported implementation is ready for PR review. The support matrix and
+executable lifetime examples distinguish retained rows, portable learned state,
+live SQL dictionaries and release. The native compact APIs retain their purpose
+for latency-sensitive fits that do not need the compatibility state.

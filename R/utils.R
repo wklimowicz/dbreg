@@ -271,6 +271,7 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
 #' @param fml A formula object (will be converted to Formula)
 #' @param allow_empty Allow an intercept-only RHS (GLM).
 #' @param allow_extended Allow restricted powers and composite fixed effects.
+#' @param allow_i Allow restricted additive factor indicators/group slopes.
 #'
 #' @return A list containing:
 #'   \item{fml}{The Formula object}
@@ -281,7 +282,7 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
 #'   \item{fe}{Character vector of fixed effect variable names, or NULL if none}
 #'
 #' @keywords internal
-parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = FALSE) {
+parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = FALSE, allow_i = FALSE) {
   fml = Formula(fml)
   # Extract outcome variable (LHS)
   lhs = formula(fml, lhs = 1, rhs = 0)
@@ -306,6 +307,7 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
       if (!is.call(expr)) {
         stop("Unsupported regressor expression: ", deparse(expr), call. = FALSE)
       }
+      if (allow_i && !is.null(parse_i_term(expr))) return(invisible(NULL))
       call_name = as.character(expr[[1]])
       if (call_name == "-") {
         args = as.list(expr)[-1]

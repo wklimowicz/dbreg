@@ -1,0 +1,4 @@
+"repetition","mode","elapsed","max_rows","query_object_bytes","model_object_bytes"
+1,"baseline",0.144,3,6328,13096
+2,"baseline",0.128,3,6328,13096
+3,"baseline",0.125,3,6328,13096

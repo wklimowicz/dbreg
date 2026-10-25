@@ -4,14 +4,36 @@ dbglm_formula = function(fml) {
   if (length(fml)[1] != 1 || length(fml)[2] > 2) stop("Use one outcome and at most one fixed-effect block.", call. = FALSE)
   state = new.env(parent = emptyenv())
   state[["factors"]] = list()
+  state[["factor_display"]] = character()
+  state[["i_aliases"]] = character()
+  state[["i_terms"]] = character()
   state[["slopes"]] = list()
   replace = function(e) {
     if (!is.call(e)) return(e)
+    declaration = parse_i_term(e)
+    if (!is.null(declaration)) {
+      index = match(declaration[["term"]],state[["i_terms"]])
+      if (is.na(index)) {
+        index = length(state[["i_terms"]])+1L
+        state[["i_terms"]] = c(state[["i_terms"]],declaration[["term"]])
+      }
+      name = paste0("dbglm_factor_i", index, "__")
+      state[["factors"]][[name]] = declaration[["first"]]
+      state[["factor_display"]][name] = declaration[["first"]]
+      state[["i_aliases"]] = unique(c(state[["i_aliases"]],name))
+      result = declaration[["call"]]
+      result[["factor_var"]] = as.name(name)
+      return(result)
+    }
+    if ((identical(e[[1L]],as.name(":")) || identical(e[[1L]],as.name("*"))) && contains_i_term(e)) {
+      stop("i() terms must be additive; interactions with i() are unsupported.",call.=FALSE)
+    }
     if (identical(e[[1]], as.name("factor"))) {
       if (length(e) != 2 || !is.symbol(e[[2]])) stop("Use factor(column) without additional arguments.", call. = FALSE)
       source = as.character(e[[2]])
       name = paste0("dbglm_factor_", match(source, unique(c(unlist(state[["factors"]]), source))), "__")
       state[["factors"]][[name]] = source
+      state[["factor_display"]][name] = paste0("factor(",source,")")
       return(as.name(name))
     }
     as.call(lapply(as.list(e), replace))
@@ -19,6 +41,7 @@ dbglm_formula = function(fml) {
   rhs = stats::formula(fml, lhs = 0, rhs = 1)[[2]]
   rhs = replace(rhs)
   fe = if (length(fml)[2] > 1) stats::formula(fml, lhs = 0, rhs = 2)[[2]] else NULL
+  if (contains_i_term(fe)) stop("i() is supported in additive regressor terms, not the fixed-effect block.",call.=FALSE)
   extract_slopes = function(e) {
     if (!is.call(e)) return(e)
     if (identical(e[[1]], as.name("["))) {
@@ -33,7 +56,8 @@ dbglm_formula = function(fml) {
   if (!is.null(fe)) fe = replace(extract_slopes(fe))
   lhs = stats::formula(fml, lhs = 1, rhs = 0)[[2]]
   normalized = stats::as.formula(call("~", lhs, if (is.null(fe)) rhs else call("|", rhs, fe)), env = baseenv())
-  list(fml = normalized, factors = state[["factors"]], slopes = state[["slopes"]])
+  list(fml = normalized, factors = state[["factors"]], slopes = state[["slopes"]],
+    factor_display = state[["factor_display"]], i_aliases = state[["i_aliases"]])
 }
 
 # Recursion operates on a snapshot and never rediscovers keys.

@@ -613,3 +613,42 @@ fixes and test expansion. Four exact originals are archived. Performance runs
 preceded those two R changes; their numeric IID paths/statistical calculations
 are unchanged. audit-source.R verifies final manifests and every archived source
 difference instead of claiming all historical gates tested the final source.
+
+
+Supported i() and final acceptance, 2026-10-24/25
+-----------------------------------------------
+Supported i() coding is implemented for the declared regression subset. Shared
+bounded typed dictionaries drive fitting, R prediction and SQL prediction, with
+literal ref/keep controls and native naming/cleanup conventions. OLS uses the
+shared Gaussian projector for these designs. Reference labels containing private-
+looking text remain intact; ambiguous public coefficient names are rejected.
+Unknown categories in rows already excluded by missing regressors or unknown FE
+keys follow the native R missing-prediction behavior in SQL output too.
+
+Final full local: 5,418 assertions, zero failures, 207.00 seconds.
+Actual native i(): 120 assertions, zero failures, 756.96 seconds.
+Actual native adapters: 118 assertions, zero failures, 346.29 seconds.
+Four additional current-source preflight checks reject unsupported i() interactions
+before setup/querying. Native source differs only by that final guard and two
+local-only regressions; audit-source.R verifies the exact delta and historical
+archives. Supported native calculations are unchanged. Package-check evidence,
+complete source manifests and extra typed/budget/example/load-order probes are in
+_benchmarks/formula_i_20261024/.
+
+Million-row instrumented DuckDB medians (one warmup/three measured fits, explicit
+id, threads=2/memory_limit=2GB): native compact 0.103s,
+adapter lean 0.740s, adapter full 0.762s.
+Peak process RSS (KiB): 390308 / 881508 / 809036.
+At most three rows/query and 21664 total R query-object bytes for an
+adapter fit. Native uses 4 DBI reads/0 executes; lean uses 12/10, full
+uses 12/9 during fitting. Explicit full close is outside fit timing. Every fit
+matches native coefficients/V/N/likelihood, restores its table inventory after
+close and preserves the caller connection. Post-close RSS varies with cache and
+allocator behavior; three repeats do not prove zero long-run memory growth.
+These local results do not establish remote/disk-bound throughput. Initial runs
+are retained separately; the final performance manifests identify current source.
+
+The supported implementation is ready for PR review. The support matrix and
+executable lifetime examples distinguish retained rows, portable learned state,
+live SQL dictionaries and release. The native compact APIs retain their purpose
+for latency-sensitive fits that do not need the compatibility state.

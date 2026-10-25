@@ -1,0 +1,5 @@
+ℹ Loading dbreg
+integer64 predictions match dummy regression
+enum predictions match dummy regression
+date predictions match dummy regression
+Two generated indicator columns fit at the configured two-column limit

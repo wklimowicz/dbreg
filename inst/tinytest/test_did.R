@@ -78,7 +78,7 @@ i_cases = list(
   list(fml = y ~ x1 + i(fd), strategies = c("compress", "moments"))
 )
 for (case in i_cases) {
-  fx_i = coef(feols(case[["fml"]], data = base_did, notes = FALSE))
+  fx_i = coef(fixest::feols(case[["fml"]], data = base_did, notes = FALSE))
   for (s in case[["strategies"]]) {
     db_i = coef(dbreg(case[["fml"]], data = base_did, strategy = s))
     expect_equal(sort(names(db_i)), sort(names(fx_i)), info = paste(s, "i() coefficient names:", deparse(case[["fml"]])))
@@ -88,10 +88,10 @@ for (case in i_cases) {
 
 # Clustered SEs (incl. compress, whose cluster cells use the expanded columns)
 fml_i = y ~ x1 + i(period, treat, ref = 5) | id + period
-fx_i = feols(fml_i, data = base_did, vcov = ~id)
+fx_i = fixest::feols(fml_i, data = base_did, vcov = ~id)
 for (s in c("compress", "demean")) {
   db_i = dbreg(fml_i, data = base_did, strategy = s, vcov = ~id, ssc = "nested")
-  expect_equal(as.numeric(db_i$coeftable[names(se(fx_i)), "std.error"]), as.numeric(se(fx_i)), tolerance = 1e-10, info = paste(s, "i() clustered SEs"))
+  expect_equal(as.numeric(db_i$coeftable[names(fixest::se(fx_i)), "std.error"]), as.numeric(fixest::se(fx_i)), tolerance = 1e-10, info = paste(s, "i() clustered SEs"))
   expect_equal(
     as.numeric(predict(db_i, newdata = base_did)),
     as.numeric(predict(fx_i)),
@@ -99,10 +99,10 @@ for (s in c("compress", "demean")) {
     info = paste(s, "i() predictions")
   )
 }
-fx_int = feols(y ~ x1 * g | id, data = base_did, vcov = ~id)
+fx_int = fixest::feols(y ~ x1 * g | id, data = base_did, vcov = ~id)
 expect_equal(
-  as.numeric(dbreg(y ~ x1 * g | id, data = base_did, strategy = "compress", vcov = ~id, ssc = "nested")$coeftable[names(se(fx_int)), "std.error"]),
-  as.numeric(se(fx_int)),
+  as.numeric(dbreg(y ~ x1 * g | id, data = base_did, strategy = "compress", vcov = ~id, ssc = "nested")$coeftable[names(fixest::se(fx_int)), "std.error"]),
+  as.numeric(fixest::se(fx_int)),
   tolerance = 1e-10,
   info = "compress clustered SEs work with plain interactions"
 )
@@ -117,7 +117,7 @@ iv_fmls = list(
   y2 ~ x1 | id | i(period, xe, keep = 6:7) ~ i(period, z, keep = 6:7)
 )
 for (fml_iv in iv_fmls) {
-  fx_iv = coef(feols(fml_iv, data = base_did))
+  fx_iv = coef(fixest::feols(fml_iv, data = base_did))
   names(fx_iv) = sub("^fit_", "", names(fx_iv))
   db_iv = coef(dbivreg(fml_iv, data = base_did, strategy = "demean"))
   expect_equal(db_iv[names(fx_iv)], fx_iv, tolerance = 1e-10, info = paste("dbivreg i():", deparse(fml_iv)))
@@ -126,7 +126,7 @@ for (fml_iv in iv_fmls) {
 # The same i() column across IV blocks is recognised as such
 fml_dup = y2 ~ i(period, x1, ref = 1) | id | xe ~ z + i(period, x1, ref = 1)
 expect_warning(db_dup <- dbivreg(fml_dup, data = base_did, strategy = "demean"), "period::2:x1")
-fx_dup = coef(feols(y2 ~ i(period, x1, ref = 1) | id | xe ~ z, data = base_did))
+fx_dup = coef(fixest::feols(y2 ~ i(period, x1, ref = 1) | id | xe ~ z, data = base_did))
 names(fx_dup) = sub("^fit_", "", names(fx_dup))
 expect_equal(coef(db_dup)[names(fx_dup)], fx_dup, tolerance = 1e-10, info = "i() instrument duplicating a regressor is dropped")
 expect_error(

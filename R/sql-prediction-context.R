@@ -1,3 +1,7 @@
+prediction_i_specs = function(object) {
+  if (inherits(object, "dbglm")) object[["model_spec"]][["i_specs"]] else object[["i_specs"]]
+}
+
 prediction_required_columns = function(object) {
   if (inherits(object, "dbglm")) {
     variables = object[["model_spec"]][["source_vars"]]
@@ -34,7 +38,7 @@ prediction_dataframe_source = function(object, data, required) {
   if (!length(factors)) labels = character()
   for (i in seq_along(factors)) data[[labels[[i]]]] = as.character(data[[factors[[i]]]])
   names(labels) = factors
-  if (length(object[["model_spec"]][["i_specs"]])) {
+  if (length(prediction_i_specs(object))) {
     eligible = rep(TRUE,nrow(data))
     for (name in prediction_required_columns(object)) {
       value = data[[name]]
@@ -42,9 +46,10 @@ prediction_dataframe_source = function(object, data, required) {
       if (is.numeric(value) && !inherits(value,"integer64")) eligible = eligible & is.finite(value)
     }
   }
-  for (spec in object[["model_spec"]][["i_specs"]]) {
+  for (spec in prediction_i_specs(object)) {
     first = spec[["first"]]
-    public = object[["factor_sources"]][[first]]
+    public = if (inherits(object, "dbglm")) object[["factor_sources"]][[first]] else first
+    if (is.null(public)) public = first
     index = rep(NA_integer_,nrow(data))
     index[eligible] = i_match_values(spec,data[[public]][eligible],strict=FALSE)
     label = safe_identifiers(paste0("dbreg_prediction_i",length(labels)+1L,"__"),taken=names(data))

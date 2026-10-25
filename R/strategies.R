@@ -28,7 +28,7 @@ execute_moments_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
   
   frame = build_base_frame(inputs, xvars_sql, xvar_names)
   moments_sql = frame_moments_sql(frame, yvar, xvar_names, conn)
@@ -120,7 +120,7 @@ execute_demean_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
   
   frame = build_demean_frame(inputs, xvars_sql, xvar_names)
   if (inherits(frame, "dbreg_query_plan")) return(frame)
@@ -237,7 +237,7 @@ execute_mundlak_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
   
   weights_expr_base = sql_weight_expr(weights)
   weights_expr_aug = if (is.null(weights)) NULL else sql_weight_expr("weights")
@@ -446,7 +446,7 @@ execute_compress_strategy = function(inputs) {
     select_exprs = paste0(sql_design[["select_exprs"]], " AS ", sql_design[["aliases"]])
     xvars_sql = paste(select_exprs, collapse = ", ")
     xvar_names = sql_design[["aliases"]]
-    register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
+    register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
     # Both the compression and clustered score passes must read the expanded
     # columns. Aliases from a SELECT list do not exist in the original source.
     projection = frame_select(yvar, sql_design[["select_exprs"]], xvar_names,
@@ -523,7 +523,10 @@ execute_compress_strategy = function(inputs) {
         exact_numeric_factor(compressed_dat[[f]])
     }
   }
+  numeric_i = vapply(Filter(function(spec) identical(spec[["source_type"]], "numeric"),
+    inputs[["i_specs"]]), `[[`, character(1), "first")
   for (nm in intersect(names(inputs[["factor_levels"]]), names(compressed_dat))) {
+    if (!nm %in% fe && restore_names(nm, inputs[["source_map"]]) %in% numeric_i) next
     previous = compressed_dat[[nm]]
     compressed_dat[[nm]] = factor(previous, levels = inputs[["factor_levels"]][[nm]])
     if (!is.null(attr(previous, "dbreg_key_values"))) {

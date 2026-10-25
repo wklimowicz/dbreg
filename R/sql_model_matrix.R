@@ -168,7 +168,10 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
   result[["i_columns"]] = i_columns
   result[["coef_names"]] = standardize_coef_names(result[["col_names"]])
   result[["source_classes"]] = col_info[["classes"]]
-  result[["i_specs"]] = col_info[["i_specs"]]
+  result[["i_specs"]] = lapply(col_info[["i_specs"]], function(spec) {
+    spec[["source_type"]] = col_info[["types"]][[spec[["first"]]]]
+    spec
+  })
   result
 }
 
@@ -457,7 +460,9 @@ expand_i_term = function(spec, col_info, k, keep_all_levels = FALSE) {
   if (is.null(var)) {
     sql = paste0("CASE WHEN ", cond, " THEN 1.0 ELSE 0.0 END")
   } else if (identical(col_info[["classes"]][[var]], "logical")) {
-    sql = paste0("CASE WHEN ", cond, " AND ", var, " THEN 1.0 ELSE 0.0 END")
+    logical = col_info[["logical_sql"]][[var]]
+    if (is.null(logical)) logical = var
+    sql = paste0("CASE WHEN ", cond, " AND (", logical, ") THEN 1.0 ELSE 0.0 END")
   } else if (identical(col_info[["types"]][[var]], "numeric")) {
     sql = paste0("CASE WHEN ", cond, " THEN ", var, " ELSE 0 END")
   } else {

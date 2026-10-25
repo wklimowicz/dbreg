@@ -226,7 +226,8 @@ process_dbivreg_inputs = function(inputs) {
     inputs,
     c(exog_design[["factor_levels"]], endog_design[["factor_levels"]], instr_design[["factor_levels"]]),
     rbind(exog_design[["level_aliases"]], endog_design[["level_aliases"]], instr_design[["level_aliases"]]),
-    i_columns = rbind(exog_design[["i_columns"]], endog_design[["i_columns"]], instr_design[["i_columns"]])
+    i_columns = rbind(exog_design[["i_columns"]], endog_design[["i_columns"]], instr_design[["i_columns"]]),
+    i_specs = c(exog_design[["i_specs"]], endog_design[["i_specs"]], instr_design[["i_specs"]])
   )
   # Without an intercept, factor coding of the endogenous/instrument blocks
   # would depend on the combined X and Z designs; not supported yet
@@ -725,6 +726,7 @@ dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(),
     factor_levels = sql_design$factor_levels,
     level_aliases = sql_design$level_aliases,
     i_columns = sql_design[["i_columns"]],
+    i_specs = sql_design[["i_specs"]],
     vars = model_vars(rhs_formula),
     term_labels = attr(terms(rhs_formula), "term.labels")
   )

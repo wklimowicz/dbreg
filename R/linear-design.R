@@ -102,6 +102,7 @@ read_compressed_frame = function(inputs, sql, from_statement = inputs[["from_sta
 # Only compressed fits retain explicit FE coefficients. Their tuple-to-rank
 # mapping comes from cells already collected for estimation, with no extra scan.
 finalize_linear_design = function(result, inputs) {
+  result[["i_specs"]] = inputs[["i_specs"]]
   result[["offset"]] = inputs[["offset"]]
   result[["fixef_rm"]] = inputs[["fixef_rm"]]
   result[["pruning_rounds"]] = if (is.null(inputs[["pruning"]])) 0L else inputs[["pruning"]][["rounds"]]
@@ -199,7 +200,8 @@ prediction_factors = function(object, data) {
       if (anyNA(data[[fe]])) stop("newdata contains unseen composite fixed-effect levels.", call. = FALSE)
     } else data[[fe]] = key
   }
-  for (variable in names(object[["factor_levels"]])) {
+  typed = unique(unlist(lapply(object[["i_specs"]], function(spec) c(spec[["first"]], spec[["second"]])), use.names = FALSE))
+  for (variable in setdiff(names(object[["factor_levels"]]), typed)) {
     if (!variable %in% names(data)) next
     levels = as.character(object[["factor_levels"]][[variable]])
     values = as.character(data[[variable]])
@@ -211,24 +213,42 @@ prediction_factors = function(object, data) {
 }
 
 # Saved i() columns define the fitted coding without evaluating formula calls.
-expand_newdata_i = function(fml, data, i_columns) {
+expand_newdata_i = function(fml, data, i_columns, i_specs = list()) {
   labels = attr(stats::terms(fml), "term.labels")
-  if (NROW(i_columns)) {
+  if (NROW(i_columns) || length(i_specs)) {
     labels = labels[vapply(labels, function(term) is.null(parse_sql_i_term(term)), logical(1))]
-    for (k in seq_len(nrow(i_columns))) {
-      value = as.numeric(as.character(data[[i_columns[["var"]][k]]]) == i_columns[["level"]][k])
+    typed = list()
+    for (spec in i_specs) {
+      variable = spec[["first"]]
+      if (!variable %in% names(data) || variable %in% names(typed)) next
+      typed[[variable]] = spec[["labels"]][i_match_values(spec, data[[variable]])]
+    }
+    for (k in seq_len(NROW(i_columns))) {
+      variable = i_columns[["var"]][k]
+      name = i_columns[["name"]][k]
+      if (!variable %in% names(data) && name %in% names(data)) next
+      values = if (variable %in% names(typed)) typed[[variable]] else as.character(data[[variable]])
+      value = as.numeric(values == i_columns[["level"]][k])
       by = i_columns[["by"]][k]
       if (!is.na(by)) value = value * data[[by]]
       data[[i_columns[["name"]][k]]] = value
     }
-    labels = c(labels, paste0("`", i_columns[["name"]], "`"))
+    if (NROW(i_columns)) labels = c(labels, paste0("`", i_columns[["name"]], "`"))
   }
   list(data = data, terms = labels)
 }
 
-build_newdata_design = function(fml, data, factor_levels = list(), i_columns = NULL) {
-  data = prediction_factors(list(factor_levels = factor_levels), data)
-  expanded = expand_newdata_i(fml, data, i_columns)
+build_newdata_design = function(fml, data, factor_levels = list(), i_columns = NULL, i_specs = list()) {
+  expanded = expand_newdata_i(fml, data, i_columns, i_specs)
+  firsts = vapply(i_specs, `[[`, character(1), "first")
+  ordinary_levels = factor_levels[setdiff(names(factor_levels), firsts)]
+  data = prediction_factors(list(factor_levels = ordinary_levels), expanded[["data"]])
+  for (spec in i_specs[!duplicated(firsts)]) {
+    first = spec[["first"]]
+    if (!first %in% names(data) || !identical(spec[["source_type"]], "factor")) next
+    data[[first]] = factor(spec[["labels"]][i_match_values(spec, expanded[["data"]][[first]])], levels = spec[["labels"]])
+  }
+  expanded[["data"]] = data
   labels = expanded[["terms"]]
   if (!length(labels)) labels = "1"
   fml = stats::reformulate(labels,

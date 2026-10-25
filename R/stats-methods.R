@@ -211,7 +211,12 @@ predict.dbreg = function(
   missing = setdiff(required, names(newdata))
   if (length(missing)) stop("newdata is missing required columns: ", paste(missing, collapse = ", "), call. = FALSE)
   n_new = nrow(newdata)
-  valid = if (length(required)) Reduce(`&`, lapply(newdata[, required, drop = FALSE], function(x) !is.na(x))) else rep(TRUE, n_new)
+  valid = rep(TRUE, n_new)
+  for (name in required) {
+    value = newdata[[name]]
+    valid = valid & !is.na(value)
+    if (is.numeric(value) && !inherits(value, "integer64")) valid = valid & is.finite(value)
+  }
   if (!any(valid)) {
     blank = rep(NA_real_, n_new)
     return(if (interval == "none") blank else data.frame(fit = blank, lwr = blank, upr = blank))
@@ -247,14 +252,14 @@ predict.dbreg = function(
   fml_mm = reformulate(terms_rhs, intercept = intercept)
   if (stored && !is.null(object[["compressed_design"]])) {
     spec = object[["compressed_design"]]
-    data = expand_newdata_i(stats::formula(fml, lhs = 0, rhs = 1), newdata, i_cols)[["data"]]
+    data = expand_newdata_i(stats::formula(fml, lhs = 0, rhs = 1), newdata, i_cols, object[["i_specs"]])[["data"]]
     names(data) = unname(spec[["source_names"]][names(data)])
     data = compressed_trend_data(data, spec[["trend_sources"]], spec[["trend_centers"]])
     mm = fitted_model_matrix(spec[["formula"]], data)
     mm = mm[, names(spec[["columns"]]), drop = FALSE]
     colnames(mm) = unname(spec[["columns"]])
   } else {
-    mm = build_newdata_design(fml_mm, newdata, object[["factor_levels"]], i_cols)
+    mm = build_newdata_design(fml_mm, newdata, object[["factor_levels"]], i_cols, object[["i_specs"]])
     for (alias in names(object[["compressed_design"]][["prediction_trends"]])) {
       colnames(mm) = gsub(alias, coef_var_name(object[["compressed_design"]][["prediction_trends"]][[alias]]), colnames(mm), fixed = TRUE)
     }

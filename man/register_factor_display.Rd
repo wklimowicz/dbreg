@@ -11,7 +11,8 @@ register_factor_display(
   col_names = NULL,
   aliases = NULL,
   factor_classes = NULL,
-  i_columns = NULL
+  i_columns = NULL,
+  i_specs = list()
 )
 }
 \arguments{
@@ -26,6 +27,8 @@ and `level` (the `level_aliases` element of [sql_model_matrix()]).}
 `i_columns` element of [sql_model_matrix()]). Their display names, e.g.
 `period::5:treat`, are also recorded in `inputs$i_columns` for
 `predict()`.}
+
+\item{i_specs}{Typed fitted i() dictionaries shared by R and SQL prediction.}
 }
 \description{
 Adds entries to `inputs$name_map` so that factor dummies named after their

@@ -637,8 +637,9 @@ safe_source = function(conn, from_statement, vars) {
 #'   `period::5:treat`, are also recorded in `inputs$i_columns` for
 #'   `predict()`.
 #' @param factor_classes Optional named fitted source classes for factors.
+#' @param i_specs Typed fitted i() dictionaries shared by R and SQL prediction.
 #' @keywords internal
-register_factor_display = function(inputs, factor_levels = list(), level_aliases = NULL, col_names = NULL, aliases = NULL, factor_classes = NULL, i_columns = NULL) {
+register_factor_display = function(inputs, factor_levels = list(), level_aliases = NULL, col_names = NULL, aliases = NULL, factor_classes = NULL, i_columns = NULL, i_specs = list()) {
   saved = inputs[["factor_levels"]]
   if (is.null(saved)) saved = list()
   for (nm in names(factor_levels)) saved[[nm]] = factor_levels[[nm]]
@@ -682,6 +683,19 @@ register_factor_display = function(inputs, factor_levels = list(), level_aliases
     new = c(new, setNames(i_display[["name"]], i_columns[["alias"]]))
     i_display = rbind(inputs[["i_columns"]], i_display)
     inputs[["i_columns"]] = i_display[!duplicated(i_display[["name"]]), , drop = FALSE]
+  }
+  if (length(i_specs)) {
+    public = function(value) restore_names(value, inputs[["source_map"]])
+    specs = lapply(i_specs, function(spec) {
+      spec[["first"]] = public(spec[["first"]])
+      spec[["second"]] = public(spec[["second"]])
+      spec[["term"]] = restore_term_names(spec[["term"]], inputs[["source_map"]])
+      spec[["names"]] = if (!length(spec[["selected"]])) character() else paste0(spec[["first"]], "::", spec[["labels"]][spec[["selected"]]],
+        if (!is.null(spec[["second"]])) paste0(":", spec[["second"]]))
+      spec
+    })
+    specs = c(inputs[["i_specs"]], specs)
+    inputs[["i_specs"]] = specs[!duplicated(vapply(specs, `[[`, character(1), "term"))]
   }
   inputs[["name_map"]] = c(map, new)
   invisible(inputs)

@@ -108,8 +108,7 @@ sql_prediction_source = function(object, context, conn, from_statement, row_id, 
   numeric = raw_required[classes[raw_required] %in% c("numeric", "integer", "integer64")]
   if (length(numeric)) {
     values = paste0("r.", raw_aliases[numeric])
-    valid = c(valid, if (inherits(object, "dbglm") || context[["kind"]] != "none")
-      paste0("isfinite(", values, ")") else paste0("NOT isnan(CAST(", values, " AS DOUBLE))"))
+    valid = c(valid, paste0("isfinite(", values, ")"))
   }
   list(frame = frame, x = x, varying = varying_aliases, offset = offset_alias,
     key_aliases = key_aliases, raw_aliases = raw_aliases, key_sources = key_sources,

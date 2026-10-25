@@ -68,7 +68,30 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
     info = list(types = as.list(stats::setNames(ifelse(aliases %in% names(levels), "factor", "numeric"), aliases)),
       levels = levels, factor_classes = classes, level_sql = if (factor_labels)
         lapply(levels, function(value) sql_value_literals(conn, as.character(value))) else sql_factor_literals(conn, levels, classes))
-    info[["classes"]] = classes
+    info[["i_specs"]] = lapply(object[["i_specs"]], function(spec) {
+      spec[["first"]] = source_aliases[[spec[["first"]]]]
+      if (!is.null(spec[["second"]])) spec[["second"]] = source_aliases[[spec[["second"]]]]
+      spec[["term"]] = restore_term_names(spec[["term"]], source_aliases)
+      spec
+    })
+    for (spec in info[["i_specs"]]) {
+      first = spec[["first"]]
+      if (!is.null(spec[["source_type"]])) info[["types"]][[first]] = spec[["source_type"]]
+      info[["levels"]][[first]] = if (factor_labels) spec[["labels"]] else spec[["values"]]
+      info[["level_sql"]][[first]] = if (factor_labels) sql_value_literals(conn, spec[["labels"]]) else
+        sql_factor_literals(conn, stats::setNames(list(spec[["values"]]), first), classes)[[first]]
+      levels[[first]] = if (factor_labels) spec[["labels"]] else spec[["values"]]
+    }
+    info[["classes"]] = stats::setNames(rep("numeric", length(aliases)), aliases)
+    info[["classes"]][names(classes)] = classes
+    for (spec in info[["i_specs"]]) {
+      second = spec[["second"]]
+      if (is.null(second)) next
+      info[["classes"]][second] = spec[["second_class"]]
+      if (identical(spec[["second_class"]], "logical") && factor_labels) {
+        info[["logical_sql"]][[second]] = paste0(second, " = ", sql_value_literals(conn, "TRUE"))
+      }
+    }
     info[["factor_sources"]] = as.list(stats::setNames(as.character(DBI::dbQuoteIdentifier(conn, as.character(names(forced_safe)))), names(forced_safe)))
     info[["numeric_sql"]] = stats::setNames(sql_cast_double(aliases, conn), aliases)
     intercept = attr(stats::terms(rhs), "intercept") == 1L

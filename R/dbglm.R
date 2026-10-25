@@ -330,7 +330,9 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
       if (is.null(weights)) "1.0" else quote_id(weights), ") AS weight_max", from))
   }
   n = as.numeric(sample[["n"]])
-  if (n == 0) stop("No complete positive-weight observations remain.", call. = FALSE)
+  if (n == 0) {
+    stop("All observations were removed by fixed-effect singleton/separation pruning.", call. = FALSE)
+  }
   # A binary power preserves representable input weights exactly, including
   # the half-integer ties used only for binomial likelihood reporting. Scaling
   # before the first WLS solve also protects SQL aggregate/FE certification.

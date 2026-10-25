@@ -227,17 +227,7 @@ predict.dbreg = function(
   # no-intercept models expand exactly as in estimation), then align its
   # columns to the coefficients by name
   terms_rhs = attr(terms(formula(fml, lhs = 0, rhs = 1)), "term.labels")
-  # i() terms: build their columns directly (model.matrix() can't expand them)
   i_cols = object[["i_columns"]]
-  if (NROW(i_cols)) {
-    terms_rhs = terms_rhs[vapply(terms_rhs, function(t) is.null(parse_sql_i_term(t)), logical(1))]
-    for (k in seq_len(nrow(i_cols))) {
-      col = as.numeric(as.character(newdata[[i_cols[["var"]][k]]]) == i_cols[["level"]][k])
-      if (!is.na(i_cols[["by"]][k])) col = col * newdata[[i_cols[["by"]][k]]]
-      newdata[[i_cols[["name"]][k]]] = col
-    }
-    terms_rhs = c(terms_rhs, paste0("`", i_cols[["name"]], "`"))
-  }
   if (strategy %in% c("compress", "moments")) {
     # FE enter as dummies (compress)
     terms_rhs = c(terms_rhs, fe)
@@ -248,16 +238,12 @@ predict.dbreg = function(
   fml_mm = reformulate(terms_rhs, intercept = intercept)
   if (stored && !is.null(object[["compressed_design"]])) {
     spec = object[["compressed_design"]]
-    data = newdata
+    data = expand_newdata_i(stats::formula(fml, lhs = 0, rhs = 1), newdata, i_cols)[["data"]]
     names(data) = unname(spec[["source_names"]][names(data)])
     mm = fitted_model_matrix(spec[["formula"]], data)
     mm = mm[, names(spec[["columns"]]), drop = FALSE]
     colnames(mm) = unname(spec[["columns"]])
-  } else mm = fitted_model_matrix(fml_mm, newdata)
-  if (NROW(i_cols)) {
-    is_i = colnames(mm) %in% paste0("`", i_cols[["name"]], "`")
-    colnames(mm)[is_i] = gsub("`", "", colnames(mm)[is_i], fixed = TRUE)
-  }
+  } else mm = build_newdata_design(fml_mm, newdata, object[["factor_levels"]], i_cols)
   if (strategy == "mundlak") {
     # Group means of each design column, one set per FE
     mm_means = mapply(

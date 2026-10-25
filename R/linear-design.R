@@ -185,3 +185,36 @@ prediction_factors = function(object, data) {
   }
   data
 }
+
+# Saved i() columns define the fitted coding without evaluating formula calls.
+expand_newdata_i = function(fml, data, i_columns) {
+  labels = attr(stats::terms(fml), "term.labels")
+  if (NROW(i_columns)) {
+    labels = labels[vapply(labels, function(term) is.null(parse_sql_i_term(term)), logical(1))]
+    for (k in seq_len(nrow(i_columns))) {
+      value = as.numeric(as.character(data[[i_columns[["var"]][k]]]) == i_columns[["level"]][k])
+      by = i_columns[["by"]][k]
+      if (!is.na(by)) value = value * data[[by]]
+      data[[i_columns[["name"]][k]]] = value
+    }
+    labels = c(labels, paste0("`", i_columns[["name"]], "`"))
+  }
+  list(data = data, terms = labels)
+}
+
+build_newdata_design = function(fml, data, factor_levels = list(), i_columns = NULL) {
+  data = prediction_factors(list(factor_levels = factor_levels), data)
+  expanded = expand_newdata_i(fml, data, i_columns)
+  labels = expanded[["terms"]]
+  if (!length(labels)) labels = "1"
+  fml = stats::reformulate(labels,
+    intercept = attr(stats::terms(fml), "intercept") == 1L, env = baseenv())
+  design = fitted_model_matrix(fml, expanded[["data"]])
+  if (NROW(i_columns)) {
+    quoted = paste0("`", i_columns[["name"]], "`")
+    matched = match(colnames(design), quoted)
+    present = !is.na(matched)
+    colnames(design)[present] = i_columns[["name"]][matched[present]]
+  }
+  design
+}

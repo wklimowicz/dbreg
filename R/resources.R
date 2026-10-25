@@ -11,6 +11,12 @@ fit_resources = function() {
 
 release_fit_resources = function(resources, quiet = TRUE) {
   errors = character()
+  if (!is.null(resources[["conn"]]) && !DBI::dbIsValid(resources[["conn"]])) {
+    resources[["conn"]] = NULL
+    resources[["own_conn"]] = FALSE
+    resources[["tables"]] = resources[["views"]] = character()
+    resources[["registered_table"]] = NULL
+  }
   if (!is.null(resources[["conn"]])) {
     for (kind in c("views", "tables")) for (name in rev(resources[[kind]])) {
       error = tryCatch({ drop_owned_relation(resources[["conn"]], name, kind); NULL }, error = identity)

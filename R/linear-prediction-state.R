@@ -92,8 +92,7 @@ predict_linear_state = function(object, newdata, interval) {
   }
   levels = object[["factor_levels"]]
   levels = levels[intersect(names(levels), all.vars(rhs))]
-  coded = prediction_factors(list(factor_levels = levels), rows)
-  design = as.matrix(fitted_model_matrix(rhs, coded))
+  design = as.matrix(build_newdata_design(rhs, rows, levels, object[["i_columns"]]))
   absent = setdiff(state[["specification"]][["design_names"]], colnames(design))
   if (length(absent)) stop("Could not reconstruct fitted OLS design: ", paste(absent, collapse = ", "), call. = FALSE)
   prediction[positions] = predict_from_fitted_state(state, design, rows, groups = groups, lookup = lookup) + linear_prediction_offset(object, rows)

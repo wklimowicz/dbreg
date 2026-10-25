@@ -1,3 +1,10 @@
+# Keep glance() to one row when covariance metadata has several components.
+glance_metadata = function(value, missing = NA_character_) {
+  if (!length(value)) return(missing)
+  if (is.list(value)) return(paste(paste0(names(value), "=", unlist(value)), collapse = ";"))
+  if (length(value) == 1L) value else paste(value, collapse = ";")
+}
+
 #' tidy results
 #' @export
 generics::tidy
@@ -102,9 +109,9 @@ glance.dbreg = function(x, ...) {
     nobs.input = x[["nobs_input"]],
     nobs.dropped = x[["nobs_dropped"]],
     vcov.type = x[["vcov_type"]],
-    cluster = if (is.null(x[["cluster_var"]])) NA_character_ else x[["cluster_var"]],
-    n.clusters = if (is.null(x[["n_clusters"]])) NA_integer_ else x[["n_clusters"]],
-    ssc = if (is.null(x[["ssc"]])) NA_character_ else x[["ssc"]],
+    cluster = glance_metadata(x[["cluster_var"]]),
+    n.clusters = glance_metadata(x[["n_clusters"]], NA_integer_),
+    ssc = glance_metadata(x[["ssc"]]),
     n.params = if (is.null(x[["n_params"]])) NA_integer_ else x[["n_params"]],
     n.fe = length(x[["fe"]]),
     fe.levels = fe_levels_text,

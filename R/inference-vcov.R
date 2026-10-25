@@ -158,12 +158,14 @@ retained_covariance = function(object, vcov = "iid", cluster = NULL, ssc = NULL,
   }
   V = inference_repair_vcov((V+t(V))/2, vcov_fix)
   dimnames(V) = rep(list(state[["coefficient_names"]]), 2L)
-  attr(V, "type") = request[["kind"]]
+  attr(V, "type") = attr(V, "vcov_type") = request[["kind"]]
+  attr(V, "cluster_var") = if (length(clusters)) vapply(clusters, paste, collapse = "^", character(1))
   attr(V, "n_params") = attr(V, "df.K") = K
   attr(V, "ssc") = ssc
   attr(V, "rss") = state[["rss"]]
   if (!is.null(attr(object[["vcov"]], "tss"))) attr(V, "tss") = attr(object[["vcov"]], "tss")
   attr(V, "df.t") = if (is.numeric(ssc[["t.df"]])) ssc[["t.df"]] else if (length(G) && ssc[["t.df"]] == "min") max(min(G)-1, 1) else max(n-K, 1)
+  attr(V, "df_t") = attr(V, "df.t")
   if (length(G)) attr(V, "n_clusters") = G
   V
 }

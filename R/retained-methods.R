@@ -71,7 +71,10 @@ summary.dbreg = function(object, vcov = NULL, cluster = NULL, ssc = NULL, vcov_f
     object[["vcov"]] = V
     object[["fitted_state"]][["inference"]][["default_ssc"]] = attr(V,"ssc")
     object[["postfit_covariance"]] = TRUE
-    object[["vcov_type"]] = attr(V, "type")
+    object[["vcov_type"]] = attr(V, "vcov_type")
+    for (field in c("cluster_var", "n_clusters", "ssc", "n_params", "df_t")) {
+      object[[field]] = attr(V, field)
+    }
   }
   class(object) = unique(c(if (inherits(object, "dbglm")) "summary.dbglm", "summary.dbreg", class(object)))
   object

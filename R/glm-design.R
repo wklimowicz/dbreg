@@ -1,7 +1,7 @@
 # A single GLM design specification shared by SQL fitting and R prediction.
 build_model_spec = function(formula, conn, table, fe_vars = character(),
                              factor_refs = NULL, reserved_names = character(), absorbed = FALSE) {
-  design = glm_sql_model_matrix(
+  design = sql_model_matrix(
     formula = formula,
     conn = conn,
     table = table,
@@ -9,8 +9,13 @@ build_model_spec = function(formula, conn, table, fe_vars = character(),
     sep = "_x_",
     fe_vars = fe_vars,
     factor_refs = factor_refs,
-    absorbed = absorbed
+    intercept = attr(stats::terms(stats::formula(formula, lhs = 0, rhs = 1)), "intercept") == 1L || absorbed
   )
+  # Prediction labels are distinct from typed SQL comparison values. Adjacent
+  # doubles can share as.character() output, so retain the dictionary labels.
+  for (spec in design[["i_specs"]]) {
+    design[["factor_levels"]][[spec[["first"]]]] = spec[["labels"]]
+  }
   public_names = design[["coef_names"]]
   if (anyDuplicated(public_names)) {
     duplicates = unique(public_names[duplicated(public_names)])
@@ -35,7 +40,7 @@ build_model_spec = function(formula, conn, table, fe_vars = character(),
     } else {
       formula
     },
-    source_vars = all.vars(if (inherits(formula, "Formula")) {
+    source_vars = model_vars(if (inherits(formula, "Formula")) {
       formula(formula, lhs = 0, rhs = 1)
     } else {
       formula
@@ -49,6 +54,7 @@ build_model_spec = function(formula, conn, table, fe_vars = character(),
     ),
     factor_levels = design[["factor_levels"]],
     factor_classes = design[["factor_classes"]],
+    source_classes = design[["source_classes"]],
     i_specs = design[["i_specs"]],
     ordinary_rhs = design[["ordinary_rhs"]],
     factor_refs = factor_refs
@@ -109,221 +115,4 @@ evaluate_model_spec = function(model_spec, newdata) {
   matrix = matrix[, expected, drop = FALSE]
   colnames(matrix) = model_spec[["columns"]][["alias"]]
   matrix
-}
-
-glm_sql_model_matrix = function(
-  formula,
-  conn,
-  table,
-  expand = c("all", "interactions"),
-  sep = "_x_",
-  fe_vars = character(),
-  factor_refs = NULL,
-  absorbed = FALSE
-) {
-  expand = match.arg(expand)
-  if (inherits(formula, "Formula")) {
-    formula = formula(formula, lhs = 0, rhs = 1)
-  }
-  tt = terms(formula)
-  term_labels = attr(tt, "term.labels")
-  if (!length(term_labels)) {
-    return(list(select_exprs = character(), col_names = character(),
-      coef_names = character(), terms = character(), factor_levels = list()))
-  }
-  col_info = glm_get_column_info(conn, table, term_labels, factor_refs,
-    intercept = attr(tt,"intercept")==1L || length(fe_vars)>0L || absorbed)
-  result = glm_model_matrix_from_info(term_labels, col_info, expand, sep, fe_vars)
-  ordinary = term_labels[vapply(term_labels,function(term) is.null(parse_i_term(term)),logical(1))]
-  result[["ordinary_rhs"]] = stats::reformulate(if(length(ordinary)) ordinary else "1",intercept=attr(tt,"intercept")==1L,env=baseenv())
-  result
-}
-
-glm_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep = "_x_", fe_vars = character()) {
-  result = list(
-    select_exprs = character(),
-    col_names = character(),
-    coef_names = character(),
-    terms = character()
-  )
-  for (term in term_labels) {
-    declaration = parse_i_term(term)
-    expanded = if (!is.null(declaration)) expand_i_spec(col_info[["i_specs"]][[declaration[["first"]]]],col_info) else
-      glm_expand_term(term, col_info, expand, sep, all_terms = unique(c(term_labels, fe_vars)), fe_vars = fe_vars)
-    result[["select_exprs"]] = c(result[["select_exprs"]], vapply(expanded, `[[`, character(1), "sql"))
-    result[["col_names"]] = c(result[["col_names"]], vapply(expanded, `[[`, character(1), "name"))
-    result[["coef_names"]] = c(result[["coef_names"]], vapply(expanded, function(x) {
-      if (is.null(x[["display"]])) x[["name"]] else x[["display"]]
-    }, character(1)))
-    result[["terms"]] = c(result[["terms"]], rep(term, length(expanded)))
-  }
-  result[["factor_levels"]] = col_info[["levels"]]
-  result[["factor_classes"]] = col_info[["factor_classes"]]
-  result[["i_specs"]] = col_info[["i_specs"]]
-  result
-}
-
-glm_get_column_info = function(conn, table, term_labels, factor_refs = NULL, intercept = TRUE) {
-  declarations = lapply(term_labels,parse_i_term)
-  declarations = Filter(Negate(is.null),declarations)
-  i_aliases = vapply(declarations,`[[`,character(1),"first")
-  ordinary = term_labels[vapply(term_labels,function(term) is.null(parse_i_term(term)),logical(1))]
-  ordinary_vars = unique(unlist(lapply(ordinary,function(term) all.vars(str2lang(term)))))
-  vars = unique(unlist(lapply(term_labels, function(term) {
-    all.vars(parse(text = term, keep.source = FALSE)[[1]])
-  })))
-  from_sql = if (grepl("^FROM", table, ignore.case = TRUE)) table else paste("FROM", table)
-  schema_query = glue("SELECT {paste(vars, collapse = ', ')} {from_sql} LIMIT 0")
-  schema = dbGetQuery(conn, schema_query)
-  types = list()
-  levels = list()
-  classes = setNames(vapply(vars, function(v) class(schema[[v]])[1], character(1)), vars)
-  factor_vars = setdiff(intersect(ordinary_vars,vars[
-    classes %in% c("character", "factor", "logical") |
-      vars %in% names(factor_refs)
-  ]),i_aliases)
-  for (v in vars) types[[v]] = if (v %in% factor_vars) "factor" else "numeric"
-
-  if (detect_backend(conn)[["name"]] == "spark" && length(factor_vars) > 1L) {
-    stack_args = unlist(lapply(factor_vars, function(v) {
-      c(sql_value_literals(conn, v), sprintf("CAST(%s AS STRING)", v))
-    }), use.names = FALSE)
-    level_query = paste0(
-      "SELECT factor_name, factor_level FROM (SELECT STACK(",
-      length(factor_vars), ", ", paste(stack_args, collapse = ", "),
-      ") AS (factor_name, factor_level) ", from_sql, ") t ",
-      "WHERE factor_level IS NOT NULL GROUP BY factor_name, factor_level ",
-      "ORDER BY factor_name, factor_level"
-    )
-    stacked = dbGetQuery(conn, level_query)
-    for (v in factor_vars) {
-      raw_levels = stacked[["factor_level"]][stacked[["factor_name"]] == v]
-      levels[[v]] = switch(
-        classes[[v]],
-        "integer" = as.integer(raw_levels),
-        "numeric" = as.numeric(raw_levels),
-        "logical" = as.logical(raw_levels),
-        raw_levels
-      )
-      if (v %in% names(factor_refs)) {
-        ref_idx = match(as.character(factor_refs[[v]]), as.character(levels[[v]]))
-        if (is.na(ref_idx)) {
-          stop(
-            "Reference level `", factor_refs[[v]], "` was not found in regressor `", v, "`.",
-            call. = FALSE
-          )
-        }
-        levels[[v]] = levels[[v]][c(ref_idx, setdiff(seq_along(levels[[v]]), ref_idx))]
-      }
-    }
-  } else {
-    for (v in factor_vars) {
-      lvl_query = glue("SELECT DISTINCT {v} {from_sql} WHERE {v} IS NOT NULL ORDER BY {v}")
-      levels[[v]] = dbGetQuery(conn, lvl_query)[[1]]
-      if (v %in% names(factor_refs)) {
-        ref_idx = match(as.character(factor_refs[[v]]), as.character(levels[[v]]))
-        if (is.na(ref_idx)) {
-          stop(
-            "Reference level `", factor_refs[[v]], "` was not found in regressor `", v, "`.",
-            call. = FALSE
-          )
-        }
-        levels[[v]] = levels[[v]][c(ref_idx, setdiff(seq_along(levels[[v]]), ref_idx))]
-      }
-    }
-  }
-  level_sql = sql_factor_literals(conn, levels, classes)
-  specifications = glm_i_dictionaries(conn,from_sql,declarations,classes,intercept)
-  for (name in names(specifications)) {
-    spec = specifications[[name]]
-    levels[[name]] = spec[["labels"]]
-    classes[[name]] = switch(spec[["type"]],integer="integer64",numeric="numeric",logical="logical",date="Date",character="character")
-    types[[name]] = "factor"
-    level_sql[[name]] = sql_factor_literals(conn,stats::setNames(list(spec[["values"]]),name),classes)[[name]]
-  }
-  list(types = types, levels = levels, level_sql = level_sql, factor_classes = classes[names(levels)],
-    numeric_sql = setNames(sql_cast_double(vars, conn), vars), i_specs = specifications)
-}
-
-glm_expand_term = function(term, col_info, expand, sep = "_x_", all_terms = character(), fe_vars = character()) {
-  if (grepl("i\\(",term)) stop("i() terms must be additive; interactions with i() are unsupported.",call.=FALSE)
-  vars = split_interaction_term(term)
-  is_interaction = length(vars) > 1
-  if (!is_interaction && expand == "interactions" && is.null(parse_power_term(term))) {
-    return(list(list(sql = term, name = term, display = term)))
-  }
-  expansions = lapply(vars, function(v) {
-    drop_ref = TRUE
-    if (is_interaction && identical(col_info[["types"]][[v]], "factor")) {
-      other_term = paste(sort(setdiff(vars, v)), collapse = ":")
-      canonical_terms = vapply(all_terms, function(t) {
-        paste(sort(split_interaction_term(t)), collapse = ":")
-      }, character(1))
-      drop_ref = v %in% fe_vars || other_term %in% canonical_terms
-    }
-    glm_expand_variable(v, col_info, expand, is_interaction, drop_ref)
-  })
-  glm_cross_product(expansions, sep)
-}
-
-glm_expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRUE) {
-  power = parse_power_term(var)
-  source_var = if (is.null(power)) var else power[["variable"]]
-  is_factor = is.null(power) && identical(col_info[["types"]][[source_var]], "factor")
-  if (is_factor && (expand == "all" || in_interaction)) {
-    lvls = col_info[["levels"]][[source_var]]
-    lvl_sql = col_info[["level_sql"]][[source_var]]
-    if (length(lvls) < 2) {
-      return(list(list(
-        sql = "1", name = paste0(var, "_constant"),
-        display = paste0(var, "_constant")
-      )))
-    }
-    if (drop_ref) {
-      lvls = lvls[-1]
-      lvl_sql = lvl_sql[-1]
-    }
-    lapply(seq_along(lvls), function(i) {
-      lvl = lvls[[i]]
-      list(
-        sql = glue("CASE WHEN {source_var} = {lvl_sql[[i]]} THEN 1.0 ELSE 0.0 END"),
-        name = paste0(source_var, lvl),
-        display = paste0(source_var, lvl)
-      )
-    })
-  } else if (!is.null(power)) {
-    source = col_info[["numeric_sql"]][[source_var]]
-    if (is.null(source)) source = source_var
-    list(list(
-      sql = sprintf("POWER(%s, %d)", source, power[["exponent"]]),
-      name = power[["name"]],
-      display = sprintf("I(%s^%d)", power[["variable"]], power[["exponent"]])
-    ))
-  } else {
-    sql = if (!is_factor) col_info[["numeric_sql"]][[var]] else NULL
-    if (is.null(sql)) sql = var
-    list(list(sql = sql, name = var, display = var))
-  }
-}
-
-glm_cross_product = function(expansions, sep = "_x_") {
-  if (length(expansions) == 1) return(expansions[[1]])
-  rest = glm_cross_product(expansions[-1], sep)
-  result = list()
-  for (e1 in expansions[[1]]) {
-    for (e2 in rest) {
-      e1_sql = e1[["sql"]]
-      e2_sql = e2[["sql"]]
-      result = c(result, list(list(
-        sql = glue("({e1_sql}) * ({e2_sql})"),
-        name = paste0(e1[["name"]], sep, e2[["name"]]),
-        display = paste0(
-          if (is.null(e1[["display"]])) e1[["name"]] else e1[["display"]],
-          ":",
-          if (is.null(e2[["display"]])) e2[["name"]] else e2[["display"]]
-        )
-      )))
-    }
-  }
-  result
 }

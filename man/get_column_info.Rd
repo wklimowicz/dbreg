@@ -4,7 +4,15 @@
 \alias{get_column_info}
 \title{Get column types and factor levels from database}
 \usage{
-get_column_info(conn, table, vars, level_vars = character(), factor_refs = NULL)
+get_column_info(
+  conn,
+  table,
+  vars,
+  level_vars = character(),
+  factor_refs = NULL,
+  i_declarations = list(),
+  intercept = TRUE
+)
 }
 \description{
 Get column types and factor levels from database

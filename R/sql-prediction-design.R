@@ -23,7 +23,10 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
       values = stats::setNames(list(specification[["i_specs"]][[name]][["values"]]),name)
       info[["level_sql"]][[name]] = sql_factor_literals(conn,values,classes)[[name]]
     }
-    design = glm_model_matrix_from_info(attr(stats::terms(rhs), "term.labels"), info)
+    info[["classes"]] = specification[["source_classes"]]
+    info[["numeric_sql"]] = stats::setNames(sql_cast_double(aliases, conn), aliases)
+    design = sql_model_matrix_from_info(attr(stats::terms(rhs), "term.labels"), info,
+      intercept = attr(stats::terms(rhs), "intercept") == 1L || length(object[["fe"]]) > 0L)
     names = design[["coef_names"]]
     expressions = design[["select_exprs"]]
     if (!identical(names, specification[["columns"]][["name"]])) {
@@ -54,13 +57,16 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
     info = list(types = as.list(stats::setNames(ifelse(aliases %in% names(levels), "factor", "numeric"), aliases)),
       levels = levels, factor_classes = classes, level_sql = if (factor_labels)
         lapply(levels, function(value) sql_value_literals(conn, as.character(value))) else sql_factor_literals(conn, levels, classes))
+    info[["classes"]] = classes
+    info[["numeric_sql"]] = stats::setNames(sql_cast_double(aliases, conn), aliases)
     intercept = attr(stats::terms(rhs), "intercept") == 1L
     design = sql_model_matrix_from_info(attr(stats::terms(rhs), "term.labels"), info,
       fe_vars = fe, intercept = intercept, fold_case = folds_identifier_case(conn))
     inputs = new.env(parent = emptyenv())
     inputs[["source_map"]] = source_map
     inputs[["name_map"]] = source_map
-    register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]], design[["col_names"]], design[["aliases"]])
+    register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]],
+      design[["col_names"]], design[["aliases"]], i_columns = design[["i_columns"]])
     map = inputs[["name_map"]]
     variable = names(map) %in% names(source_map)
     map[variable] = coef_var_name(map[variable])

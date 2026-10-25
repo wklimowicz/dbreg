@@ -155,6 +155,7 @@ process_dbivreg_inputs = function(inputs) {
     "compress_ratio", "drop_missings"
   ))
 
+  fml = freeze_i_selectors(Formula::Formula(fml))
   parsed_fml = dbivreg_parse_formula(fml)
   yvar = parsed_fml[["yvar"]]
   fe = parsed_fml[["fe"]]

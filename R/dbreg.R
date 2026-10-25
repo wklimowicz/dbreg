@@ -547,6 +547,8 @@ process_dbreg_inputs = function(inputs) {
   env2env(environment(), inputs, c("conn", "own_conn", "registered_table"))
   from_statement = db_setup[["from_statement"]]
 
+  # Evaluate selectors once, before multiple estimation/prediction passes.
+  fml = freeze_i_selectors(Formula::Formula(fml))
   # Parse (and validate) the formula with the user's names
   fml_parsed = parse_regression_formula(fml, allow_extended = TRUE)
   inputs[["original_fml"]] = fml_parsed[["fml"]]

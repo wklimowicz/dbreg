@@ -326,7 +326,7 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
   xvars = model_vars(rhs1)  # unique variable names
   # i() terms need SQL expansion, like interactions
   has_i = vapply(term_labels, function(t) {
-    !is.null(if (allow_i) parse_i_term(t) else parse_sql_i_term(t))
+    !is.null(parse_sql_i_term(t))
   }, logical(1))
   has_interactions = any(grepl(":", term_labels)) || any(has_i)
   has_transformations = any(grepl("^I\\(", term_labels))
@@ -337,7 +337,7 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
       if (!is.call(expr)) {
         stop("Unsupported regressor expression: ", deparse(expr), call. = FALSE)
       }
-      if (allow_i && !is.null(parse_i_term(expr))) return(invisible(NULL))
+      if (allow_i && !is.null(parse_sql_i_term(expr))) return(invisible(NULL))
       if (!allow_i && !is.null(parse_sql_i_term(paste(deparse(expr), collapse = "")))) return(invisible(NULL))
       call_name = as.character(expr[[1]])
       if (!allow_i && call_name %in% c(":", "*") && contains_i_term(expr)) {

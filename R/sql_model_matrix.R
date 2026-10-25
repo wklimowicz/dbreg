@@ -73,7 +73,8 @@ sql_model_matrix = function(
     return(list(
       select_exprs = character(), col_names = character(), aliases = character(),
       factor_levels = list(), level_aliases = data.frame(alias = character(), var = character(), level = character()),
-      i_columns = empty_i_columns()
+      i_columns = empty_i_columns(), coef_names = character(), terms = character(),
+      source_classes = character(), i_specs = list(), ordinary_rhs = formula
     ))
   }
   env = environment(formula)
@@ -83,16 +84,21 @@ sql_model_matrix = function(
   # expanded by level whatever its type)
   term_vars = Map(function(t, spec) if (is.null(spec)) all.vars(str2lang(t)) else c(spec[["f"]], spec[["var"]]), term_labels, i_specs)
   i_factors = unlist(lapply(i_specs, `[[`, "f"))
-  col_info = get_column_info(conn, table, unique(unlist(term_vars)), level_vars = i_factors, factor_refs = factor_refs)
+  col_info = get_column_info(conn, table, unique(unlist(term_vars)), level_vars = i_factors,
+    factor_refs = factor_refs, i_declarations = i_specs, intercept = intercept)
 
-  sql_model_matrix_from_info(term_labels, col_info, expand, sep, fe_vars, intercept,
+  result = sql_model_matrix_from_info(term_labels, col_info, expand, sep, fe_vars, intercept,
     fold_case = folds_identifier_case(conn), i_specs = i_specs)
+  ordinary = term_labels[vapply(i_specs, is.null, logical(1))]
+  result[["ordinary_rhs"]] = stats::reformulate(if (length(ordinary)) ordinary else "1",
+    intercept = attr(tt, "intercept") == 1L, env = baseenv())
+  result
 }
 
 # The fitted-design path supplies saved levels instead of discovering them from
 # newdata. Both paths use exactly the same expansion and reference decisions.
 sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep = "_x_",
-                                      fe_vars = character(), intercept = TRUE, fold_case = FALSE, i_specs = lapply(term_labels, parse_sql_i_term)) {
+                                      fe_vars = character(), intercept = TRUE, fold_case = FALSE, i_specs = lapply(term_labels, parse_sql_i_term, env = baseenv())) {
   # SQL-safe aliases for factor dummies, one per (variable, level), computed
   # once so that every term uses the same alias. They avoid the model's
   # variable names and each other, and follow the backend's case rules.
@@ -141,18 +147,23 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
     result[["select_exprs"]] = c(result[["select_exprs"]], expanded[["sql"]])
     result[["col_names"]] = c(result[["col_names"]], expanded[["name"]])
     result[["aliases"]] = c(result[["aliases"]], expanded[["alias"]])
+    result[["terms"]] = c(result[["terms"]], rep(term, length(expanded[["sql"]])))
   }
   
   result[["factor_levels"]] = col_info[["levels"]]
   result[["factor_classes"]] = col_info[["factor_classes"]]
   result[["level_aliases"]] = level_aliases
   result[["i_columns"]] = i_columns
+  result[["coef_names"]] = standardize_coef_names(result[["col_names"]])
+  result[["source_classes"]] = col_info[["classes"]]
+  result[["i_specs"]] = col_info[["i_specs"]]
   result
 }
 
 #' Get column types and factor levels from database
 #' @keywords internal
-get_column_info = function(conn, table, vars, level_vars = character(), factor_refs = NULL) {
+get_column_info = function(conn, table, vars, level_vars = character(), factor_refs = NULL,
+                           i_declarations = list(), intercept = TRUE) {
   # Build FROM clause
   from_sql = if (grepl("^FROM", table, ignore.case = TRUE)) table else paste("FROM", table)
   
@@ -176,10 +187,13 @@ get_column_info = function(conn, table, vars, level_vars = character(), factor_r
       if (length(value)) col_class = class(value)[[1L]]
     }
     classes[[v]] = col_class
+    if (v %in% level_vars && inherits(schema[[v]], "POSIXt")) {
+      stop("Date-time variables cannot be i() factors: ", v, ". Convert to a date or character first.", call. = FALSE)
+    }
     # Treat character, factor, logical as categorical
     is_cat = col_class %in% c("character", "factor", "logical") || v %in% names(factor_refs)
     types[[v]] = if (is_cat) "factor" else "numeric"
-    if (is_cat || v %in% level_vars) {
+    if ((is_cat || v %in% level_vars) && !v %in% level_vars) {
       # All distinct levels (a sample could miss rare levels)
       lvl_query = glue("SELECT DISTINCT {v} FROM (SELECT {v} {from_sql}) lvl WHERE {v} IS NOT NULL ORDER BY {v}")
       levels[[v]] = dbGetQuery(conn, lvl_query)[[1]]
@@ -192,8 +206,16 @@ get_column_info = function(conn, table, vars, level_vars = character(), factor_r
   }
   
   classes = vapply(schema, function(column) class(column)[[1L]], character(1))
+  declarations = Filter(Negate(is.null), i_declarations)
+  specifications = i_dictionaries(conn, from_sql, declarations, classes, intercept)
+  for (spec in specifications) {
+    first = spec[["first"]]
+    levels[[first]] = spec[["values"]]
+    classes[[first]] = switch(spec[["type"]], integer = "integer64", numeric = "numeric",
+      logical = "logical", date = "Date", character = "character")
+  }
   list(types = types, levels = levels, classes = classes, factor_classes = classes[names(levels)],
-    numeric_sql = setNames(sql_cast_double(vars, conn), vars),
+    numeric_sql = setNames(sql_cast_double(vars, conn), vars), i_specs = specifications,
     level_sql = sql_factor_literals(conn, levels, classes))
 }
 
@@ -211,12 +233,16 @@ expand_term = function(term, col_info, expand, sep = "_x_", all_terms = characte
     return(list(sql = term, name = term, alias = term))
   }
   
-  # Expand each variable
+  # Formula term ordering is not a canonical interaction ordering. Compare
+  # sets of variables so, e.g., z:history also matches history:z.
+  canonical_terms = vapply(all_terms, function(term) {
+    paste(sort(split_interaction_term(term)), collapse = ":")
+  }, character(1))
   expansions = lapply(vars, function(v) {
     drop_ref = !keep_all_levels
     if (is_interaction && identical(col_info[["types"]][[v]], "factor")) {
       other_term = paste(sort(setdiff(vars, v)), collapse = ":")
-      drop_ref = v %in% fe_vars || other_term %in% all_terms
+      drop_ref = v %in% fe_vars || other_term %in% canonical_terms
     }
     expand_variable(v, col_info, expand, is_interaction, drop_ref)
   })
@@ -294,42 +320,83 @@ i_template = function(factor_var, var, ref, keep, bin, ref2, keep2, bin2) NULL
 #'   `NULL` if absent or not evaluated).
 #' @keywords internal
 parse_sql_i_term = function(term, env = NULL) {
-  e = tryCatch(str2lang(term), error = function(e) NULL)
-  if (!is.call(e) || !identical(e[[1]], as.name("i"))) {
-    return(NULL)
-  }
+  e = if (is.call(term)) term else tryCatch(str2lang(term), error = function(e) NULL)
+  if (!is.call(e)) return(NULL)
+  head = e[[1L]]
+  qualified = is.call(head) && identical(head[[1L]], as.name("::")) &&
+    as.character(head[[2L]]) %in% c("dbreg", "fixest") && identical(head[[3L]], as.name("i"))
+  if (!identical(head, as.name("i")) && !qualified) return(NULL)
+  e[[1L]] = as.name("i")
+  label = paste(deparse(e, width.cutoff = 500L), collapse = "")
   e = tryCatch(match.call(i_template, e), error = function(err) {
-    stop("Invalid i() term: ", term, " (", conditionMessage(err), ")", call. = FALSE)
+    stop("Invalid i() term: ", label, " (", conditionMessage(err), ")", call. = FALSE)
   })
   unsupported = intersect(names(e), c("bin", "ref2", "keep2", "bin2"))
   if (length(unsupported)) {
     stop("i() arguments not supported yet: ", paste(unsupported, collapse = ", "), call. = FALSE)
   }
-  args = list(e[["factor_var"]], e[["var"]])
-  if (any(vapply(args, function(x) is.name(x) && startsWith(as.character(x), "i."), logical(1)))) {
-    stop("The i. prefix in i() terms is not supported yet: ", term, call. = FALSE)
+  # An expression in the second position denotes reference levels; a symbol
+  # denotes a numeric/logical source column. Named ref/keep use the formula env.
+  if (!is.null(e[["var"]]) && !is.symbol(e[["var"]])) {
+    if ("ref" %in% names(e)) stop("Specify positional or named i() references, not both.", call. = FALSE)
+    e[["ref"]] = e[["var"]]
+    e[["var"]] = NULL
   }
-  if (!is.name(args[[1]]) || !(is.null(args[[2]]) || is.name(args[[2]]))) {
-    stop("i() terms must take plain variable names, e.g. i(period, treat, ref = 5): ", term, call. = FALSE)
+  args = list(e[["factor_var"]], e[["var"]])
+  if (any(vapply(args, function(x) is.symbol(x) && startsWith(as.character(x), "i."), logical(1)))) {
+    stop("The i. prefix in i() terms is not supported yet: ", label, call. = FALSE)
+  }
+  if (!is.symbol(args[[1L]]) || !(is.null(args[[2L]]) || is.symbol(args[[2L]]))) {
+    stop("i() terms must take plain variable names, e.g. i(period, treat, ref = 5): ", label, call. = FALSE)
   }
   value = function(arg) {
-    x = e[[arg]]
-    if (is.null(x) || is.null(env)) return(NULL)
-    x = tryCatch(eval(x, env), error = function(err) {
-      stop("Could not evaluate `", arg, "` in ", term, ": ", conditionMessage(err), call. = FALSE)
+    expression = e[[arg]]
+    if (is.null(expression) || is.null(env)) return(NULL)
+    result = tryCatch(eval(expression, env), error = function(err) {
+      stop("Could not evaluate `", arg, "` in ", label, ": ", conditionMessage(err), call. = FALSE)
     })
-    x = as.character(x)
-    if (any(startsWith(x, "@"))) {
-      stop("Regular expressions (\"@...\") in i() `", arg, "` are not supported yet: ", term, call. = FALSE)
+    if (!is.atomic(result) || anyNA(result) ||
+        (is.numeric(result) && any(!is.finite(result)))) {
+      stop("i() references/keep values must be finite, nonmissing vectors.", call. = FALSE)
     }
-    x
+    result
   }
-  list(
-    f = as.character(e[["factor_var"]]),
-    var = if (!is.null(e[["var"]])) as.character(e[["var"]]),
-    ref = value("ref"),
-    keep = value("keep")
-  )
+  ref = value("ref")
+  keep = value("keep")
+  if (!is.null(env)) {
+    # Freeze evaluated selectors before compacting the formula environment.
+    for (arg in intersect(c("ref", "keep"), names(e))) {
+      e[arg] = list(if (arg == "ref") ref else keep)
+    }
+  }
+  first = as.character(e[["factor_var"]])
+  second = if (!is.null(e[["var"]])) as.character(e[["var"]])
+  list(f = first, var = second, first = first, second = second,
+    ref = ref, keep = keep, explicit = any(c("ref", "keep") %in% names(e)),
+    call = e, term = paste(deparse(e, width.cutoff = 500L), collapse = ""))
+}
+
+# Selection is shared by native SQL expansion and retained typed dictionaries.
+i_level_indices = function(value, keys, labels = as.character(keys)) {
+  if (is.character(value)) {
+    found = integer()
+    for (item in value) {
+      indices = if (startsWith(item, "@!")) {
+        which(!grepl(substring(item, 3L), labels))
+      } else if (startsWith(item, "@")) {
+        grep(substring(item, 2L), labels)
+      } else {
+        exact = match(item, labels)
+        if (is.na(exact)) pmatch(tolower(item), tolower(labels), duplicates.ok = TRUE) else exact
+      }
+      found = union(found, indices[!is.na(indices)])
+    }
+  } else {
+    found = unique(match(value, keys))
+    found = found[!is.na(found)]
+  }
+  if (!length(found)) stop("The i() reference/keep value(s) match no level.", call. = FALSE)
+  found
 }
 
 #' Expand an `i()` term into SQL expressions
@@ -347,36 +414,30 @@ expand_i_term = function(spec, col_info, k, keep_all_levels = FALSE) {
   if (inherits(lvls, "POSIXt")) {
     stop("Date-time variables can't be i() factors yet: ", f, ". Convert to a date or character first.", call. = FALSE)
   }
-  lvl_chr = as.character(lvls)
+  dictionaries = col_info[["i_specs"]]
+  matches = vapply(dictionaries, function(item) identical(item[["term"]], spec[["term"]]), logical(1))
+  dictionary = if (any(matches)) dictionaries[[which(matches)[1L]]]
+  lvl_chr = if (is.null(dictionary)) as.character(lvls) else dictionary[["labels"]]
   # As in fixest: ref values must match some level; with neither ref nor keep,
   # a plain i(f) drops its first level like a factor main effect (any other
   # collinearity is left to the fit)
   keep = rep(TRUE, length(lvls))
   if (!is.null(spec[["ref"]])) {
-    if (!any(lvl_chr %in% spec[["ref"]])) {
-      stop("The `ref` value(s) in i(", f, ", ...) match no level of ", f, ".", call. = FALSE)
-    }
-    keep = !lvl_chr %in% spec[["ref"]]
-  } else if (is.null(var) && is.null(spec[["keep"]]) && !keep_all_levels) {
+    reference = if (isTRUE(spec[["ref"]])) 1L else i_level_indices(spec[["ref"]], lvls, lvl_chr)
+    keep[reference] = FALSE
+  } else if (is.null(var) && !isTRUE(spec[["explicit"]]) && is.null(spec[["keep"]]) && !keep_all_levels) {
     keep[1] = FALSE
   }
   if (!is.null(spec[["keep"]])) {
-    keep = keep & lvl_chr %in% spec[["keep"]]
+    keep = keep & seq_along(lvls) %in% i_level_indices(spec[["keep"]], lvls, lvl_chr)
   }
   lvls = lvls[keep]
   lvl_chr = lvl_chr[keep]
   if (!length(lvls)) {
-    stop("i(", f, ", ...) has no levels left after applying ref/keep.", call. = FALSE)
+    return(list(sql = character(), name = character(), alias = character(), columns = empty_i_columns()))
   }
-  # Numeric levels are compared unquoted (doubles at full precision, since
-  # as.character() rounds to 15 digits); others as (escaped) strings
-  literal = if (is.double(lvls) && !inherits(lvls, "Date")) {
-    sprintf("%.17g", lvls)
-  } else if (is.numeric(lvls)) {
-    lvl_chr
-  } else {
-    paste0("'", gsub("'", "''", lvl_chr, fixed = TRUE), "'")
-  }
+  literal = col_info[["level_sql"]][[f]][keep]
+  if (is.null(literal)) literal = sql_level_literals(lvls)
   cond = paste0(f, " = ", literal)
   if (is.null(var)) {
     sql = paste0("CASE WHEN ", cond, " THEN 1.0 ELSE 0.0 END")
@@ -395,4 +456,152 @@ expand_i_term = function(spec, col_info, k, keep_all_levels = FALSE) {
     alias = alias,
     columns = data.frame(alias = alias, var = f, level = lvl_chr, by = if (is.null(var)) NA_character_ else var)
   )
+}
+
+# Restricted i() declarations compile to ordinary SQL design columns. The same
+# saved level dictionary drives R and SQL prediction; newdata discovers no levels.
+
+#' Factor indicators and numeric group slopes
+#'
+#' Use additive `i(group)` or `i(group, numeric_column)` terms in [feols()],
+#' [feglm()] and [dbglm()] formulas. Indicators omit the first fitted level
+#' when the model has an intercept or absorbed effects. Group slopes keep all
+#' levels unless `ref` or `keep` is supplied. Formula controls are evaluated in the formula environment;
+#' categorical second variables, binning and interactions around `i()` are
+#' unsupported. Fitted dictionaries are bounded by
+#' `options(dbreg.i_max_columns = 1000)` and reused for prediction.
+#'
+#' @param factor_var Categorical vector, or a source column in a formula.
+#' @param var Optional numeric/logical vector or column for group slopes.
+#' @param ref Levels to omit; `TRUE` omits the first level. `NULL` keeps all.
+#' @param keep Levels to retain. Character selectors use case-insensitive
+#'   partial matching; a leading `@` selects levels by regular expression, and `@!` selects its complement.
+#' @param ... Unsupported controls produce an error.
+#' @return Outside a regression formula, a numeric indicator/group-slope matrix
+#'   with all levels by default. Formula expansion happens in SQL.
+#' @md
+#' @export
+i = function(factor_var,var,ref=NULL,keep=NULL,...) {
+  check_unused_args(list(...))
+  first = factor_var
+  if (!is.atomic(first) || is.matrix(first) || !length(first)) stop("factor_var must be a nonempty vector.",call.=FALSE)
+  second = if(!missing(var)) var else NULL
+  if (!is.null(second) && length(second)!=length(first)) {
+    if (missing(ref) && length(second) %in% 1:2) { ref = second; second = NULL } else stop("var must have the same length as factor_var.",call.=FALSE)
+  }
+  type = if(inherits(first,"integer64") || is.integer(first)) "integer" else if(inherits(first,"Date")) "date" else
+    if(is.numeric(first)) "numeric" else if(is.logical(first)) "logical" else "character"
+  values = if(is.factor(first)) levels(first)[levels(first) %in% as.character(first)] else sort(unique(first[!is.na(first)]))
+  declaration = list(first="group",second=if(!is.null(second)) "var",ref=ref,keep=keep,explicit=TRUE,term="i()")
+  spec = make_i_spec(declaration,values,type,if(!is.null(second)) class(second)[[1L]],intercept=FALSE)
+  result = evaluate_i_spec(spec,first,second)
+  colnames(result) = spec[["labels"]][spec[["selected"]]]
+  result
+}
+
+contains_i_term = function(expr) {
+  if (!is.call(expr)) return(FALSE)
+  !is.null(parse_sql_i_term(expr)) || any(vapply(as.list(expr)[-1L],contains_i_term,logical(1)))
+}
+
+i_column_limit = function() {
+  value = getOption("dbreg.i_max_columns",1000L)
+  if (!is.numeric(value) || length(value)!=1L || !is.finite(value) || value<1 || value!=floor(value)) stop("dbreg.i_max_columns must be a positive integer.",call.=FALSE)
+  value
+}
+
+i_selected_items = function(value, keys, labels, type) {
+  if (is.logical(value) && type %in% c("integer", "numeric")) value = as.numeric(value)
+  if (is.numeric(value) && type == "logical") value = as.logical(value)
+  if (type == "integer" && !is.character(value)) value = as.character(value)
+  i_level_indices(value, keys, labels)
+}
+
+make_i_spec = function(declaration,keys,type,second_class=NULL,intercept=TRUE) {
+  labels = as.character(keys)
+  if (type=="numeric" && anyDuplicated(labels)) labels = dbglm_number(keys)
+  encoded = prediction_key_part(keys,type)
+  if (anyNA(encoded) || anyDuplicated(encoded) || anyDuplicated(labels)) stop("Could not preserve i() levels exactly.",call.=FALSE)
+  selected = seq_along(keys)
+  if (!is.null(declaration[["second"]]) && !second_class %in% c("numeric","integer","integer64","logical")) stop("The second i() variable must be numeric or logical; categorical interactions use ordinary factor syntax.",call.=FALSE)
+  ref = declaration[["ref"]]
+  if (isTRUE(ref) || !declaration[["explicit"]] && intercept && is.null(declaration[["second"]])) {
+    selected = setdiff(selected,1L)
+  } else if (!is.null(ref)) selected = setdiff(selected,i_selected_items(ref,keys,labels,type))
+  if (!is.null(declaration[["keep"]])) selected = intersect(selected,i_selected_items(declaration[["keep"]],keys,labels,type))
+  names = if(length(selected)) paste0(declaration[["first"]],"::",labels[selected],
+    if(!is.null(declaration[["second"]])) paste0(":",declaration[["second"]])) else character()
+  list(first=declaration[["first"]],second=declaration[["second"]],second_class=second_class,
+    values=keys,keys=encoded,type=type,labels=labels,selected=selected,names=names,term=declaration[["term"]])
+}
+
+i_match_values = function(spec,value,strict=TRUE) {
+  valid = !is.na(value)
+  if (is.numeric(value) && !inherits(value,"integer64")) valid = valid & is.finite(value)
+  keys = rep(NA_character_,length(value))
+  keys[valid] = prediction_key_part(value[valid],spec[["type"]])
+  index = match(keys,spec[["keys"]])
+  if (strict && any(valid & is.na(index))) stop("newdata contains unseen i() levels.",call.=FALSE)
+  index
+}
+
+evaluate_i_spec = function(spec,first,second=NULL) {
+  index = i_match_values(spec,first)
+  columns = spec[["selected"]]
+  if (!length(columns)) return(matrix(numeric(),length(first),0L))
+  result = outer(index,columns,`==`)*1.0
+  if (!is.null(spec[["second"]])) {
+    if (is.factor(second)) second = as.character(second)
+    if (spec[["second_class"]]=="logical" && !is.logical(second)) second = as.logical(second)
+    result = result*as.numeric(second)
+  }
+  colnames(result) = spec[["names"]]
+  result
+}
+
+# Only bounded, typed dictionaries cross the SQL/R boundary. Integer levels are
+# transferred as decimal strings, never through the driver's double conversion.
+i_dictionaries = function(conn,from_sql,declarations,classes,intercept) {
+  result = list()
+  if (!length(declarations)) return(result)
+  limit = i_column_limit()
+  source = sub("^FROM\\s+","",from_sql,ignore.case=TRUE)
+  for (declaration in declarations) {
+    first = declaration[["first"]]
+    metadata = prediction_key_metadata(conn,source,first)
+    type = metadata[["types"]][[1L]]
+    if (type=="float") stop("i() floating-point categories require a DOUBLE source column.",call.=FALSE)
+    value = if(type=="integer") paste0("CAST(",first," AS STRING)") else first
+    # Group by the original typed value; textual ordering would put 10 before 2.
+    keys = backend_get_query(conn,paste0("SELECT ",value," AS value ",from_sql," GROUP BY ",first,
+      " ORDER BY ",first," LIMIT ",sprintf("%.0f",limit+2L)))[[1L]]
+    if (length(keys)>limit+1L) stop("i() level dictionary exceeds dbreg.i_max_columns.",call.=FALSE)
+    # Match R/fixest character collation on this bounded dictionary. Preserve
+    # native enum order, numeric order and exact decimal integer text.
+    if (type=="character" && !startsWith(tolower(metadata[["sql_types"]][[1L]]),"enum")) keys = sort(keys)
+    if (type=="integer" && prediction_integer_sql_type(keys,conn)!="BIGINT") stop("i() integer levels must fit signed BIGINT.",call.=FALSE)
+    second = declaration[["second"]]
+    spec = make_i_spec(declaration,keys,type,if(!is.null(second)) classes[[second]],intercept || length(result)>0L)
+    key = make.unique(c(names(result), first))[[length(result) + 1L]]
+    result[[key]] = spec
+    if (sum(vapply(result,function(x) length(x[["selected"]]),integer(1)))>limit) stop("i() columns exceed dbreg.i_max_columns.",call.=FALSE)
+  }
+  result
+}
+
+sql_level_literals = function(values) {
+  if (is.numeric(values) && !inherits(values, "Date")) return(sprintf("%.17g", values))
+  paste0("'", gsub("'", "''", as.character(values), fixed = TRUE), "'")
+}
+
+freeze_i_selectors = function(fml) {
+  env = environment(fml)
+  walk = function(expr) {
+    if (!is.call(expr)) return(expr)
+    declaration = parse_sql_i_term(expr, env = env)
+    if (!is.null(declaration)) return(declaration[["call"]])
+    as.call(lapply(as.list(expr), walk))
+  }
+  result = stats::as.formula(walk(as.call(fml)), env = baseenv())
+  if (inherits(fml, "Formula")) Formula::Formula(result) else result
 }

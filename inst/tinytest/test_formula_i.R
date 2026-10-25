@@ -39,9 +39,9 @@ local({
     actual = do.call(dbreg::i,args)
     expect_equal(actual,expected,tolerance=1e-12)
   }
-  expect_error(dbreg::feols(y~i(f,f),d),"second i.*numeric/logical")
-  expect_error(dbreg::feols(y~i(f,bin=2),d),"Supported i.*controls")
-  expect_error(dbreg::feols(y~i(f,ref=z),d),"literals")
+  expect_error(dbreg::feols(y~i(f,f),d),"second i.*numeric.*logical")
+  expect_error(dbreg::feols(y~i(f,bin=2),d),"not supported yet: bin")
+  expect_error(dbreg::feols(y~i(f,ref=z),d),"Could not evaluate.*ref")
   expect_error(dbreg::feols(y~i(f):x,d),"additive")
   expect_error(dbreg::feols(y~i(f):x,conn=conn,table="absent"),"additive")
   expect_error(dbreg::feols(y~i(f)*x,conn=conn,table="absent"),"additive")

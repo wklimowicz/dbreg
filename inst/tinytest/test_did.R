@@ -147,7 +147,12 @@ expect_equal(
 
 # Unsupported i() syntax errors informatively
 expect_error(dbreg(y ~ i(period, treat, ref = 99), data = base_did), "match no level")
-expect_error(dbreg(y ~ i(period, ref = "@^1"), data = base_did), "Regular expressions")
+expect_equal(
+  coef(dbreg(y ~ i(period, ref = "@^1"), data = base_did)),
+  coef(fixest::feols(y ~ i(period, ref = c(1, 10)), data = base_did, notes = FALSE)),
+  tolerance = 1e-10,
+  info = "regex references use the same coding as explicit levels"
+)
 base_did$ts = as.POSIXct("2020-06-01", tz = "UTC") + 86400 * base_did$period
 expect_error(dbreg(y ~ i(ts), data = base_did), "Date-time")
 expect_error(dbreg(y ~ i(period, treat, bin = list(pre = 1:4)), data = base_did), "not supported yet: bin")

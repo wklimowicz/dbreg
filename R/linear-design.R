@@ -120,8 +120,7 @@ finalize_linear_design = function(result, inputs) {
   # The supported design uses columns and built-in transformations only.
   # Retaining the caller/strategy frame can capture the entire original panel
   # (and a live connection) through an otherwise compact formula object.
-  environment(fml) = baseenv()
-  result[["fml"]] = fml
+  result[["fml"]] = freeze_i_selectors(fml)
   design = result[["compressed_design"]]
   if (!is.null(design)) {
     environment(design[["formula"]]) = baseenv()

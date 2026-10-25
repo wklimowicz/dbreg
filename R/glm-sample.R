@@ -10,7 +10,7 @@ dbglm_formula = function(fml) {
   state[["slopes"]] = list()
   replace = function(e) {
     if (!is.call(e)) return(e)
-    declaration = parse_i_term(e)
+    declaration = parse_sql_i_term(e, env = environment(fml))
     if (!is.null(declaration)) {
       index = match(declaration[["term"]],state[["i_terms"]])
       if (is.na(index)) {

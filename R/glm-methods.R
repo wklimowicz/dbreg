@@ -140,7 +140,7 @@ predict.dbglm = function(object, newdata = NULL, type = c("link", "response"),
   beta = stats::coef(object)
   names(beta) = object[["design_names"]]
   eta = if (!is.null(state)) predict_from_fitted_state(state, design, data, groups = groups, lookup = lookup) else
-    as.vector(design[, names(beta), drop = FALSE] %*% beta)
+    prediction_matrix_product(design[, names(beta), drop = FALSE], beta)
   if (!is.null(object[["offset"]])) eta = eta + as.numeric(data[[object[["offset"]]]])
   prediction[positions] = if (type == "link") eta else object[["family"]][["linkinv"]](eta)
   prediction

@@ -1,4 +1,30 @@
 # Formula and model-matrix helpers shared by OLS and GLM.
+
+# Keep the fast matrix product for ordinary inputs. At extreme magnitudes,
+# fused BLAS operations can hide Inf-Inf as Inf (and depend on batch shape).
+# Re-evaluate potentially overflowing rows with the same staged arithmetic
+# as the SQL predictor, using row vectors rather than another dense matrix.
+prediction_matrix_product = function(x, beta) {
+  value = as.vector(x %*% beta)
+  if (!length(beta) || !nrow(x)) return(value)
+  bound = .Machine[["double.xmax"]]/max(1,max(abs(beta)))/max(1,ncol(x))/2
+  if (isTRUE(Matrix::norm(x,"M")<=bound)) return(value)
+  risky = !is.finite(value)
+  for (j in seq_along(beta)) {
+    limit = .Machine[["double.xmax"]]/max(1,abs(beta[[j]]))/max(1,ncol(x))/2
+    column = x[,j,drop=FALSE]
+    if (isTRUE(Matrix::norm(column,"M")<=limit)) next
+    column = as.numeric(column)
+    risky = risky | !is.finite(column) | abs(column)>limit
+  }
+  if (any(risky)) {
+    total = rep(0,sum(risky))
+    for (j in seq_along(beta)) total = total+as.numeric(x[risky,j])*beta[[j]]
+    value[risky] = total
+  }
+  value
+}
+
 parse_power_term = function(term) {
   expr = tryCatch(parse(text = term, keep.source = FALSE)[[1]], error = function(e) NULL)
   if (is.null(expr) || !is.call(expr) || !identical(as.character(expr[[1]]), "I")) {

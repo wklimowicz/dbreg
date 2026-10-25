@@ -274,7 +274,7 @@ predict_from_fitted_state = function(state, design, data, groups = NULL, lookup 
     indices[[i]] = coef[["starts"]][i] + match(dictionary[["id"]][groups[[group]]], coef[["ids"]][[i]])
     values[[i]] = if (is.null(ops[[i]][["variable"]])) rep(1, nrow(data)) else as.numeric(data[[ops[[i]][["variable"]]]])
   }
-  prediction = as.vector(x %*% coef[["joint"]][coef[["fe_n"]] + seq_len(ncol(x))])
+  prediction = prediction_matrix_product(x, coef[["joint"]][coef[["fe_n"]] + seq_len(ncol(x))])
   if (!is.null(state[["prediction"]][["constant"]])) prediction = prediction + state[["prediction"]][["constant"]]
   norm = rowSums(x * x)
   for (i in seq_along(ops)) {

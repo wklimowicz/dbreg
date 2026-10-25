@@ -115,7 +115,7 @@ predict_from_database_state = function(state, design, lookup) {
   specification = state[["specification"]]
   x = sweep(design[, specification[["design_names"]], drop = FALSE], 2L,
     specification[["design_center"]], "-")
-  prediction = as.vector(x %*% state[["coefficients"]][["slopes"]]) + lookup[["gamma"]] + state[["prediction"]][["constant"]]
+  prediction = prediction_matrix_product(x, state[["coefficients"]][["slopes"]]) + lookup[["gamma"]] + state[["prediction"]][["constant"]]
   null = state[["prediction"]][["null_basis"]]
   if (!is.null(null)) {
     means = as.matrix(lookup[specification[["dictionaries"]][[1L]][["means"]]])

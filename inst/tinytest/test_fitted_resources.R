@@ -43,13 +43,15 @@ local({
   expect_true(DBI::dbIsValid(dbreg:::fitted_resource_connection(lease)))
   dbreg:::fitted_resource_release(lease)
 
-  # Finalization removes an abandoned owned table without closing a borrowed DB.
+  # Finalization defers caller-session SQL until a synchronous package call.
   resources[["retained_session"]] = NULL
   abandoned = manager[["create"]]("SELECT 5 AS learned")
   abandoned_name = tail(resources[["tables"]], 1L)
   lease = dbreg:::retain_fit_resources(resources, abandoned_name)
   rm(lease)
   invisible(gc())
+  expect_true(DBI::dbExistsTable(conn, abandoned_name))
+  dbreg:::setup_db_connection(conn, "caller_data", NULL, NULL)
   expect_false(DBI::dbExistsTable(conn, abandoned_name))
   expect_true(DBI::dbIsValid(conn))
   expect_error(close(model, unsupported = TRUE), "unsupported")

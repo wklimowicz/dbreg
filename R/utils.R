@@ -177,6 +177,8 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
     is_duckdb = (backend_info[["name"]] == "duckdb")
   }
 
+  flush_retired_resources(conn)
+
   if (!is.null(resources)) {
     resources$conn = conn
     resources$own_conn = own_conn

@@ -20,5 +20,9 @@ sample/prediction exports survive. Portable fitted state requires no release.
 Calling `close()` repeatedly is safe. Copies of a model share their resource
 lease, so closing one also releases the database state used by those copies.
 A model-owned connection closes when its last model or prediction lease ends.
+Abandoned state on a caller-owned connection is queued without executing SQL
+during garbage collection. It is released at the next synchronous package
+operation on that connection; call `close()` for immediate cleanup. Private
+retained DuckDB sessions use one worker thread and close when abandoned.
 Live database state cannot be restored by serializing its connection handle.
 }

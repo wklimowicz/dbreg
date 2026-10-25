@@ -36,13 +36,16 @@ local({
   close(retained)
   expect_false(DBI::dbIsValid(shared))
 
-  # An abandoned output's finalizer drops its table, while caller sessions live.
+  # An abandoned caller output waits for a synchronous package entry point.
   caller = DBI::dbConnect(duckdb::duckdb())
   on.exit(DBI::dbDisconnect(caller, shutdown = TRUE), add = TRUE)
   abandoned = predict(compact, d[1:3, ], conn = caller, row_id = "id")
   name = abandoned[["table"]]
   rm(abandoned)
   invisible(gc())
+  expect_true(DBI::dbExistsTable(caller, name))
+  next_output = predict(compact, d[1:3, ], conn = caller, row_id = "id")
   expect_false(DBI::dbExistsTable(caller, name))
+  close(next_output)
   expect_true(DBI::dbIsValid(caller))
 })

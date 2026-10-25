@@ -1,0 +1,51 @@
+local({
+  conn = DBI::dbConnect(duckdb::duckdb(config = list(threads = "2")))
+  on.exit(DBI::dbDisconnect(conn, shutdown = TRUE))
+  DBI::dbWriteTable(conn, "caller_data", data.frame(x = 1:10))
+  resources = dbreg:::fit_resources()
+  resources[["conn"]] = conn
+  manager = dbreg:::fit_table_manager(conn, resources)
+  table = manager[["create"]]("SELECT * FROM caller_data")
+  name = resources[["tables"]][[1L]]
+  lease = dbreg:::retain_fit_resources(resources, name)
+  query = DBI::dbSendQuery(conn, "SELECT x FROM caller_data ORDER BY x")
+  rm(lease)
+  invisible(gc())
+  # A DROP in the finalizer would invalidate the caller's outstanding result.
+  expect_equal(DBI::dbFetch(query)[["x"]], 1:10)
+  DBI::dbClearResult(query)
+  expect_true(DBI::dbExistsTable(conn, name))
+  next_lease = dbreg:::fitted_resource_lease(dbreg:::fitted_resource_session(conn))
+  expect_false(DBI::dbExistsTable(conn, name))
+  close(structure(list(resource_state = next_lease), class = "dbreg"))
+  expect_equal(DBI::dbReadTable(conn, "caller_data")[["x"]], 1:10)
+})
+
+local({
+  conn = DBI::dbConnect(duckdb::duckdb(config = list(threads = "2")))
+  session = dbreg:::fitted_resource_session(conn, own_conn = TRUE)
+  lease = dbreg:::fitted_resource_lease(session)
+  expect_equal(DBI::dbGetQuery(conn, "SELECT current_setting('threads') AS n")[["n"]], 1)
+  rm(lease)
+  invisible(gc())
+  expect_false(DBI::dbIsValid(conn))
+})
+
+local({
+  conn = DBI::dbConnect(duckdb::duckdb())
+  on.exit(DBI::dbDisconnect(conn, shutdown = TRUE))
+  DBI::dbExecute(conn, "CREATE TABLE retired_parent(id INTEGER PRIMARY KEY)")
+  DBI::dbExecute(conn, "CREATE TABLE caller_child(id INTEGER REFERENCES retired_parent(id))")
+  lease = dbreg:::fitted_resource_lease(dbreg:::fitted_resource_session(conn), tables = "retired_parent")
+  rm(lease)
+  invisible(gc())
+  expect_error(dbreg:::flush_retired_resources(conn, quiet = FALSE), "Could not release retired")
+  expect_true(DBI::dbExistsTable(conn, "retired_parent"))
+  DBI::dbExecute(conn, "DROP TABLE caller_child")
+  dbreg:::flush_retired_resources(conn, quiet = FALSE)
+  expect_false(DBI::dbExistsTable(conn, "retired_parent"))
+  # Successful cleanup no longer owns a name reused by the caller.
+  DBI::dbWriteTable(conn, "retired_parent", data.frame(x = 7))
+  dbreg:::flush_retired_resources(conn, quiet = FALSE)
+  expect_equal(DBI::dbReadTable(conn, "retired_parent")[["x"]], 7)
+})

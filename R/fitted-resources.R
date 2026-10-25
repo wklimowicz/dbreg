@@ -12,7 +12,53 @@ fitted_resource_valid_connection = function(conn) {
   !is.null(conn) && isTRUE(tryCatch(DBI::dbIsValid(conn), error = function(e) FALSE))
 }
 
+# Abandoned leases on caller sessions are retired without calling a driver.
+# Database work runs only at explicit, synchronous package entry points.
+.dbreg_retired_resources = new.env(parent = emptyenv())
+
+retire_fitted_resources = function(lease) {
+  session = lease[["session"]]
+  key = basename(tempfile("retired_"))
+  .dbreg_retired_resources[[key]] = list(conn = session[["conn"]],
+    tables = lease[["tables"]], views = lease[["views"]])
+  lease[["tables"]] = lease[["views"]] = character()
+  lease[["released"]] = TRUE
+  session[["references"]] = session[["references"]] - 1L
+  if (session[["references"]] == 0L) {
+    session[["closed"]] = TRUE
+    session[["conn"]] = NULL
+  }
+  invisible(NULL)
+}
+
+flush_retired_resources = function(conn, quiet = TRUE) {
+  errors = character()
+  for (key in ls(.dbreg_retired_resources, all.names = TRUE)) {
+    entry = .dbreg_retired_resources[[key]]
+    if (!fitted_resource_valid_connection(entry[["conn"]])) {
+      rm(list = key, envir = .dbreg_retired_resources)
+      next
+    }
+    if (!fitted_resource_same_connection(conn, entry[["conn"]])) next
+    # Detach before driver calls: GC may append new entries during a query.
+    rm(list = key, envir = .dbreg_retired_resources)
+    for (kind in c("views", "tables")) for (name in rev(entry[[kind]])) {
+      error = tryCatch({ drop_owned_relation(conn, name, kind); NULL }, error = identity)
+      if (is.null(error)) entry[[kind]] = setdiff(entry[[kind]], name) else
+        errors = c(errors, conditionMessage(error))
+    }
+    if (length(c(entry[["views"]], entry[["tables"]]))) .dbreg_retired_resources[[key]] = entry
+  }
+  if (length(errors) && !quiet) stop("Could not release retired database state: ",
+    paste(errors, collapse = "; "), call. = FALSE)
+  invisible(NULL)
+}
+
 fitted_resource_session = function(conn, own_conn = FALSE) {
+  flush_retired_resources(conn)
+  if (isTRUE(own_conn) && identical(detect_backend(conn)[["name"]], "duckdb")) {
+    DBI::dbExecute(conn, "SET threads = 1")
+  }
   inherited = attr(conn, "dbreg_resource_lease", exact = TRUE)
   if (!is.null(inherited)) {
     fitted_resource_connection(inherited)
@@ -87,6 +133,7 @@ fitted_resource_connection = function(lease) {
   if (isTRUE(session[["closed"]]) || !fitted_resource_valid_connection(session[["conn"]])) {
     stop("Retained database state requires its live owning session; reconnecting or deserializing a handle cannot restore it.", call. = FALSE)
   }
+  flush_retired_resources(session[["conn"]])
   session[["conn"]]
 }
 
@@ -98,6 +145,7 @@ fitted_resource_release = function(lease, quiet = FALSE) {
   if (isTRUE(lease[["released"]])) return(invisible(NULL))
   session = lease[["session"]]
   conn = session[["conn"]]
+  flush_retired_resources(conn, quiet = quiet)
   errors = character()
   if (fitted_resource_valid_connection(conn)) {
     backend = detect_backend(conn)
@@ -136,7 +184,13 @@ fitted_resource_release = function(lease, quiet = FALSE) {
 }
 
 fitted_resource_finalize = function(lease) {
-  try(fitted_resource_release(lease, quiet = TRUE), silent = TRUE)
+  if (!is.environment(lease) || isTRUE(lease[["released"]])) return(invisible(NULL))
+  session = lease[["session"]]
+  if (isTRUE(session[["own_conn"]]) && session[["references"]] == 1L) {
+    try(fitted_resource_release(lease, quiet = TRUE), silent = TRUE)
+  } else {
+    retire_fitted_resources(lease)
+  }
   invisible(NULL)
 }
 
@@ -147,6 +201,10 @@ fitted_resource_finalize = function(lease) {
 #' Calling `close()` repeatedly is safe. Copies of a model share their resource
 #' lease, so closing one also releases the database state used by those copies.
 #' A model-owned connection closes when its last model or prediction lease ends.
+#' Abandoned state on a caller-owned connection is queued without executing SQL
+#' during garbage collection. It is released at the next synchronous package
+#' operation on that connection; call `close()` for immediate cleanup. Private
+#' retained DuckDB sessions use one worker thread and close when abandoned.
 #' Live database state cannot be restored by serializing its connection handle.
 #'
 #' @param con A fitted `dbreg` or `dbglm` model.

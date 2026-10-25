@@ -7,7 +7,7 @@
 expand_i_term(spec, col_info, k, keep_all_levels = FALSE)
 }
 \arguments{
-\item{spec}{Result of [parse_i_term()].}
+\item{spec}{Result of [parse_sql_i_term()].}
 
 \item{k}{Term index (to make aliases unique).}
 }

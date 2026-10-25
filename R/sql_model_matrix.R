@@ -77,7 +77,7 @@ sql_model_matrix = function(
     ))
   }
   env = environment(formula)
-  i_specs = lapply(term_labels, parse_i_term, env = if (is.null(env)) baseenv() else env)
+  i_specs = lapply(term_labels, parse_sql_i_term, env = if (is.null(env)) baseenv() else env)
 
   # Get column types and factor levels from database (an i() factor is
   # expanded by level whatever its type)
@@ -92,7 +92,7 @@ sql_model_matrix = function(
 # The fitted-design path supplies saved levels instead of discovering them from
 # newdata. Both paths use exactly the same expansion and reference decisions.
 sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep = "_x_",
-                                      fe_vars = character(), intercept = TRUE, fold_case = FALSE, i_specs = lapply(term_labels, parse_i_term)) {
+                                      fe_vars = character(), intercept = TRUE, fold_case = FALSE, i_specs = lapply(term_labels, parse_sql_i_term)) {
   # SQL-safe aliases for factor dummies, one per (variable, level), computed
   # once so that every term uses the same alias. They avoid the model's
   # variable names and each other, and follow the backend's case rules.
@@ -293,7 +293,7 @@ i_template = function(factor_var, var, ref, keep, bin, ref2, keep2, bin2) NULL
 #'   `f`, interacted variable `var` and the `ref` and `keep` levels (each
 #'   `NULL` if absent or not evaluated).
 #' @keywords internal
-parse_i_term = function(term, env = NULL) {
+parse_sql_i_term = function(term, env = NULL) {
   e = tryCatch(str2lang(term), error = function(e) NULL)
   if (!is.call(e) || !identical(e[[1]], as.name("i"))) {
     return(NULL)
@@ -337,7 +337,7 @@ parse_i_term = function(term, env = NULL) {
 #' Without `var` or `ref`, `i(f)` drops the first level, like a factor main
 #' effect (unless `keep_all_levels`). Columns get opaque aliases, since level
 #' text is arbitrary.
-#' @param spec Result of [parse_i_term()].
+#' @param spec Result of [parse_sql_i_term()].
 #' @param k Term index (to make aliases unique).
 #' @keywords internal
 expand_i_term = function(spec, col_info, k, keep_all_levels = FALSE) {

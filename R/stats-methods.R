@@ -230,7 +230,7 @@ predict.dbreg = function(
   # i() terms: build their columns directly (model.matrix() can't expand them)
   i_cols = object[["i_columns"]]
   if (NROW(i_cols)) {
-    terms_rhs = terms_rhs[vapply(terms_rhs, function(t) is.null(parse_i_term(t)), logical(1))]
+    terms_rhs = terms_rhs[vapply(terms_rhs, function(t) is.null(parse_sql_i_term(t)), logical(1))]
     for (k in seq_len(nrow(i_cols))) {
       col = as.numeric(as.character(newdata[[i_cols[["var"]][k]]]) == i_cols[["level"]][k])
       if (!is.na(i_cols[["by"]][k])) col = col * newdata[[i_cols[["by"]][k]]]

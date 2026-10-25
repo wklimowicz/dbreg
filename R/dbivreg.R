@@ -225,7 +225,7 @@ process_dbivreg_inputs = function(inputs) {
     inputs,
     c(exog_design[["factor_levels"]], endog_design[["factor_levels"]], instr_design[["factor_levels"]]),
     rbind(exog_design[["level_aliases"]], endog_design[["level_aliases"]], instr_design[["level_aliases"]]),
-    rbind(exog_design[["i_columns"]], endog_design[["i_columns"]], instr_design[["i_columns"]])
+    i_columns = rbind(exog_design[["i_columns"]], endog_design[["i_columns"]], instr_design[["i_columns"]])
   )
   # Without an intercept, factor coding of the endogenous/instrument blocks
   # would depend on the combined X and Z designs; not supported yet

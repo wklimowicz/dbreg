@@ -1011,11 +1011,11 @@ dbreg_alternating_projections = function(
       alt_table = tmp
     } else {
       for (fe_k in fe) {
-      mean_sql = sql_ap_group_means(cur_table, vars_all, fe_k)
-      create_temp_table_as(conn, mean_table, mean_sql, backend)
+        mean_sql = sql_ap_group_means(cur_table, vars_all, fe_k)
+        create_temp_table_as(conn, mean_table, mean_sql, backend)
 
-      update_sql = sql_ap_join_projection(cur_table, mean_table, id_cols, vars_all, fe_k)
-      create_temp_table_as(conn, alt_table, update_sql, backend)
+        update_sql = sql_ap_join_projection(cur_table, mean_table, id_cols, vars_all, fe_k)
+        create_temp_table_as(conn, alt_table, update_sql, backend)
 
         drop_table_if_exists(conn, cur_table, backend)
         drop_table_if_exists(conn, mean_table, backend)

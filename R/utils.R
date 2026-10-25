@@ -325,7 +325,9 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
   has_intercept = attr(tt, "intercept") == 1L
   xvars = model_vars(rhs1)  # unique variable names
   # i() terms need SQL expansion, like interactions
-  has_i = vapply(term_labels, function(t) !is.null(parse_i_term(t)), logical(1))
+  has_i = vapply(term_labels, function(t) {
+    !is.null(if (allow_i) parse_i_term(t) else parse_sql_i_term(t))
+  }, logical(1))
   has_interactions = any(grepl(":", term_labels)) || any(has_i)
   has_transformations = any(grepl("^I\\(", term_labels))
   
@@ -336,7 +338,11 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
         stop("Unsupported regressor expression: ", deparse(expr), call. = FALSE)
       }
       if (allow_i && !is.null(parse_i_term(expr))) return(invisible(NULL))
+      if (!allow_i && !is.null(parse_sql_i_term(paste(deparse(expr), collapse = "")))) return(invisible(NULL))
       call_name = as.character(expr[[1]])
+      if (!allow_i && call_name %in% c(":", "*") && contains_i_term(expr)) {
+        stop("i() terms can't be interacted with other variables yet.", call. = FALSE)
+      }
       if (call_name == "-") {
         args = as.list(expr)[-1]
         last = args[[length(args)]]
@@ -739,7 +745,7 @@ restore_result_names = function(result, inputs) {
 check_simple_terms = function(term_labels, what = "regressors", allow_interactions = TRUE) {
   is_simple = function(term) {
     # fixest-style i() terms are expanded by sql_model_matrix()
-    if (allow_interactions && !is.null(parse_i_term(term))) return(TRUE)
+    if (allow_interactions && !is.null(parse_sql_i_term(term))) return(TRUE)
     parts = if (allow_interactions) strsplit(term, ":", fixed = TRUE)[[1]] else term
     all(vapply(parts, function(x) {
       isTRUE(tryCatch(is.name(str2lang(x)), error = function(e) FALSE))

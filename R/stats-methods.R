@@ -204,13 +204,14 @@ predict.dbreg = function(
 
   required = unique(c(all.vars(stats::formula(fml, lhs = 0, rhs = 1)), object[["offset"]],
     unlist(object[["composite_fes"]]), setdiff(fe, names(object[["composite_fes"]])),
+    unlist(object[["varying_slopes"]]),
     if (strategy %in% c("demean", "mundlak")) object[["weights"]],
     if (strategy == "demean" && yvar %in% names(newdata)) yvar))
   if (stored) required = names(newdata)
   missing = setdiff(required, names(newdata))
   if (length(missing)) stop("newdata is missing required columns: ", paste(missing, collapse = ", "), call. = FALSE)
   n_new = nrow(newdata)
-  valid = Reduce(`&`, lapply(newdata[, required, drop = FALSE], function(x) !is.na(x)))
+  valid = if (length(required)) Reduce(`&`, lapply(newdata[, required, drop = FALSE], function(x) !is.na(x))) else rep(TRUE, n_new)
   if (!any(valid)) {
     blank = rep(NA_real_, n_new)
     return(if (interval == "none") blank else data.frame(fit = blank, lwr = blank, upr = blank))
@@ -230,7 +231,15 @@ predict.dbreg = function(
   i_cols = object[["i_columns"]]
   if (strategy %in% c("compress", "moments")) {
     # FE enter as dummies (compress)
-    terms_rhs = c(terms_rhs, fe)
+    prediction_trends = object[["compressed_design"]][["prediction_trends"]]
+    if (length(prediction_trends)) newdata = compressed_trend_data(newdata, prediction_trends, object[["compressed_design"]][["trend_centers"]])
+    nuisance = unlist(lapply(seq_along(fe), function(i) {
+      slopes = object[["varying_slopes"]][[i]]
+      if (length(prediction_trends)) slopes = names(prediction_trends)[match(slopes, prediction_trends)]
+      if (length(slopes)) paste(vapply(fe[i], function(name) paste(deparse(as.name(name), backtick = TRUE), collapse = ""), character(1)),
+        vapply(slopes, function(name) paste(deparse(as.name(name), backtick = TRUE), collapse = ""), character(1)), sep = ":") else character()
+    }), use.names = FALSE)
+    terms_rhs = c(terms_rhs, fe, nuisance)
   }
   if (!length(terms_rhs)) {
     terms_rhs = "1"
@@ -240,10 +249,16 @@ predict.dbreg = function(
     spec = object[["compressed_design"]]
     data = expand_newdata_i(stats::formula(fml, lhs = 0, rhs = 1), newdata, i_cols)[["data"]]
     names(data) = unname(spec[["source_names"]][names(data)])
+    data = compressed_trend_data(data, spec[["trend_sources"]], spec[["trend_centers"]])
     mm = fitted_model_matrix(spec[["formula"]], data)
     mm = mm[, names(spec[["columns"]]), drop = FALSE]
     colnames(mm) = unname(spec[["columns"]])
-  } else mm = build_newdata_design(fml_mm, newdata, object[["factor_levels"]], i_cols)
+  } else {
+    mm = build_newdata_design(fml_mm, newdata, object[["factor_levels"]], i_cols)
+    for (alias in names(object[["compressed_design"]][["prediction_trends"]])) {
+      colnames(mm) = gsub(alias, coef_var_name(object[["compressed_design"]][["prediction_trends"]][[alias]]), colnames(mm), fixed = TRUE)
+    }
+  }
   if (strategy == "mundlak") {
     # Group means of each design column, one set per FE
     mm_means = mapply(
@@ -263,7 +278,7 @@ predict.dbreg = function(
       call. = FALSE
     )
   }
-  mm = mm[, names(betas), drop = FALSE]
+  mm = if (length(betas)) mm[, names(betas), drop = FALSE] else matrix(0, nrow(newdata), 0L)
 
   if (strategy == "demean") {
     # demean: sweep the FE out of the regressors (and recover the outcome's
@@ -271,7 +286,8 @@ predict.dbreg = function(
     has_y = yvar %in% names(newdata)
     groups = lapply(fe, function(f) newdata[[f]])
     weights = if (is.null(object[["weights"]])) NULL else newdata[[object[["weights"]]]]
-    sweep_fe = function(v) demean_prediction_data(v, groups, weights)
+    slopes = lapply(object[["varying_slopes"]], function(vars) newdata[vars])
+    sweep_fe = function(v) demean_prediction_data(v, groups, weights, slopes = slopes)
     mm = sweep_fe(mm)
     if (has_y) {
       y = as.numeric(newdata[[yvar]]) - linear_prediction_offset(object, newdata)

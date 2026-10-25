@@ -106,3 +106,45 @@ dbreg_projection_certificate = function(conn, table, fe, columns, nobs) {
       !isTRUE(as.numeric(row[["count_sum"]]) == nobs * length(fe))) return(Inf)
   max(vapply(row[paste0("r", seq_along(columns))], as.numeric, numeric(1)))
 }
+
+# General linear nuisance projection, including group-specific slopes. The
+# shared projector only solves weighted group equations; no IRLS/family is used.
+dbreg_varying_projections = function(inputs, x_sql, x_names, max_iter, tol) {
+  env2env(inputs, environment(), c("conn", "from_statement", "fe", "yvar", "weights", "cluster_var"))
+  resources = fit_resources()
+  resources[["conn"]] = conn
+  on.exit(release_fit_resources(resources), add = TRUE)
+  manager = fit_table_manager(conn, resources)
+  create = manager[["create"]]
+  drop = manager[["drop"]]
+  ids = unique(c(fe, cluster_var, inputs[["retained_key_safe"]]))
+  id_names = paste0("__dbreg_vary_id", seq_along(ids))
+  columns = paste0("__dbreg_vary_v", seq_along(c(yvar, x_names)))
+  trends = unique(unlist(inputs[["fe_slopes"]], use.names = FALSE))
+  trend_names = stats::setNames(paste0("__dbreg_vary_t", seq_along(trends)), trends)
+  fields = c("ROW_NUMBER() OVER () AS __dbglm_key", paste(ids, "AS", id_names),
+    paste(sql_cast_double(c(yvar, x_sql), conn), "AS", columns),
+    paste(sql_cast_double(trends, conn), "AS", unname(trend_names)),
+    paste(if (is.null(weights)) "1.0" else sql_cast_double(weights, conn), "AS w"))
+  source = create(paste("SELECT", paste(fields, collapse = ","), from_statement))
+  weight_max = as.numeric(backend_get_query(conn, paste("SELECT MAX(w) AS m FROM", source))[["m"]])
+  if (!is.finite(weight_max) || weight_max <= 0) stop("No positive-weight observations remain.", call. = FALSE)
+  weight_scale = if (weight_max < 1 || weight_max > 2) 2^floor(log2(weight_max)) else 1
+  w = paste0("w/(", dbglm_number(weight_scale), ")")
+  centers = as.numeric(backend_get_query(conn, paste("SELECT", paste(sprintf(
+    "SUM((%s)*%s)/SUM(%s) AS c%d", w, columns, w, seq_along(columns)), collapse = ","), "FROM", source))[1, ])
+  coded_fe = paste0("__dbreg_vary_f", seq_along(fe))
+  attr(coded_fe, "slopes") = lapply(inputs[["fe_slopes"]], function(vars) unname(trend_names[vars]))
+  ranked = paste0("(", sql_rank_fixed_effects(conn, source, as.list(id_names[match(fe, ids)]), coded_fe), ")")
+  encoded = create(paste("SELECT", paste(c("__dbglm_key", coded_fe, unname(trend_names),
+    sprintf("(%s-(%s)) AS %s", columns, dbglm_number(centers), columns), paste(w, "AS w")), collapse = ","), "FROM", ranked))
+  control = dbglm_control(fe_tol = min(tol, 1e-12), fe_max_iter = max_iter)
+  projected = solve_partial_wls(conn, encoded, columns, coded_fe, control, create, drop, response = FALSE)
+  result = create(paste0("SELECT ", paste(c(paste0("s.", id_names, " AS ", ids),
+    paste0("p.", columns, " AS ", c(yvar, x_names), "_tilde"), "s.w AS __w"), collapse = ","),
+    " FROM ", projected[["table"]], " p JOIN ", source, " s ON p.__dbglm_key=s.__dbglm_key"))
+  name = gsub('["`]', "", result)
+  resources[["tables"]] = setdiff(resources[["tables"]], name)
+  list(table = result, base_table = NULL, all_tables = result,
+    iterations = projected[["cycles"]], max_abs = projected[["residual"]], method = projected[["method"]])
+}

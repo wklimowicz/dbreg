@@ -38,7 +38,8 @@ sql_prediction_equation = function(object, context, source, dictionaries, conn, 
   } else if (context[["kind"]] == "portable") {
     operations = state[["specification"]][["operations"]]
     multipliers = vapply(operations, function(op) if (is.null(op[["variable"]])) "1.0" else
-      paste0("r.", source[["varying"]][[op[["variable"]]]]), character(1))
+      paste0("(r.", source[["varying"]][[op[["variable"]]]], "-(",
+        dbglm_number(if (is.null(op[["center"]])) 0 else op[["center"]]), "))"), character(1))
     contribution = vapply(seq_along(operations), function(j) paste0("(", multipliers[[j]], ")*g", operations[[j]][["group"]], ".gamma", j), character(1))
     if (!is.null(null) && ncol(null)) {
       fe_n = state[["coefficients"]][["fe_n"]]

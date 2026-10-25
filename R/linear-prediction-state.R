@@ -21,14 +21,21 @@ finalize_linear_prediction = function(result, inputs) {
   taken = unique(c(inputs[["yvar"]], inputs[["xvars"]], inputs[["fe"]], unlist(components),
     inputs[["weights"]], inputs[["cluster_var"]], inputs[["row_id_safe"]]))
   fe = safe_identifiers(paste0("__dbglm_fe", seq_along(components)), taken = taken, fold_case = folds_identifier_case(conn))
-  attr(fe, "slopes") = rep(list(NULL), length(fe))
+  trend_sources = unique(unlist(inputs[["fe_slopes"]], use.names = FALSE))
+  trend_columns = if (length(trend_sources)) safe_identifiers(
+    paste0("__dbglm_prediction_t", seq_along(trend_sources)), taken = c(taken, fe),
+    fold_case = folds_identifier_case(conn)) else character()
+  trend_aliases = stats::setNames(trend_columns, restore_names(trend_sources, inputs[["source_map"]]))
+  attr(fe, "slopes") = lapply(inputs[["fe_slopes"]], function(vars) trend_columns[match(vars, trend_sources)])
   ranked = paste0("(", sql_rank_fixed_effects(conn, source, components, fe), ")")
   x = if (length(design_names)) paste0("__dbglm_prediction_x", seq_along(design_names)) else character()
   weights = if (is.null(inputs[["weights"]])) "1.0" else q(inputs[["weights"]])
   summary_terms = c("COUNT(*) AS n", paste0("MAX(", weights, ") AS weight_max"),
     paste0("AVG(CAST(", q(inputs[["yvar"]]), " AS DOUBLE)) AS y_center"),
     sprintf("AVG(CAST((%s) AS DOUBLE)) AS center%d", design[["select_exprs"]], seq_along(x)),
-    sprintf("COUNT(DISTINCT %s) AS size%d", fe, seq_along(fe)))
+    sprintf("COUNT(DISTINCT %s) AS size%d", fe, seq_along(fe)),
+    if (length(trend_sources)) sprintf("MIN(%1$s)/2.0+MAX(%1$s)/2.0 AS trend_center%2$d",
+      sql_cast_double(q(trend_sources), conn), seq_along(trend_sources)))
   row = backend_get_query(conn, paste("SELECT", paste(summary_terms, collapse = ","), "FROM", ranked))
   n = as.numeric(row[["n"]])
   if (n != result[["nobs_orig"]]) stop("The OLS sample changed before prediction recovery.", call. = FALSE)
@@ -38,23 +45,27 @@ finalize_linear_prediction = function(result, inputs) {
   sizes = vapply(seq_along(fe), function(i) as.numeric(row[[paste0("size", i)]]), numeric(1))
   weight_max = as.numeric(row[["weight_max"]])
   weight_scale = if (weight_max < 1) 2^floor(log2(weight_max)) else 1
+  trend_centers = vapply(seq_along(trend_sources), function(i) as.numeric(row[[paste0("trend_center", i)]]), numeric(1))
+  attr(trend_aliases, "centers") = stats::setNames(trend_centers, names(trend_aliases))
   keys = prediction_key_fields(conn, components)
   fields = c(fe, keys[["fields"]],
     paste0("(CAST(", q(inputs[["yvar"]]), " AS DOUBLE)-(", dbglm_number(y_center), ")) AS eta"),
     "CAST(0.0 AS DOUBLE) AS __dbglm_o",
     paste0("CAST(", weights, " AS DOUBLE)/(", dbglm_number(weight_scale), ") AS __dbglm_a"),
     "CAST(1.0 AS DOUBLE) AS w",
+    if (length(trend_sources)) paste0("(", sql_cast_double(q(trend_sources), conn), "-(",
+      dbglm_number(trend_centers), ")) AS ", trend_columns),
     sprintf("(CAST((%s) AS DOUBLE)-(%s)) AS %s", design[["select_exprs"]], dbglm_number(center), x))
   frame = paste0("(", backend_sql(conn, paste("SELECT", paste(fields, collapse = ","), "FROM", ranked)), ")")
   manager = fit_table_manager(conn, inputs[["sample_resources"]])
   public_components = lapply(components, restore_names, map = inputs[["source_map"]])
   result[["fitted_state"]] = build_prediction_state(conn, frame, frame, fe, public_components,
-    x, design_names, center, character(), sizes, manager[["create"]], manager[["drop"]], n,
+    x, design_names, center, trend_aliases, sizes, manager[["create"]], manager[["drop"]], n,
     dictionary_components = keys[["columns"]], beta = unname(full_beta),
     expected_rss = attr(result[["vcov"]], "rss") / weight_scale, constant = y_center,
     recovery_control = list(tol = inputs[["fe_tol"]], max_iter = inputs[["fe_max_iter"]]))
   levels = inputs[["factor_levels"]]
-  if (length(levels)) names(levels) = restore_names(names(levels), inputs[["source_map"]])
+  if (length(levels)) names(levels) = restore_term_names(names(levels), inputs[["source_map"]])
   result[["factor_levels"]] = levels
   result
 }
@@ -67,7 +78,8 @@ predict_linear_state = function(object, newdata, interval) {
   state = object[["fitted_state"]]
   database = identical(state[["prediction"]][["storage"]], "database")
   if (database) fitted_resource_connection(object[["resource_state"]])
-  required = unique(c(all.vars(rhs), object[["offset"]], unlist(lapply(state[["specification"]][["dictionaries"]], `[[`, "columns"))))
+  required = unique(c(all.vars(rhs), object[["offset"]], unlist(lapply(state[["specification"]][["dictionaries"]], `[[`, "columns")),
+    unlist(lapply(state[["specification"]][["operations"]], `[[`, "variable"))))
   absent = setdiff(required, names(data))
   if (length(absent)) stop("newdata is missing required columns: ", paste(absent, collapse = ", "), call. = FALSE)
   valid = rep(TRUE, nrow(data))
@@ -91,7 +103,7 @@ predict_linear_state = function(object, newdata, interval) {
     positions = positions[known]
   }
   levels = object[["factor_levels"]]
-  levels = levels[intersect(names(levels), all.vars(rhs))]
+  levels = levels[intersect(names(levels), c(all.vars(rhs), names(explicit_factor_sources(attr(stats::terms(rhs), "term.labels")))))]
   design = as.matrix(build_newdata_design(rhs, rows, levels, object[["i_columns"]]))
   absent = setdiff(state[["specification"]][["design_names"]], colnames(design))
   if (length(absent)) stop("Could not reconstruct fitted OLS design: ", paste(absent, collapse = ", "), call. = FALSE)

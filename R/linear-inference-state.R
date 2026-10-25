@@ -50,7 +50,7 @@ finalize_linear_inference = function(result, inputs) {
   if (!identical(names, names(coef.dbreg(result)))) stop("Retained inference coefficients do not match the fitted design.", call. = FALSE)
   state[["coefficient_names"]] = names
   dimnames(state[["bread"]]) = list(names, names)
-  state[["K_model"]] = length(names) + if (length(state[["fe_sizes"]])) sum(state[["fe_sizes"]]) - length(state[["fe_sizes"]]) + 1 else 0
+  state[["K_model"]] = length(names) + linear_fe_df(inputs, state[["fe_sizes"]])
   state[["default_ssc"]] = dbglm_ssc(list(K.fixef = if (inputs[["ssc"]] == "full") "full" else "nonnested"))
   state[["default_vcov"]] = if (inputs[["vcov_type_req"]] == "cluster")
     stats::reformulate(restore_names(inputs[["cluster_var"]], inputs[["source_map"]]), env = baseenv()) else inputs[["vcov_type_req"]]

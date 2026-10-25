@@ -14,7 +14,11 @@ prediction_factor_sources = function(object) {
     variables = names(object[["model_spec"]][["factor_levels"]])
     for (name in intersect(variables, names(object[["factor_sources"]]))) variables[variables == name] = object[["factor_sources"]][[name]]
     unique(variables)
-  } else intersect(names(object[["factor_levels"]]), all.vars(stats::formula(object[["fml"]], lhs = 0, rhs = 1)))
+  } else {
+    rhs = stats::formula(object[["fml"]], lhs = 0, rhs = 1)
+    unique(c(intersect(names(object[["factor_levels"]]), all.vars(rhs)),
+      unname(explicit_factor_sources(attr(stats::terms(rhs), "term.labels")))))
+  }
 }
 
 prediction_dataframe_source = function(object, data, required) {

@@ -42,7 +42,11 @@ standard R syntax (\code{:} for interactions, \code{*} for main effects plus
 interaction). \code{fixest}-style \code{i()} terms are also supported, e.g.
 \code{i(period, treat, ref = 5)} for event studies; see
 \code{\link[=sql_model_matrix]{sql_model_matrix()}} for details. Squares and cubes use \code{I(x^2)} and
-\code{I(x^3)}; combine fixed effects as tuples with \code{fe1^fe2}.}
+\code{I(x^3)}; combine fixed effects as tuples with \code{fe1^fe2}. Use \code{factor(x)}
+to treat a numeric column as categorical, and \code{y ~ 1} for an intercept-only
+regression. \code{group[trend]} or \code{group[trend1, trend2]} absorbs group intercepts
+and group-specific slopes with the demean or compress strategy. These remain
+OLS fits, with the same covariance and retention controls as other formulas.}
 
 \item{conn}{Database connection, e.g. created with
 \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
@@ -125,7 +129,8 @@ default to the simple \code{"full"} option.}
 \item{sql_only}{Return SQL without estimating coefficients? Multiway
 demeaning returns a \code{dbreg_query_plan} with executable templates for the
 iterative projection fallback; other strategies return their primary query.
-Schema and strategy-selection queries may still run. Default is \code{FALSE}.}
+Schema and strategy-selection queries may still run. Default is \code{FALSE}.
+Varying-slope projection plans are not implemented; requesting one errors.}
 
 \item{data_only}{Logical indicating whether only the compressed dataset
 or moment summary should be returned (i.e., no regression is run).

@@ -14,7 +14,11 @@
 #' interaction). `fixest`-style `i()` terms are also supported, e.g.
 #' `i(period, treat, ref = 5)` for event studies; see
 #' [sql_model_matrix()] for details. Squares and cubes use `I(x^2)` and
-#' `I(x^3)`; combine fixed effects as tuples with `fe1^fe2`.
+#' `I(x^3)`; combine fixed effects as tuples with `fe1^fe2`. Use `factor(x)`
+#' to treat a numeric column as categorical, and `y ~ 1` for an intercept-only
+#' regression. `group[trend]` or `group[trend1, trend2]` absorbs group intercepts
+#' and group-specific slopes with the demean or compress strategy. These remain
+#' OLS fits, with the same covariance and retention controls as other formulas.
 #' @param conn Database connection, e.g. created with
 #' \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
 #' ephemeral (in-memory). If no connection is provided, then an ephemeral
@@ -95,6 +99,7 @@
 #'   demeaning returns a `dbreg_query_plan` with executable templates for the
 #'   iterative projection fallback; other strategies return their primary query.
 #'   Schema and strategy-selection queries may still run. Default is `FALSE`.
+#'   Varying-slope projection plans are not implemented; requesting one errors.
 #' @param data_only Logical indicating whether only the compressed dataset
 #'   or moment summary should be returned (i.e., no regression is run).
 #'   Moment summaries use centered coordinates when an intercept is present
@@ -497,6 +502,9 @@ dbreg = function(
   validate_fit_diagnostics(inputs)
   process_dbreg_inputs(inputs)
 
+  if (strategy == "mundlak" && length(unlist(inputs[["fe_slopes"]]))) {
+    stop("Varying slopes require the demean or compress strategy.", call. = FALSE)
+  }
   # Choose strategy (mutates inputs[["is_balanced"]], inputs[["compression_ratio_est"]])
   chosen_strategy = choose_strategy(inputs)
   if ((retain_prediction(retain) || retain_sample(retain)) && length(inputs[["fe"]]) && chosen_strategy == "mundlak") {
@@ -550,7 +558,10 @@ process_dbreg_inputs = function(inputs) {
   # Evaluate selectors once, before multiple estimation/prediction passes.
   fml = freeze_i_selectors(Formula::Formula(fml))
   # Parse (and validate) the formula with the user's names
-  fml_parsed = parse_regression_formula(fml, allow_extended = TRUE)
+  fml_parsed = parse_regression_formula(fml, allow_empty = TRUE, allow_extended = TRUE)
+  if (!length(fml_parsed[["xvars"]]) && !fml_parsed[["has_intercept"]] && !length(fml_parsed[["fe"]])) {
+    stop("A model requires regressors, an intercept, or fixed effects.", call. = FALSE)
+  }
   inputs[["original_fml"]] = fml_parsed[["fml"]]
   inputs[["fe_labels"]] = fml_parsed[["fe_labels"]]
   refs = validate_factor_refs(inputs[["factor_refs"]], fml_parsed[["xvars"]])
@@ -568,10 +579,17 @@ process_dbreg_inputs = function(inputs) {
   source_map = name_map
   inputs[["row_id_safe"]] = src[["to_safe"]](inputs[["row_id"]])
   inputs[["retained_key_safe"]] = src[["to_safe"]](inputs[["retained_source"]][["key"]])
-  fml_parsed = parse_regression_formula(src[["to_safe"]](fml), allow_extended = TRUE)
+  fml_parsed = parse_regression_formula(src[["to_safe"]](fml), allow_empty = TRUE, allow_extended = TRUE)
   inputs[["prediction_fe_components"]] = fml_parsed[["fe_components"]]
   source_xvars = fml_parsed[["xvars"]]
   source_fes = unique(unlist(fml_parsed[["fe_components"]]))
+  fe_slopes = fml_parsed[["fe_slopes"]]
+  inputs[["fe_slopes"]] = fe_slopes
+  trend_vars = unique(unlist(fe_slopes, use.names = FALSE))
+  if (length(trend_vars)) {
+    schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT", paste(trend_vars, collapse = ","), from_statement), 0, detect_backend(conn)[["name"]]))
+    if (any(!vapply(schema, is.numeric, logical(1)))) stop("Varying-slope columns must be numeric.", call. = FALSE)
+  }
   if (length(refs)) names(refs) = src[["to_safe"]](names(refs))
   inputs[["factor_refs"]] = refs
   composite = linear_composite_frame(conn, from_statement, fml_parsed)
@@ -595,6 +613,7 @@ process_dbreg_inputs = function(inputs) {
   term_labels = fml_parsed[["term_labels"]]
   has_interactions = fml_parsed[["has_interactions"]] || fml_parsed[["has_transformations"]]
   fe = fml_parsed[["fe"]]
+  if (length(fe)) attr(fe, "slopes") = fe_slopes
   # With FE the intercept is absorbed, so `- 1` / `0 +` only matters without FE
   intercept = fml_parsed[["has_intercept"]] || length(fe) > 0
 
@@ -621,7 +640,7 @@ process_dbreg_inputs = function(inputs) {
 
   from_statement = filter_estimation_sample(
     from_statement,
-    vars = c(yvar, xvars, source_fes, cluster_var),
+    vars = c(yvar, xvars, source_fes, trend_vars, cluster_var),
     weights = weights,
     drop_missings = drop_missings,
     conn = conn
@@ -895,6 +914,9 @@ dbreg_alternating_projections = function(
   if (!positive(tol)) {
     stop("[dbreg] dbreg.ap_tol must be a positive number.", call. = FALSE)
   }
+  if (length(unlist(inputs[["fe_slopes"]]))) {
+    return(dbreg_varying_projections(inputs, xvars_sql, xvar_names, max_iter, tol))
+  }
   solver = getOption("dbreg.ap_solver", "auto")
   if (!is.character(solver) || length(solver) != 1L || is.na(solver) ||
       !solver %in% c("auto", "moments", "iterative")) {
@@ -1085,7 +1107,7 @@ choose_strategy = function(inputs) {
 
   # Compression ratio estimator
   estimate_compression = function() {
-    key_cols = c(xvars, fe)
+    key_cols = unique(c(xvars, fe, unlist(inputs[["fe_slopes"]], use.names = FALSE)))
     if (!length(key_cols)) {
       return(1)
     }

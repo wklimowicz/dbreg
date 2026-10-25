@@ -133,10 +133,12 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
     used = used + nrow(result)
     result
   }
-  ops = lapply(seq_along(fe), function(i) list(f = fe[i], v = "1.0", group = i, variable = NULL))
+  ops = lapply(seq_along(fe), function(i) list(f = fe[i], v = "1.0", group = i, variable = NULL, center = 0))
   for (i in seq_along(fe)) for (variable in attr(fe, "slopes")[[i]]) {
+    name = names(trend_aliases)[match(variable, trend_aliases)]
+    centers = attr(trend_aliases, "centers")
     ops[[length(ops) + 1L]] = list(f = fe[i], v = variable, group = i,
-      variable = names(trend_aliases)[match(variable, trend_aliases)])
+      variable = name, center = if (is.null(centers)) 0 else centers[[name]])
   }
   source = paste0("(", backend_sql(conn, paste0("SELECT * EXCLUDE(w), __dbglm_a AS w,",
     "(eta-__dbglm_o) AS __dbglm_prediction_target FROM ", working)), ")")
@@ -248,7 +250,7 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
       floor(limit / length(fe)), public_components = unique(components[[i]]))
   })
   list(version = 1L, specification = list(design_names = design_names, design_center = unname(center),
-      dictionaries = dictionaries, operations = lapply(ops, function(op) op[c("group", "variable")])),
+      dictionaries = dictionaries, operations = lapply(ops, function(op) op[c("group", "variable", "center")])),
     coefficients = list(joint = as.numeric(coefficients), starts = sys[["starts"]],
       ids = lapply(info, `[[`, "id"), fe_n = fe_n),
     sample = list(nobs = n), inference = NULL, resources = NULL,
@@ -278,7 +280,8 @@ predict_from_fitted_state = function(state, design, data, groups = NULL, lookup 
     group = ops[[i]][["group"]]
     dictionary = specification[["dictionaries"]][[group]]
     indices[[i]] = coef[["starts"]][i] + match(dictionary[["id"]][groups[[group]]], coef[["ids"]][[i]])
-    values[[i]] = if (is.null(ops[[i]][["variable"]])) rep(1, nrow(data)) else as.numeric(data[[ops[[i]][["variable"]]]])
+    values[[i]] = if (is.null(ops[[i]][["variable"]])) rep(1, nrow(data)) else
+      as.numeric(data[[ops[[i]][["variable"]]]]) - if (is.null(ops[[i]][["center"]])) 0 else ops[[i]][["center"]]
   }
   prediction = prediction_matrix_product(x, coef[["joint"]][coef[["fe_n"]] + seq_len(ncol(x))])
   if (!is.null(state[["prediction"]][["constant"]])) prediction = prediction + state[["prediction"]][["constant"]]

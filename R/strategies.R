@@ -152,7 +152,7 @@ execute_demean_strategy = function(inputs) {
   p_kept = length(xvar_names_kept)
   rss = fit[["rss"]]
   n_fe = length(fe)
-  df_fe = sum(n_fe_levels) - (n_fe - 1)
+  df_fe = linear_fe_df(inputs, n_fe_levels)
   df_res = n_total - p_kept - df_fe
   
   # Compute meat matrix if needed (HC1 or cluster)
@@ -410,6 +410,17 @@ execute_compress_strategy = function(inputs) {
   )
   from_statement = inputs[["from_statement"]]
   composite_columns = unique(unlist(inputs[["composite_fes"]], use.names = FALSE))
+  trends = as.character(unique(unlist(inputs[["fe_slopes"]], use.names = FALSE)))
+  trend_aliases = if (length(trends)) safe_identifiers(paste0("dbreg_compress_trend", seq_along(trends), "__"),
+    taken = c(xvars, fe, yvar, weights, inputs[["cluster_var"]], composite_columns,
+      trends, inputs[["row_id_safe"]], inputs[["retained_key_safe"]])) else character()
+  trend_sources = stats::setNames(trends, trend_aliases)
+  nuisance = unlist(lapply(seq_along(fe), function(i) {
+    slopes = inputs[["fe_slopes"]][[i]]
+    if (length(slopes)) paste(fe[i], trend_aliases[match(slopes, trends)], sep = ":") else character()
+  }), use.names = FALSE)
+  if (length(trends)) inputs[["name_map"]] = c(inputs[["name_map"]], stats::setNames(
+    coef_var_name(restore_names(trends, inputs[["source_map"]])), trend_aliases))
   # catch for sampled (limited) queries
   if (grepl("LIMIT\\s+\\d+\\s*$", from_statement, ignore.case = TRUE)) {
     from_statement = glue("FROM (SELECT * {from_statement})")
@@ -439,7 +450,7 @@ execute_compress_strategy = function(inputs) {
     # Both the compression and clustered score passes must read the expanded
     # columns. Aliases from a SELECT list do not exist in the original source.
     projection = frame_select(yvar, sql_design[["select_exprs"]], xvar_names,
-      id_cols = setdiff(fe, c(yvar, xvar_names)), extra = c(weights, inputs[["cluster_var"]], composite_columns))
+      id_cols = setdiff(fe, c(yvar, xvar_names)), extra = c(weights, inputs[["cluster_var"]], composite_columns, trends))
     from_statement = paste0("FROM (SELECT ", paste(projection, collapse = ", "),
       " ", from_statement, ") dbreg_compress_design")
     xvars_sql = paste(xvar_names, collapse = ", ")
@@ -457,7 +468,7 @@ execute_compress_strategy = function(inputs) {
   all_cols_sql = if (!is.null(fe_sql)) paste(xvars_sql, fe_sql, sep = ", ") else xvars_sql
   extra_components = setdiff(composite_columns, c(xvar_names, fe))
   if (length(extra_components)) all_cols_sql = paste(all_cols_sql, paste(extra_components, collapse = ", "), sep = ", ")
-  group_cols = unique(c(xvar_names, fe, extra_components))
+  group_cols = unique(c(xvar_names, fe, extra_components, trends))
   group_cols_sql = paste(group_cols, collapse = ", ")
   moment_terms = build_weighted_moment_terms(
     y_sql = cell[["y"]],
@@ -468,13 +479,10 @@ execute_compress_strategy = function(inputs) {
   
   query_string = paste0(
     "WITH cte AS (\n    SELECT\n        ",
-    all_cols_sql,
-    ",\n        ",
-    paste(moment_terms, collapse = ",\n        "),
+    paste(c(group_cols, moment_terms), collapse = ",\n        "),
     "\n    ",
     cell[["from"]],
-    "\n    GROUP BY ",
-    group_cols_sql,
+    if (length(group_cols)) paste0("\n    GROUP BY ", group_cols_sql) else "",
     "\n    )\n    SELECT\n    *,\n    sum_wy / sum_w AS mean_Y,\n    sqrt(sum_w) AS wts\n    FROM cte"
   )
 
@@ -542,9 +550,17 @@ execute_compress_strategy = function(inputs) {
     if (is.logical(compressed_dat[[v]])) c(FALSE, TRUE) else levels(factor(compressed_dat[[v]]))
   })
   register_factor_display(inputs, factor_levels, factor_classes = compressed_classes[categorical])
-  matrix_formula = reformulate(c(design_vars, fe), intercept = intercept)
-  X = fitted_model_matrix(matrix_formula, compressed_dat)
-  score_expressions = if (vcov_type_req == "cluster") compressed_score_expressions(conn, matrix_formula, compressed_dat, X, compressed_classes)
+  matrix_formula = reformulate(if (length(c(design_vars, fe, nuisance))) c(design_vars, fe, nuisance) else "1", intercept = intercept)
+  matrix_data = compressed_trend_data(compressed_dat, trend_sources)
+  # Group intercepts absorb any common trend location. Remove it before
+  # forming the nuisance Gram matrix, keeping large calendar origins stable.
+  trend_centers = vapply(matrix_data[trend_aliases], function(value) min(value) / 2 + max(value) / 2, numeric(1))
+  for (alias in trend_aliases) matrix_data[[alias]] = matrix_data[[alias]] - trend_centers[[alias]]
+  X = fitted_model_matrix(matrix_formula, matrix_data)
+  numeric_sql = if (length(trends)) stats::setNames(paste0("(", sql_cast_double(trends, conn), "-(",
+    dbglm_number(trend_centers), "))"), trend_aliases) else character()
+  score_expressions = if (vcov_type_req == "cluster") compressed_score_expressions(conn, matrix_formula,
+    matrix_data, X, c(compressed_classes, stats::setNames(rep("numeric", length(trends)), trend_aliases)), numeric_sql)
   slope_terms = match(design_vars, attr(terms(matrix_formula), "term.labels"))
   slope_names = standardize_coef_names(colnames(X)[attr(X, "assign") %in% slope_terms])
   if (ncol(X) == 0) {
@@ -557,7 +573,10 @@ execute_compress_strategy = function(inputs) {
     is.numeric(compressed_dat[[name]]) && !is.factor(compressed_dat[[name]]), logical(1)))
   S = compressed_cross_moments(X, compressed_dat, yvar,
     center_columns = which(attr(X, "assign") %in% numeric_terms))
-  fit = fit_ols(S, yvar, colnames(X), drop_collinear = TRUE, verbose = verbose)
+  ordinary = colnames(X)[attr(X, "assign") %in% slope_terms]
+  absorbed = compressed_slope_rank(X, matrix_data, inputs, ordinary, trend_sources)
+  fit = fit_ols(S, yvar, setdiff(colnames(X), absorbed), drop_collinear = TRUE, verbose = verbose)
+  fit[["dropped"]] = c(absorbed, fit[["dropped"]])
   collin_vars = fit[["dropped"]]
   X = X[, fit[["x"]], drop = FALSE]
   betahat = fit[["coef"]]
@@ -577,7 +596,7 @@ execute_compress_strategy = function(inputs) {
   n_params_full = ncol(X)
   if (length(fe)) {
     n_slopes = length(intersect(slope_names, standardize_coef_names(colnames(X))))
-    n_params_full = n_slopes + sum(vapply(compressed_dat[fe], nlevels, integer(1))) - length(fe) + 1L
+    n_params_full = n_slopes + linear_fe_df(inputs, vapply(compressed_dat[fe], nlevels, integer(1)))
   }
   df_res = nobs_orig - n_params_full
 
@@ -637,7 +656,7 @@ execute_compress_strategy = function(inputs) {
   return(
     list(
       coeftable = coeftable,
-      compressed_design = list(formula = reformulate(c(design_vars, fe), intercept = intercept),
+      compressed_design = list(formula = matrix_formula, trend_sources = trend_sources, trend_centers = trend_centers,
         source_names = names(compressed_dat), columns = colnames(X)),
       data = restore_compressed_data(compressed_dat),
       vcov = vcov_mat,

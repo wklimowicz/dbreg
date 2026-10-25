@@ -4,7 +4,12 @@
 \alias{model_vars}
 \title{Variables used by a formula}
 \usage{
-model_vars(x)
+model_vars(x, skip_factors = FALSE)
+}
+\arguments{
+\item{x}{Formula or expression.}
+
+\item{skip_factors}{Exclude variables used only inside explicit factor() calls.}
 }
 \description{
 Like [all.vars()], but only the variable arguments of `i()` terms count

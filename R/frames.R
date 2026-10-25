@@ -56,24 +56,39 @@ restore_compressed_data = function(dat) {
 
 # Translate the cell design's actual contrasts into SQL. This also handles
 # numeric FE labels and exact integer dictionaries without string round-trips.
-compressed_score_expressions = function(conn, formula, dat, X, classes) {
+compressed_score_expressions = function(conn, formula, dat, X, classes, numeric_sql = character()) {
   assign = attr(X, "assign")
   terms = attr(stats::terms(formula), "term.labels")
   out = vapply(seq_len(ncol(X)), function(j) {
     if (assign[[j]] == 0L) return("1.0")
-    variable = terms[[assign[[j]]]]
-    values = dat[[variable]]
-    if (!is.factor(values) && !is.character(values) && !is.logical(values)) return(variable)
-    levels = if (is.factor(values)) levels(values) else sort(unique(values))
-    first = match(as.character(levels), as.character(values))
-    raw = attr(values, "dbreg_key_values")
-    if (is.null(raw)) raw = levels
-    type = if (identical(attr(values, "dbreg_key_type"), "integer")) "integer64" else classes[[variable]]
-    literals = sql_factor_literals(conn, setNames(list(raw), variable), setNames(type, variable))[[variable]]
-    loads = as.numeric(X[first, j])
-    keep = which(!is.na(first) & is.finite(loads) & loads != 0)
-    if (!length(keep)) return("0.0")
-    paste0("(CASE ", paste0("WHEN ", variable, "=", literals[keep], " THEN ", dbglm_number(loads[keep]), collapse = " "), " ELSE 0.0 END)")
+    variables = split_interaction_term(terms[[assign[[j]]]])
+    categorical = variables[vapply(dat[variables], function(value) {
+      is.factor(value) || is.character(value) || is.logical(value)
+    }, logical(1))]
+    numeric = setdiff(variables, categorical)
+    product_sql = if (length(numeric)) paste(vapply(numeric, function(name) {
+      if (name %in% names(numeric_sql)) numeric_sql[[name]] else sql_cast_double(name, conn)
+    }, character(1)), collapse = "*") else "1.0"
+    if (!length(categorical)) return(product_sql)
+    product = Reduce(`*`, lapply(dat[numeric], as.numeric), init = rep(1, nrow(dat)))
+    column = as.numeric(X[, j])
+    rows = which(is.finite(product) & product != 0 & column != 0)
+    if (!length(rows)) return("0.0")
+    keys = tuple_key(dat[rows, , drop = FALSE], categorical)
+    first = rows[!duplicated(keys)]
+    loads = column[first] / product[first]
+    conditions = lapply(categorical, function(variable) {
+      values = dat[[variable]]
+      levels = if (is.factor(values)) levels(values) else sort(unique(values))
+      raw = attr(values, "dbreg_key_values")
+      if (is.null(raw)) raw = levels
+      type = if (identical(attr(values, "dbreg_key_type"), "integer")) "integer64" else classes[[variable]]
+      literals = sql_factor_literals(conn, setNames(list(raw), variable), setNames(type, variable))[[variable]]
+      paste0(variable, "=", literals[match(as.character(values[first]), as.character(levels))])
+    })
+    condition = Reduce(function(a, b) paste(a, b, sep = " AND "), conditions)
+    paste0("(", product_sql, ")*(CASE ", paste0("WHEN ", condition, " THEN ",
+      dbglm_number(loads), collapse = " "), " ELSE 0.0 END)")
   }, character(1))
   setNames(out, colnames(X))
 }
@@ -148,8 +163,9 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
   vars = c(y, x_names)
   w_base = sql_weight_expr(weights)
 
-  use_ap = length(fe) > 2
-  if (length(fe) == 2) {
+  varying = length(unlist(inputs[["fe_slopes"]])) > 0L
+  use_ap = length(fe) > 2 || varying
+  if (length(fe) == 2 && !varying) {
     is_balanced = inputs[["is_balanced"]]
     if (is.null(is_balanced)) {
       is_balanced = dbreg_is_balanced_panel(inputs)
@@ -160,6 +176,7 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     message(sprintf("[%s] Using fixed-effect projection for FE demeaning", tag))
   }
   if (use_ap && sql_only) {
+    if (varying) stop("SQL-only projection plans for varying slopes are not implemented.", call. = FALSE)
     return(dbreg_ap_query_plan(inputs, x_sql, x_names))
   }
 

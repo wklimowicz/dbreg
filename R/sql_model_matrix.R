@@ -84,8 +84,19 @@ sql_model_matrix = function(
   # expanded by level whatever its type)
   term_vars = Map(function(t, spec) if (is.null(spec)) all.vars(str2lang(t)) else c(spec[["f"]], spec[["var"]]), term_labels, i_specs)
   i_factors = unlist(lapply(i_specs, `[[`, "f"))
+  forced = explicit_factor_sources(term_labels)
   col_info = get_column_info(conn, table, unique(unlist(term_vars)), level_vars = i_factors,
-    factor_refs = factor_refs, i_declarations = i_specs, intercept = intercept)
+    factor_refs = factor_refs, i_declarations = i_specs, intercept = intercept,
+    factor_vars = unname(forced))
+  col_info = explicit_factor_info(term_labels, col_info)
+  # Forced categories do not change the same source's numeric main effect.
+  for (source in setdiff(unname(forced), i_factors)) {
+    if (!identical(col_info[["types"]][[source]], "factor")) {
+      col_info[["levels"]][[source]] = NULL
+      col_info[["level_sql"]][[source]] = NULL
+      col_info[["factor_classes"]] = col_info[["factor_classes"]][setdiff(names(col_info[["factor_classes"]]), source)]
+    }
+  }
 
   result = sql_model_matrix_from_info(term_labels, col_info, expand, sep, fe_vars, intercept,
     fold_case = folds_identifier_case(conn), i_specs = i_specs)
@@ -99,6 +110,7 @@ sql_model_matrix = function(
 # newdata. Both paths use exactly the same expansion and reference decisions.
 sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep = "_x_",
                                       fe_vars = character(), intercept = TRUE, fold_case = FALSE, i_specs = lapply(term_labels, parse_sql_i_term, env = baseenv())) {
+  col_info = explicit_factor_info(term_labels, col_info)
   # SQL-safe aliases for factor dummies, one per (variable, level), computed
   # once so that every term uses the same alias. They avoid the model's
   # variable names and each other, and follow the backend's case rules.
@@ -163,7 +175,7 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
 #' Get column types and factor levels from database
 #' @keywords internal
 get_column_info = function(conn, table, vars, level_vars = character(), factor_refs = NULL,
-                           i_declarations = list(), intercept = TRUE) {
+                           i_declarations = list(), intercept = TRUE, factor_vars = character()) {
   # Build FROM clause
   from_sql = if (grepl("^FROM", table, ignore.case = TRUE)) table else paste("FROM", table)
   
@@ -193,7 +205,7 @@ get_column_info = function(conn, table, vars, level_vars = character(), factor_r
     # Treat character, factor, logical as categorical
     is_cat = col_class %in% c("character", "factor", "logical") || v %in% names(factor_refs)
     types[[v]] = if (is_cat) "factor" else "numeric"
-    if ((is_cat || v %in% level_vars) && !v %in% level_vars) {
+    if ((is_cat || v %in% factor_vars) && !v %in% level_vars) {
       # All distinct levels (a sample could miss rare levels)
       lvl_query = glue("SELECT DISTINCT {v} FROM (SELECT {v} {from_sql}) lvl WHERE {v} IS NOT NULL ORDER BY {v}")
       levels[[v]] = dbGetQuery(conn, lvl_query)[[1]]
@@ -228,7 +240,8 @@ expand_term = function(term, col_info, expand, sep = "_x_", all_terms = characte
   vars = split_interaction_term(term)
   is_interaction = length(vars) > 1
   
-  if (!is_interaction && expand == "interactions" && is.null(parse_power_term(term))) {
+  if (!is_interaction && expand == "interactions" && is.null(parse_power_term(term)) &&
+      is.null(col_info[["factor_sources"]][[term]])) {
     # Main effect, only expanding interactions: return as-is
     return(list(sql = term, name = term, alias = term))
   }
@@ -263,7 +276,8 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
   is_factor = identical(col_info[["types"]][[var]], "factor")
   
   # Only expand factors if: expand="all", OR variable is part of interaction
-  if (!(is_factor && (expand == "all" || in_interaction))) {
+  forced = !is.null(col_info[["factor_sources"]][[var]])
+  if (!(is_factor && (expand == "all" || in_interaction || forced))) {
     # Numeric or unexpanded factor: pass through
     sql = if (!is_factor) col_info[["numeric_sql"]][[var]] else NULL
     if (is.null(sql)) sql = var
@@ -283,7 +297,8 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
     level_sql = level_sql[-1]
   }
   list(
-    sql = paste0("CASE WHEN ", var, " = ", level_sql, " THEN 1.0 ELSE 0.0 END"),
+    sql = paste0("CASE WHEN ", if (forced) col_info[["factor_sources"]][[var]] else var,
+      " = ", level_sql, " THEN 1.0 ELSE 0.0 END"),
     name = paste0(var, lvls),
     alias = la[["alias"]][match(lvls, la[["level"]])]
   )
@@ -604,4 +619,42 @@ freeze_i_selectors = function(fml) {
   }
   result = stats::as.formula(walk(as.call(fml)), env = baseenv())
   if (inherits(fml, "Formula")) Formula::Formula(result) else result
+}
+
+explicit_factor_sources = function(term_labels) {
+  components = unique(unlist(lapply(term_labels, split_interaction_term)))
+  result = character()
+  for (term in components) {
+    expr = tryCatch(str2lang(term), error = function(e) NULL)
+    if (!is.call(expr) || !identical(expr[[1L]], as.name("factor"))) next
+    if (length(expr) != 2L || !is.symbol(expr[[2L]])) {
+      stop("Use factor(column) without additional arguments.", call. = FALSE)
+    }
+    result[[term]] = as.character(expr[[2L]])
+  }
+  result
+}
+
+explicit_factor_info = function(term_labels, info) {
+  sources = explicit_factor_sources(term_labels)
+  for (term in names(sources)) {
+    source = sources[[term]]
+    if (is.null(info[["levels"]][[term]])) info[["levels"]][[term]] = info[["levels"]][[source]]
+    if (is.null(info[["level_sql"]][[term]])) info[["level_sql"]][[term]] = info[["level_sql"]][[source]]
+    info[["types"]][[term]] = "factor"
+    class = info[["factor_classes"]][term]
+    if (!length(class) || is.na(class)) class = info[["classes"]][source]
+    info[["factor_classes"]][term] = class
+    if (is.null(info[["factor_sources"]][[term]])) info[["factor_sources"]][[term]] = source
+  }
+  info
+}
+
+# Names used as metadata keys can themselves be factor() expressions.
+restore_term_names = function(names, map) {
+  vapply(names, function(name) {
+    expr = tryCatch(str2lang(name), error = function(e) NULL)
+    if (!is.call(expr)) return(restore_names(name, map))
+    paste(deparse(rename_expr_vars(expr, map), width.cutoff = 500L), collapse = "")
+  }, character(1), USE.NAMES = FALSE)
 }

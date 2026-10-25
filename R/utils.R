@@ -273,12 +273,15 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
 #'
 #' Like [all.vars()], but only the variable arguments of `i()` terms count
 #' (not, e.g., a `ref` value held in a variable).
+#' @param x Formula or expression.
+#' @param skip_factors Exclude variables used only inside explicit factor() calls.
 #' @keywords internal
-model_vars = function(x) {
+model_vars = function(x, skip_factors = FALSE) {
   if (inherits(x, "Formula")) x = formula(x)
   walk = function(e) {
     if (is.name(e)) return(as.character(e))
     if (!is.call(e)) return(character())
+    if (skip_factors && identical(e[[1L]], as.name("factor"))) return(character())
     args = if (identical(e[[1]], as.name("i"))) {
       as.list(match.call(i_template, e))[c("factor_var", "var")]
     } else {
@@ -329,13 +332,17 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
     !is.null(parse_sql_i_term(t))
   }, logical(1))
   has_interactions = any(grepl(":", term_labels)) || any(has_i)
-  has_transformations = any(grepl("^I\\(", term_labels))
+  has_transformations = any(grepl("^I\\(", term_labels)) || length(explicit_factor_sources(term_labels)) > 0L
   
   if (isTRUE(allow_empty) || isTRUE(allow_extended)) {
     validate_regressor_expression = function(expr) {
       if (is.symbol(expr) || is.numeric(expr)) return(invisible(NULL))
       if (!is.call(expr)) {
         stop("Unsupported regressor expression: ", deparse(expr), call. = FALSE)
+      }
+      if (identical(expr[[1L]], as.name("factor"))) {
+        explicit_factor_sources(paste(deparse(expr, width.cutoff = 500L), collapse = ""))
+        return(invisible(NULL))
       }
       if (allow_i && !is.null(parse_sql_i_term(expr))) return(invisible(NULL))
       if (!allow_i && !is.null(parse_sql_i_term(paste(deparse(expr), collapse = "")))) return(invisible(NULL))
@@ -388,6 +395,7 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
   fe_components = NULL
   fe_labels = NULL
   fe = NULL
+  fe_slopes = list()
   if (length(fml)[2] > 1) {
     fe_rhs = formula(fml, lhs = 0, rhs = 2)
     if (isTRUE(allow_empty) || isTRUE(allow_extended)) {
@@ -401,7 +409,16 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
         list(expr)
       }
       fe_terms = flatten_call(fe_rhs[[2]], "+")
+      term_slopes = lapply(fe_terms, function(term) {
+        if (!is.call(term) || !identical(term[[1L]], as.name("["))) return(character())
+        args = as.list(term)[-1L]
+        if (length(args) < 2L || !all(vapply(args, is.symbol, logical(1)))) {
+          stop("Use group[trend] or group[trend1, trend2] with source columns.", call. = FALSE)
+        }
+        vapply(args[-1L], as.character, character(1))
+      })
       fe_components = lapply(fe_terms, function(term) {
+        if (is.call(term) && identical(term[[1L]], as.name("["))) term = term[[2L]]
         components = flatten_call(term, "^")
         if (!all(vapply(components, is.symbol, logical(1)))) {
           stop("Fixed-effect interactions must contain column names only.", call. = FALSE)
@@ -409,6 +426,10 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
         vapply(components, as.character, character(1))
       })
       fe_labels = vapply(fe_components, paste, collapse = "^", character(1))
+      unique_labels = unique(fe_labels)
+      fe_slopes = lapply(unique_labels, function(label) unique(unlist(term_slopes[fe_labels == label], use.names = FALSE)))
+      fe_components = fe_components[match(unique_labels, fe_labels)]
+      fe_labels = unique_labels
       fe = vapply(seq_along(fe_components), function(i) {
         if (length(fe_components[[i]]) == 1) fe_components[[i]] else paste0("dbreg_fe_", i, "__")
       }, character(1))
@@ -430,7 +451,8 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
     has_transformations = has_transformations,
     fe = fe,
     fe_labels = fe_labels,
-    fe_components = fe_components
+    fe_components = fe_components,
+    fe_slopes = fe_slopes
   )
 }
 
@@ -625,12 +647,18 @@ register_factor_display = function(inputs, factor_levels = list(), level_aliases
   inputs[["factor_classes"]] = classes
   map = inputs[["name_map"]]
   if (is.null(map)) map = setNames(character(), character())
-  disp = function(v) coef_var_name(ifelse(v %in% names(map), map[v], v))
+  disp = function(v) vapply(v, function(term) {
+    if (length(explicit_factor_sources(term))) restore_term_names(term, inputs[["source_map"]]) else
+      coef_var_name(ifelse(term %in% names(map), map[term], term))
+  }, character(1), USE.NAMES = FALSE)
   vars = rep(names(factor_levels), lengths(factor_levels))
   lvls = unlist(lapply(factor_levels, as.character), use.names = FALSE)
+  factor_display = setNames(paste0(disp(vars), lvls), paste0(vars, lvls))
   col_names = vapply(col_names, function(nm) {
     parts = strsplit(nm, "_x_", fixed = TRUE)[[1]]
     parts = vapply(parts, function(part) {
+      if (part %in% names(factor_display)) return(factor_display[[part]])
+      if (part %in% names(map)) return(disp(part))
       if (is.null(parse_power_term(part))) return(part)
       paste(deparse(rename_expr_vars(str2lang(part), inputs[["source_map"]]), width.cutoff = 500L), collapse = "")
     }, character(1))
@@ -648,6 +676,7 @@ register_factor_display = function(inputs, factor_levels = list(), level_aliases
       level = i_columns[["level"]],
       by = raw(i_columns[["by"]])
     )
+    new = new[!names(new) %in% i_columns[["alias"]]]
     new = c(new, setNames(i_display[["name"]], i_columns[["alias"]]))
     i_display = rbind(inputs[["i_columns"]], i_display)
     inputs[["i_columns"]] = i_display[!duplicated(i_display[["name"]]), , drop = FALSE]

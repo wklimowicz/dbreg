@@ -11,7 +11,8 @@ get_column_info(
   level_vars = character(),
   factor_refs = NULL,
   i_declarations = list(),
-  intercept = TRUE
+  intercept = TRUE,
+  factor_vars = character()
 )
 }
 \description{

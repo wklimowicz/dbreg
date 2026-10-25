@@ -114,6 +114,14 @@ solve_with_fallback = function(XtX, Xty) {
 }
 
 
+formula_column = function(value, label) {
+  if (!inherits(value, "formula")) return(value)
+  if (length(value) != 2L || !is.symbol(value[[2L]])) {
+    stop("`", label, "` formulas must name one column; calculate other expressions in the source.", call. = FALSE)
+  }
+  as.character(value[[2L]])
+}
+
 #' Set up database connection and data source
 #'
 #' Handles the precedence logic for data sources (table > data > path),
@@ -122,13 +130,16 @@ solve_with_fallback = function(XtX, Xty) {
 #' @param conn Database connection, or NULL to create a DuckDB connection
 
 #' @param table Character table name or tbl_lazy object
-#' @param data R data.frame to register with DuckDB
+#' @param data R data.frame to register with DuckDB, or tbl_lazy object
 #' @param path Character path to file(s) on disk
+#' @param resources Optional resource ledger to record connection ownership.
+#' @param duckdb_config Configuration for a newly created DuckDB connection.
 #' @param caller Character string identifying the calling function for error messages
 #'   and temp table naming (e.g., "dbreg" or "dbbinsreg")
 #'
 #' @return A list containing:
 #'   \item{conn}{The database connection (created or provided)}
+#'   \item{data,table}{Normalized data sources, with lazy data moved to table}
 #'   \item{table_name}{The table name to query from}
 #'   \item{from_statement}{SQL FROM clause (for dbreg-style queries)}
 #'   \item{own_conn}{Logical, TRUE if we created the connection}
@@ -138,6 +149,8 @@ solve_with_fallback = function(XtX, Xty) {
 #' @keywords internal
 setup_db_connection = function(conn, table, data, path, caller = "dbreg",
                                resources = NULL, duckdb_config = list()) {
+  if (inherits(data, "tbl_lazy") && is.null(table)) table = data
+  if (!is.null(table)) data = NULL
   connection_lease = attr(conn, "dbreg_resource_lease", exact = TRUE)
   if (!is.null(connection_lease)) fitted_resource_connection(connection_lease)
   own_conn = FALSE
@@ -263,6 +276,8 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
   list(
     conn = conn,
     table_name = table_name,
+    data = data,
+    table = table,
     from_statement = from_statement,
     own_conn = own_conn,
     registered_table = registered_table,

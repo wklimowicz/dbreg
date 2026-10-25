@@ -28,7 +28,7 @@ for(link in c("cloglog","logit")) for(trend in c("yr","yr,yr2")) for(kind in c("
 dt$yr[dt$district==1] <- 0
 dt$yr2 <- dt$yr^2
 fm <- y~x|district[yr,yr2]+age
-m <- dbglm(fm,conn=ct,data=dt)
+m <- dbglm(family = stats::binomial("cloglog"), fm,conn=ct,data=dt)
 r <- dbglm_reference_feglm(fm,dt,family=binomial('cloglog'))
 expect_equal(coef(m),coef(r),tolerance=1e-7)
 expect_equal(m$n_params_model,r$nparams)
@@ -36,7 +36,7 @@ expect_equal(length(dbListTables(ct)),0L)
 # Source trend names must not collide with IRLS working columns.
 dt$z <- dt$yr;dt$w <- dt$yr2
 fm <- y~x|district[z,w]+age
-m <- dbglm(fm,conn=ct,data=dt)
+m <- dbglm(family = stats::binomial("cloglog"), fm,conn=ct,data=dt)
 r <- dbglm_reference_feglm(fm,dt,family=binomial('cloglog'))
 expect_equal(coef(m),coef(r),tolerance=1e-7)
 expect_equal(m$n_params_model,r$nparams)

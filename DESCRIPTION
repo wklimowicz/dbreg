@@ -58,6 +58,7 @@ Imports:
   tinyplot,
   utils
 Suggests:
+  dplyr,
   binsreg,
   bit64,
   here,

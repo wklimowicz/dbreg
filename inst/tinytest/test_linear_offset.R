@@ -21,7 +21,7 @@ local({
   expect_identical(fit[["sample_diagnostics"]][["n_input"]], 80)
   close(fit)
   expect_equal(predict(fit, d), expected, tolerance = 1e-7)
-  expect_error(dbreg(y ~ x, data = d, offset = ~o), "offset.*must name")
+  expect_error(dbreg(y ~ x, data = d, offset = ~o + x), "offset.*must name")
   bad = d; bad[["o"]] = "bad"
   expect_error(dbreg(y ~ x, data = bad, offset = "o"), "must be numeric")
   compact = dbreg(y ~ x | g, data = d, offset = "o", strategy = "compress")

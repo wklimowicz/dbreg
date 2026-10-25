@@ -58,7 +58,7 @@ dbglm_test_separation = function(conn, verbose = FALSE) {
     crossed = merge(finite, expand.grid(f = 1:3, g = 1:2))
     absorbed = dbglm_validation_upload(conn, crossed)
     tryCatch({
-      fit_fe = dbglm(y ~ x | f + g, conn = conn, table = absorbed, weights = "a", ssc = list(K.adj = FALSE))
+      fit_fe = dbglm(family = stats::binomial("cloglog"), y ~ x | f + g, conn = conn, table = absorbed, weights = "a", ssc = list(K.adj = FALSE))
       expect_equal(coef(fit_fe)[["x"]], expected[["x"]], tolerance = 1e-7)
       expect_equal(vcov(fit_fe)[1, 1], solve(H)[2, 2] / 6, tolerance = 1e-7)
       expect_true(fit_fe[["converged"]] && fit_fe[["score_max"]] <= fit_fe[["control"]][["score_tol"]])

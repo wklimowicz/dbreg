@@ -63,7 +63,8 @@ table (object) to be queried. In order of precedence:
 existing (open) database connection.
 \item \code{data}: R dataframe that can be copied over to \code{conn} as a temporary
 table for querying via the DuckDB query engine. Ignored if \code{table} is
-provided.
+provided. A \code{dbplyr} lazy table may be supplied through \code{data} or \code{table};
+its connection is inferred when \code{conn} is omitted.
 \item \code{path}: Character string giving a path to the data file(s) on disk, which
 will be read into \code{conn}. Internally, this string is passed to the \code{FROM}
 query statement, so could (should) include file globbing for
@@ -74,7 +75,7 @@ note the use of single quotes.
 Ignored if either \code{table} or \code{data} is provided.
 }}
 
-\item{weights}{Character string specifying the column name to use as weights,
+\item{weights}{Character column name or one-sided formula such as \code{~w},
 or NULL (default) for unweighted regression. Weights must be non-negative;
 rows with zero weight are dropped. Weighted regressions support \code{"iid"},
 \code{"hc1"}, and clustered SEs, and are compatible with all strategies.}
@@ -194,7 +195,8 @@ Full state needs its live owning session and is released by \code{\link[=close]{
 prediction dictionaries. Default fitted-sample prediction and inference are
 available; learned-effect newdata prediction needs \code{"prediction"} or \code{"all"}.}
 
-\item{offset}{Optional numeric column added to the linear predictor with
+\item{offset}{Optional numeric column name or one-sided formula such as \code{~o},
+added to the linear predictor with
 coefficient one. Estimation uses outcome minus offset. Supported on DuckDB
 and native Databricks; newdata predictions require the offset column.}
 

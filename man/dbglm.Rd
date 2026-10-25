@@ -10,7 +10,7 @@ dbglm(
   table = NULL,
   data = NULL,
   path = NULL,
-  family = stats::binomial("cloglog"),
+  family = stats::gaussian(),
   weights = NULL,
   offset = NULL,
   factor_refs = NULL,
@@ -37,18 +37,23 @@ categorical effects, `a^b` is a joint effect, and `group[t]` or
 
 \item{conn, table, data, path}{Connection and input relation, with the same
 precedence as [dbreg()]. A default connection is in memory with spilling
-disabled. Caller connections retain their settings and remain open.}
+disabled. `data` or `table` may also be a `dbplyr` lazy table, whose
+connection is inferred. Caller connections retain their settings and remain open.}
 
-\item{family}{A built-in `binomial("cloglog")` (default), `binomial("logit")`,
-`binomial("probit")`, `poisson("log")`, or `gaussian("identity")`. Poisson responses must be
+\item{family}{A supported family name (`"gaussian"`, `"binomial"`, or
+`"poisson"`), a family function, or a family object. The default is
+`gaussian("identity")`. Supported alternatives are `binomial("cloglog")`,
+`binomial("logit")`, `binomial("probit")`, and `poisson("log")`. Poisson responses must be
 nonnegative integer counts; binomial responses must be zero or one.}
 
-\item{weights}{Optional column of nonnegative observation weights, including
+\item{weights}{Optional column name or one-sided formula such as `~w`,
+giving nonnegative observation weights, including
 fractional weights. Zero weights are omitted. Weights multiply each row's
 log likelihood and score; observation counts are counts of retained rows,
 not sums of weights. See the likelihood conventions below.}
 
-\item{offset}{Optional numeric column entering the predictor with coefficient one.}
+\item{offset}{Optional numeric column name or one-sided formula such as
+`~o`, entering the predictor with coefficient one.}
 
 \item{factor_refs}{Optional named categorical reference levels, as in [dbreg()].}
 

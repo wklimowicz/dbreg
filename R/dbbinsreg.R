@@ -410,6 +410,8 @@ dbbinsreg = function(
   # Set up database connection and data source using shared helper
   db_setup = setup_db_connection(conn, table, data, path, caller = "dbbinsreg")
   conn = db_setup[["conn"]]
+  data = db_setup[["data"]]
+  table = db_setup[["table"]]
   conn_managed = db_setup[["own_conn"]]
   table_name = db_setup[["table_name"]]
   registered_table = db_setup[["registered_table"]]

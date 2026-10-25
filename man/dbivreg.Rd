@@ -38,9 +38,11 @@ and \code{fixest}-style \code{i()} terms (see \code{\link[=sql_model_matrix]{sql
 connection.}
 
 \item{table, data, path}{Mutually exclusive data source arguments with
-precedence \verb{table > data > path}.}
+precedence \verb{table > data > path}. A \code{dbplyr} lazy table may be supplied
+through \code{data} or \code{table}; its connection is inferred if \code{conn} is omitted.}
 
-\item{weights}{Optional character string naming an observation-weight column.}
+\item{weights}{Optional observation-weight column name or one-sided formula
+such as \code{~w}.}
 
 \item{vcov}{Character string or one-sided clustering formula. Character
 options are \code{"iid"} and \code{"hc1"}.}

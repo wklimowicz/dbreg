@@ -70,7 +70,7 @@ dbreg_test_sample_identity = function(conn) {
   found = read_keys()
   expect_identical(data.frame(key = as.character(found[[1]]), pair = found[[2]]), expected)
   dbglm_validation_drop(conn, retained)
-  expect_error(dbglm(binary ~ x, conn = conn, table = table, row_id = keys[[1]],
+  expect_error(dbglm(family = stats::binomial("cloglog"), binary ~ x, conn = conn, table = table, row_id = keys[[1]],
     sample_table = retained), "unique")
   expect_identical(dbglm_validation_tables(conn), inventory)
   expect_error(dbreg(y ~ x, conn = conn, table = table, row_id = keys[[1]],

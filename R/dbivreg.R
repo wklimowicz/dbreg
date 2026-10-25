@@ -22,8 +22,10 @@
 #' @param conn Database connection, or `NULL` to create an ephemeral DuckDB
 #'   connection.
 #' @param table,data,path Mutually exclusive data source arguments with
-#'   precedence `table > data > path`.
-#' @param weights Optional character string naming an observation-weight column.
+#'   precedence `table > data > path`. A `dbplyr` lazy table may be supplied
+#'   through `data` or `table`; its connection is inferred if `conn` is omitted.
+#' @param weights Optional observation-weight column name or one-sided formula
+#'   such as `~w`.
 #' @param vcov Character string or one-sided clustering formula. Character
 #'   options are `"iid"` and `"hc1"`.
 #' @param strategy Character string selecting the IV backend. Supported values
@@ -79,6 +81,7 @@ dbivreg = function(
   diagnostics = FALSE,
   ...
 ) {
+  weights = formula_column(weights, "weights")
   verbose = isTRUE(verbose)
   strategy = match.arg(strategy)
   ssc = match.arg(ssc)
@@ -162,12 +165,14 @@ process_dbivreg_inputs = function(inputs) {
 
   db_setup = setup_db_connection(conn, table, data, path, caller = "dbivreg")
   conn = db_setup[["conn"]]
+  data = db_setup[["data"]]
+  table = db_setup[["table"]]
   own_conn = db_setup[["own_conn"]]
   from_statement = db_setup[["from_statement"]]
   registered_table = db_setup[["registered_table"]]
   # Record the connection straight away so the caller can release it, even if
   # validation below fails
-  env2env(environment(), inputs, c("conn", "own_conn", "registered_table"))
+  env2env(environment(), inputs, c("conn", "own_conn", "registered_table", "data", "table"))
 
   # Raw variables behind X and Z: their distinct tuples define the compress
   # cells, so the "auto" strategy estimates compression over them

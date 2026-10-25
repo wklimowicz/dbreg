@@ -88,10 +88,10 @@ for (link in c("cloglog", "logit")) {
 glm_con <- dbConnect(duckdb::duckdb(config = list(temp_directory = "")))
 dbWriteTable(glm_con, "glm_input", glm_dat)
 before_glm <- dbListTables(glm_con)
-fit_glm <- dbglm(y ~ x + z, conn = glm_con, table = "glm_input", offset = "o")
+fit_glm <- dbglm(family = stats::binomial("cloglog"), y ~ x + z, conn = glm_con, table = "glm_input", offset = "o")
 expect_identical(dbListTables(glm_con), before_glm)
 expect_true(dbIsValid(glm_con))
-expect_error(dbglm(y ~ x, conn = glm_con, data = glm_dat,
+expect_error(dbglm(family = stats::binomial("cloglog"), y ~ x, conn = glm_con, data = glm_dat,
                    control = dbglm_control(glm_max_iter = 1)), "converge")
 expect_identical(dbListTables(glm_con), before_glm)
 expect_true(dbIsValid(glm_con))
@@ -102,7 +102,7 @@ glm_missing$x[1] <- NA
 glm_missing$o[2] <- Inf
 glm_missing$a[3] <- 0
 glm_missing$cluster[4] <- NA
-fit_glm <- dbglm(y ~ x + z, conn = glm_con, data = glm_missing,
+fit_glm <- dbglm(family = stats::binomial("cloglog"), y ~ x + z, conn = glm_con, data = glm_missing,
                  weights = "a", offset = "o", vcov = ~cluster)
 ref_glm <- reference_feglm(y ~ x + z, glm_missing[-(1:4), ], family = binomial("cloglog"),
                  weights = ~a, offset = ~o, vcov = ~cluster)
@@ -110,13 +110,13 @@ expect_equal(nobs(fit_glm), n_glm - 4)
 close_glm(coef(fit_glm), coef(ref_glm), 1e-7, 1e-6)
 close_glm(vcov(fit_glm), vcov(ref_glm), 1e-8, 1e-5)
 expect_identical(dbListTables(glm_con), before_glm)
-expect_error(predict(dbglm(y ~ x | grp, data = glm_dat), glm_dat), "absorbed")
+expect_error(predict(dbglm(family = stats::binomial("cloglog"), y ~ x | grp, data = glm_dat), glm_dat), "absorbed")
 expect_error(dbglm(y ~ x, data = glm_dat, family = gaussian("log")), "gaussian")
-expect_error(dbglm(y ~ x, data = transform(glm_dat, y = 2)), "zero or one")
-expect_error(dbglm(y ~ x, data = transform(glm_dat, a = -1), weights = "a"), "weights")
-expect_equal(coef(dbglm(y ~ x, data = transform(glm_dat, a = 0.5), weights = "a")),
-             coef(dbglm(y ~ x, data = glm_dat)), tolerance = 1e-7)
-expect_error(dbglm(y ~ x, data = glm_dat, control = dbglm_control(glm_tol = 0)), "positive")
+expect_error(dbglm(family = stats::binomial("cloglog"), y ~ x, data = transform(glm_dat, y = 2)), "zero or one")
+expect_error(dbglm(family = stats::binomial("cloglog"), y ~ x, data = transform(glm_dat, a = -1), weights = "a"), "weights")
+expect_equal(coef(dbglm(family = stats::binomial("cloglog"), y ~ x, data = transform(glm_dat, a = 0.5), weights = "a")),
+             coef(dbglm(family = stats::binomial("cloglog"), y ~ x, data = glm_dat)), tolerance = 1e-7)
+expect_error(dbglm(family = stats::binomial("cloglog"), y ~ x, data = glm_dat, control = dbglm_control(glm_tol = 0)), "positive")
 expect_error(dbreg(y ~ x, data = glm_dat, family = binomial()), "dbglm")
 expect_error(predict(fit_glm, transform(glm_dat, z = NULL)), "missing")
 dbDisconnect(glm_con, shutdown = TRUE)

@@ -60,7 +60,7 @@ dbglm_test_invariance = function(conn, verbose = FALSE) {
   base = dbglm_validation_upload(conn, d)
   retained = basename(tempfile("glm_invariant_keys_"))
   on.exit({dbglm_validation_drop(conn, retained); dbglm_validation_drop(conn, base)})
-  fit = dbglm(formula, conn = conn, table = base, weights = "a", offset = "o", vcov = ~cluster,
+  fit = dbglm(family = stats::binomial("cloglog"), formula, conn = conn, table = base, weights = "a", offset = "o", vcov = ~cluster,
     row_id = "id", sample_table = retained)
   keys = sort(as.numeric(DBI::dbGetQuery(conn, paste("SELECT id FROM", retained))[["id"]]))
   variants = list(permutation = d[sample.int(nrow(d)), ], renamed_fe = d, units = d)
@@ -74,7 +74,7 @@ dbglm_test_invariance = function(conn, verbose = FALSE) {
     table = dbglm_validation_upload(conn, variants[[name]])
     sample = basename(tempfile("glm_variant_keys_"))
     tryCatch({
-      got = dbglm(formula, conn = conn, table = table, weights = "a", offset = "o", vcov = ~cluster,
+      got = dbglm(family = stats::binomial("cloglog"), formula, conn = conn, table = table, weights = "a", offset = "o", vcov = ~cluster,
         row_id = "id", sample_table = sample)
       scale = if (name == "units") c(1000, .01) else c(1, 1)
       expect_true(max(abs(coef(got) * scale - coef(fit))) < 1e-7, info = name)

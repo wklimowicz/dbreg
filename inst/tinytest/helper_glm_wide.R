@@ -36,7 +36,7 @@ dbglm_test_wide = function(conn, verbose = FALSE) {
   slopes = grep(":", names(coef(reference)), fixed = TRUE, value = TRUE)
   expect_equal(length(slopes), 88L)
   if (verbose) message("[GLM wide] independent reference complete; fitting database model")
-  fit = dbglm(formula, conn = conn, table = table, vcov = ~fe_b, ssc = list(K.fixef = "full"),
+  fit = dbglm(family = stats::binomial("cloglog"), formula, conn = conn, table = table, vcov = ~fe_b, ssc = list(K.fixef = "full"),
     row_id = "id", sample_table = retained, verbose = verbose)
   expect_equal(length(coef(fit)), 88L)
   dbglm_validation_compare(fit, reference, "wide rare outcome", terms = slopes)

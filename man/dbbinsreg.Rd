@@ -55,7 +55,8 @@ table (object) to be queried. In order of precedence:
 existing (open) database connection.
 \item \code{data}: R dataframe that can be copied over to \code{conn} as a temporary
 table for querying via the DuckDB query engine. Ignored if \code{table} is
-provided.
+provided. A \code{dbplyr} lazy table may be supplied through \code{data} or \code{table};
+its connection is inferred when \code{conn} is omitted.
 \item \code{path}: Character string giving a path to the data file(s) on disk, which
 will be read into \code{conn}. Internally, this string is passed to the \code{FROM}
 query statement, so could (should) include file globbing for

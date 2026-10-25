@@ -4,7 +4,7 @@ local({
     "All observations were removed by fixed-effect singleton/separation pruning.", fixed = TRUE)
   warnings = new.env(parent = emptyenv())
   warnings[["messages"]] = character()
-  tryCatch(withCallingHandlers(dbreg::dbglm(y ~ x, data = 12),
+  tryCatch(withCallingHandlers(dbreg::dbglm(family = stats::binomial("cloglog"), y ~ x, data = 12),
     warning = function(w) {
       warnings[["messages"]] = c(warnings[["messages"]], conditionMessage(w))
       invokeRestart("muffleWarning")

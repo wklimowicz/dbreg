@@ -32,7 +32,8 @@
 #' existing (open) database connection.
 #' - `data`: R dataframe that can be copied over to `conn` as a temporary
 #' table for querying via the DuckDB query engine. Ignored if `table` is
-#' provided.
+#' provided. A `dbplyr` lazy table may be supplied through `data` or `table`;
+#' its connection is inferred when `conn` is omitted.
 #' - `path`: Character string giving a path to the data file(s) on disk, which
 #' will be read into `conn`. Internally, this string is passed to the `FROM`
 #' query statement, so could (should) include file globbing for
@@ -41,11 +42,12 @@
 #' part of this string, e.g. `"read_parquet('mydata/**/*.parquet')"` for DuckDB;
 #' note the use of single quotes.
 #' Ignored if either `table` or `data` is provided.
-#' @param weights Character string specifying the column name to use as weights,
+#' @param weights Character column name or one-sided formula such as `~w`,
 #' or NULL (default) for unweighted regression. Weights must be non-negative;
 #' rows with zero weight are dropped. Weighted regressions support `"iid"`,
 #' `"hc1"`, and clustered SEs, and are compatible with all strategies.
-#' @param offset Optional numeric column added to the linear predictor with
+#' @param offset Optional numeric column name or one-sided formula such as `~o`,
+#'   added to the linear predictor with
 #'   coefficient one. Estimation uses outcome minus offset. Supported on DuckDB
 #'   and native Databricks; newdata predictions require the offset column.
 #' @param subset Optional logical column name or restricted one-sided predicate
@@ -431,6 +433,8 @@ dbreg = function(
   ...
 ) {
 
+  weights = formula_column(weights, "weights")
+  offset = formula_column(offset, "offset")
   verbose = isTRUE(verbose)
   validate_linear_offset(offset)
   subset_variables(subset)
@@ -548,11 +552,13 @@ process_dbreg_inputs = function(inputs) {
 
   db_setup = setup_db_connection(conn, table, data, path, caller = "dbreg")
   conn = db_setup[["conn"]]
+  data = db_setup[["data"]]
+  table = db_setup[["table"]]
   own_conn = db_setup[["own_conn"]]
   registered_table = db_setup[["registered_table"]]
   # Record the connection straight away so the caller can release it, even if
   # validation below fails
-  env2env(environment(), inputs, c("conn", "own_conn", "registered_table"))
+  env2env(environment(), inputs, c("conn", "own_conn", "registered_table", "data", "table"))
   from_statement = db_setup[["from_statement"]]
 
   # Evaluate selectors once, before multiple estimation/prediction passes.

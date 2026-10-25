@@ -1,5 +1,10 @@
 # SQL kernels for the supported built-in GLM families.
 dbglm_family = function(family) {
+  if (is.character(family) && length(family) == 1L && !is.na(family)) {
+    family = switch(family, gaussian = stats::gaussian, binomial = stats::binomial,
+      poisson = stats::poisson, stop("Supported family names are gaussian, binomial and poisson.", call. = FALSE))
+  }
+  if (is.function(family)) family = family()
   if (!inherits(family, "family") ||
     !is.character(family[["link"]]) || length(family[["link"]]) != 1 ||
     is.na(family[["link"]]) ||

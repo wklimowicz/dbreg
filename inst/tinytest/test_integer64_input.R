@@ -24,7 +24,7 @@ if (requireNamespace("bit64", quietly = TRUE)) local({
     expect_equal(coef(fit), coef(reference), tolerance = 1e-8)
     expect_equal(as.numeric(vcov(fit)), as.numeric(vcov(reference)), tolerance = 1e-8)
     export = if (!is.null(conn)) "integer64_sample" else NULL
-    fit_glm = dbglm(binary ~ x + z | g, data = d, conn = conn, weights = "a", row_id = "id", sample_table = export)
+    fit_glm = dbglm(family = stats::binomial("cloglog"), binary ~ x + z | g, data = d, conn = conn, weights = "a", row_id = "id", sample_table = export)
     expect_equal(coef(fit_glm), coef(reference_glm), tolerance = 1e-7)
     expect_equal(as.numeric(vcov(fit_glm)), as.numeric(vcov(reference_glm)), tolerance = 1e-7)
     expect_equal(fit_glm[["n_params_model"]], reference_glm[["nparams"]])
@@ -52,7 +52,7 @@ if (requireNamespace("bit64", quietly = TRUE)) local({
   duckdb::duckdb_unregister(numeric_conn, "type_probe")
   if (preserves) check(numeric_conn) else {
     expect_error(dbreg(y ~ x | g, data = d, conn = numeric_conn), "did not preserve integer64")
-    expect_error(dbglm(binary ~ x | g, data = d, conn = numeric_conn), "did not preserve integer64")
+    expect_error(dbglm(family = stats::binomial("cloglog"), binary ~ x | g, data = d, conn = numeric_conn), "did not preserve integer64")
   }
   expect_true(DBI::dbIsValid(numeric_conn))
   expect_equal(length(DBI::dbListTables(numeric_conn)), 0L)
@@ -70,7 +70,7 @@ if (requireNamespace("bit64", quietly = TRUE)) local({
   expected_linear = as.numeric(predict(linear_ref, reference_data))
   expected_linear[1] = NA_real_
   expect_equal(predict(linear, missing_linear), expected_linear, tolerance = 1e-8)
-  binary = dbglm(binary ~ q + factor(g), data = d)
+  binary = dbglm(family = stats::binomial("cloglog"), binary ~ q + factor(g), data = d)
   binary_ref = glm(binary ~ q + factor(g), reference_data, family = binomial("cloglog"),
     control = glm.control(epsilon = 1e-12))
   expect_equal(unname(predict(binary, d, type = "link")), unname(predict(binary_ref, reference_data, type = "link")), tolerance = 1e-7)
@@ -82,7 +82,7 @@ if (requireNamespace("bit64", quietly = TRUE)) local({
   expect_equal(unname(predict(binary, missing)), unname(expected_missing), tolerance = 1e-7)
   d[["o"]] = bit64::as.integer64(rep(-1:1, length.out = n))
   reference_data[["o"]] = as.numeric(d[["o"]])
-  offset_fit = dbglm(binary ~ q, data = d, offset = "o")
+  offset_fit = dbglm(family = stats::binomial("cloglog"), binary ~ q, data = d, offset = "o")
   offset_ref = glm(binary ~ q, reference_data, offset = reference_data[["o"]],
     family = binomial("cloglog"), control = glm.control(epsilon = 1e-12))
   expect_equal(unname(predict(offset_fit, d)), unname(predict(offset_ref, reference_data, type = "link")), tolerance = 1e-7)

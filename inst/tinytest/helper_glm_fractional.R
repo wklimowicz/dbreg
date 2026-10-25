@@ -164,9 +164,9 @@ dbglm_test_fractional_scale = function(conn, verbose = FALSE) {
     for (kind in list("hc1", ~cl)) {
       label = paste("sandwich scale", deparse(fml), deparse(kind))
       plain = dbglm_fractional_phase(paste(label, "unit"),
-        dbglm(fml, conn = conn, table = table, weights = "a", vcov = kind), verbose)
+        dbglm(family = stats::binomial("cloglog"), fml, conn = conn, table = table, weights = "a", vcov = kind), verbose)
       tiny = dbglm_fractional_phase(paste(label, "tiny"),
-        dbglm(fml, conn = conn, table = table, weights = "tiny", vcov = kind), verbose)
+        dbglm(family = stats::binomial("cloglog"), fml, conn = conn, table = table, weights = "tiny", vcov = kind), verbose)
       expect_equal(vcov(tiny), vcov(plain), tolerance = 1e-7)
     }
   }

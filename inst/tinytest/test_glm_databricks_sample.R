@@ -54,9 +54,9 @@ local({
   expect_equal(coef(fit), coef(ref), tolerance = 1e-7)
   expect_true(max(abs(vcov(fit) - vcov(ref))) < 1e-7)
   expect_equal(fit[["n_params_vcov"]], attr(vcov(ref, attr = TRUE), "df.K"))
-  expect_error(dbglm(formula, conn = conn, table = input, weights = "a", offset = "o", vcov = ~cl,
+  expect_error(dbglm(family = stats::binomial("cloglog"), formula, conn = conn, table = input, weights = "a", offset = "o", vcov = ~cl,
     fixef_rm = "none"), "separation")
-  expect_error(dbglm(formula, conn = conn, table = input, weights = "a", offset = "o", vcov = ~cl,
+  expect_error(dbglm(family = stats::binomial("cloglog"), formula, conn = conn, table = input, weights = "a", offset = "o", vcov = ~cl,
     sample_table = failed, control = dbglm_control(glm_max_iter = 1)), "converge")
   expect_false(dbExistsTable(conn, failed))
   expect_equal(as.numeric(dbGetQuery(conn, paste("SELECT COUNT(*) AS n FROM", input))[["n"]]), nrow(d))

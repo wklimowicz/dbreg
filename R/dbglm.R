@@ -53,15 +53,20 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   `group[t,t2]` adds an intercept and group-specific continuous slopes.
 #' @param conn,table,data,path Connection and input relation, with the same
 #'   precedence as [dbreg()]. A default connection is in memory with spilling
-#'   disabled. Caller connections retain their settings and remain open.
-#' @param family A built-in `binomial("cloglog")` (default), `binomial("logit")`,
-#'   `binomial("probit")`, `poisson("log")`, or `gaussian("identity")`. Poisson responses must be
+#'   disabled. `data` or `table` may also be a `dbplyr` lazy table, whose
+#'   connection is inferred. Caller connections retain their settings and remain open.
+#' @param family A supported family name (`"gaussian"`, `"binomial"`, or
+#'   `"poisson"`), a family function, or a family object. The default is
+#'   `gaussian("identity")`. Supported alternatives are `binomial("cloglog")`,
+#'   `binomial("logit")`, `binomial("probit")`, and `poisson("log")`. Poisson responses must be
 #'   nonnegative integer counts; binomial responses must be zero or one.
-#' @param weights Optional column of nonnegative observation weights, including
+#' @param weights Optional column name or one-sided formula such as `~w`,
+#'   giving nonnegative observation weights, including
 #'   fractional weights. Zero weights are omitted. Weights multiply each row's
 #'   log likelihood and score; observation counts are counts of retained rows,
 #'   not sums of weights. See the likelihood conventions below.
-#' @param offset Optional numeric column entering the predictor with coefficient one.
+#' @param offset Optional numeric column name or one-sided formula such as
+#'   `~o`, entering the predictor with coefficient one.
 #' @param factor_refs Optional named categorical reference levels, as in [dbreg()].
 #' @param vcov `"iid"`, `"hc1"`, or a one-sided formula naming one cluster column.
 #' @param ssc Optional named list overriding fixest-style defaults. `K.adj=TRUE`
@@ -168,12 +173,14 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #' predict(m, newdata = d, type = "response")
 #' @export
 dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
-                  family = stats::binomial("cloglog"), weights = NULL, offset = NULL,
+                  family = stats::gaussian(), weights = NULL, offset = NULL,
                   factor_refs = NULL, vcov = "iid", ssc = NULL, start = NULL,
                   control = dbglm_control(), verbose = FALSE,
                   fixef_rm = c("perfect_fit", "singletons", "infinite_coef", "none"),
                   row_id = NULL, sample_table = NULL, separation = c("error", "prediction"),
                   retain = c("none", "prediction", "inference", "all"), subset = NULL) {
+  weights = formula_column(weights, "weights")
+  offset = formula_column(offset, "offset")
   family = dbglm_family(family)
   subset_variables(subset)
   if (is.character(fml) && length(fml) == 1 && !is.na(fml)) fml = stats::as.formula(fml, env = baseenv())
@@ -247,6 +254,8 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   setup = setup_db_connection(conn, table, data, path, caller = "dbglm", resources = resources,
     duckdb_config = list(temp_directory = ""))
   conn = setup[["conn"]]
+  data = setup[["data"]]
+  table = setup[["table"]]
   retained_source = if (retain_sample(retain)) materialize_retained_source(conn, setup[["from_statement"]], resources,
     retained_data[["key"]], retained_data[["r_input"]]) else NULL
   source_from = if (is.null(retained_source)) setup[["from_statement"]] else paste("FROM", DBI::dbQuoteIdentifier(conn, retained_source[["table"]]))

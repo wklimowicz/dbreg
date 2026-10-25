@@ -19,16 +19,21 @@ setup_db_connection(
 
 \item{table}{Character table name or tbl_lazy object}
 
-\item{data}{R data.frame to register with DuckDB}
+\item{data}{R data.frame to register with DuckDB, or tbl_lazy object}
 
 \item{path}{Character path to file(s) on disk}
 
 \item{caller}{Character string identifying the calling function for error messages
 and temp table naming (e.g., "dbreg" or "dbbinsreg")}
+
+\item{resources}{Optional resource ledger to record connection ownership.}
+
+\item{duckdb_config}{Configuration for a newly created DuckDB connection.}
 }
 \value{
 A list containing:
   \item{conn}{The database connection (created or provided)}
+  \item{data,table}{Normalized data sources, with lazy data moved to table}
   \item{table_name}{The table name to query from}
   \item{from_statement}{SQL FROM clause (for dbreg-style queries)}
   \item{own_conn}{Logical, TRUE if we created the connection}

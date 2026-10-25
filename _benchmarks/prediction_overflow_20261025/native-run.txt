@@ -1,0 +1,6 @@
+ℹ Loading dbreg
+Starting native suite: test_sql_prediction_tails_live.R
+test_sql_prediction_tails_live.R   22 tests OK 1.0s
+All ok, 22 results (1.0s)
+                             suite assertions failures error elapsed_seconds
+1 test_sql_prediction_tails_live.R         22        0              61.86949

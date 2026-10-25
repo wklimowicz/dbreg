@@ -5,6 +5,23 @@ task **“Make dbreg a drop-in replacement for fixest OLS and GLM regression cal
 (`6hqR4rv693M8FH44`). It describes the full target, existing foundations, work
 already started, remaining implementation, and acceptance tests.
 
+## CI follow-up — 2026-10-25
+
+Cross-platform CI exposed an extreme Poisson cancellation whose `NA`/infinity
+classification depended on BLAS and batch shape. A shared R prediction helper
+now uses explicit staged arithmetic for potentially overflowing rows, preserving
+ordinary matrix products and all fitting/SQL calculations. Defined finite
+predictions still compare to fixest; undefined `Inf - Inf` has an explicit missing
+policy, with genuine infinite means tested separately.
+
+Current gates pass **5,433 full local assertions** and **22 native tail checks**.
+Nine direct matrix checks cover normal, sparse, empty and extreme products.
+The earlier 5,418/238 acceptance remains pinned to `447f92c`, verified against
+that commit and its archives; it is not relabeled as this later source. Evidence:
+[`_benchmarks/prediction_overflow_20261025/`](_benchmarks/prediction_overflow_20261025/).
+The ordinary prediction probe shows no material timing change; fitting is
+unaffected. Draft PR #9 is being rechecked on Linux, macOS and Windows.
+
 ## Final supported scope — 2026-10-24 23:58 UTC
 
 The supported regression subset is implemented. Current source passes **5,418

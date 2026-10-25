@@ -1,0 +1,17 @@
+Workflow: https://github.com/wklimowicz/dbreg/actions/runs/40145216907
+Commit: 447f92c8cd802cbf444f7206c1b0f41c90ed7192
+2026-10-25T00:13:07.4893723Z   ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:13:07.4894001Z    call| expect_identical(is.na(actual), is.na(expected))
+2026-10-25T00:13:07.4894211Z    diff| 1 element mismatch
+2026-10-25T00:13:07.4894413Z   ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:13:07.4894684Z    call| expect_identical(is.infinite(actual), is.infinite(expected))
+2026-10-25T00:13:07.4894914Z    diff| 1 element mismatch
+2026-10-25T00:13:07.4895085Z   Error: 2 out of 5430 tests failed
+2026-10-25T00:13:07.4971609Z Status: 1 ERROR, 1 NOTE
+2026-10-25T00:13:07.7866870Z ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:13:07.7866986Z  call| expect_identical(is.na(actual), is.na(expected))
+2026-10-25T00:13:07.7867055Z  diff| 1 element mismatch
+2026-10-25T00:13:07.7867162Z ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:13:07.7867477Z  call| expect_identical(is.infinite(actual), is.infinite(expected))
+2026-10-25T00:13:07.7867547Z  diff| 1 element mismatch
+2026-10-25T00:13:07.7868220Z ##[error]Error: 2 out of 5430 tests failed

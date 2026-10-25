@@ -1,0 +1,40 @@
+Prediction overflow CI follow-up
+================================
+Parent commit: 447f92c8cd802cbf444f7206c1b0f41c90ed7192
+Initial CI: https://github.com/wklimowicz/dbreg/actions/runs/40145216907
+
+Linux exposed two classification failures for an Inf-Inf Poisson predictor;
+macOS exposed those two plus the same undefined reference classification.
+The remainder of their 5,430 checks passed. These are synthetic inputs.
+Local previously used OpenBLAS 0.3.29 and did not reproduce the failure.
+The regression now asserts explicit staged arithmetic rather than relying on
+undefined overflow from a particular BLAS reduction or matrix batch shape.
+
+Normal values retain the matrix product. A conservative norm bound screens for
+possible overflow without allocating a second design-sized matrix. Risky rows
+are recomputed term by term with vector-sized intermediates, matching staged
+SQL arithmetic. Ordinary OLS, GLM, portable learned-state and database-state R
+prediction share the helper. Fitting, SQL and covariance calculations are unchanged.
+Positive infinite Poisson means and the negative-infinity epsilon floor are
+preserved. Reference comparisons retain all representable predictor rows and
+their finite-value tolerances; the Inf-Inf row has direct policy/batch checks.
+
+Current full local: 5433 assertions, zero failures; 207.31 seconds.
+Current actual native tails: 22 assertions, zero failures; 61.87 seconds.
+Nine matrix checks plus a sparse overflow probe cover normal/extreme/empty/sparse
+products and batch invariance. Follow-up manifests match current source; the
+preceding broad 238 native/5,418 local acceptance is audited against commit
+447f92c and its exact archives. See audit-source.R/previous-source-audit.csv.
+
+Package check: zero errors/warnings and the existing optional binsreg NOTE;
+package tests were skipped there after the separate complete source run.
+The 100,000-row probe with five predictors has identical ordinary outputs.
+Observed prediction medians .0978s previous/.0938s guarded are within timing
+noise; no speedup is claimed. Fitting throughput is unaffected. Both modes use
+the same fit/data and OPENBLAS_NUM_THREADS=2. See performance.csv and runner.
+
+Reproduction:
+Rscript _benchmarks/check_glm_fractional.R full OUTPUT_DIRECTORY
+Rscript .github/scripts/run-databricks-tests.R OUTPUT_DIRECTORY test_sql_prediction_tails_live.R
+OPENBLAS_NUM_THREADS=2 Rscript _benchmarks/prediction_overflow_20261025/check-performance.R
+Rscript _benchmarks/prediction_overflow_20261025/audit-source.R

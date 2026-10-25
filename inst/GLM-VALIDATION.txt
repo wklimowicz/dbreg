@@ -652,3 +652,34 @@ The supported implementation is ready for PR review. The support matrix and
 executable lifetime examples distinguish retained rows, portable learned state,
 live SQL dictionaries and release. The native compact APIs retain their purpose
 for latency-sensitive fits that do not need the compatibility state.
+
+
+CI overflow follow-up, 2026-10-25
+--------------------------------
+CI on Linux and macOS exposed BLAS-dependent classification of an extreme
+Poisson predictor containing overflowing positive and negative products. A fused
+matrix operation could return Inf where staged SQL arithmetic gives Inf-Inf,
+which is missing. Reference fixest can vary on the same undefined cancellation.
+Normal finite predictions and fitting calculations were passing.
+
+A shared R prediction matrix helper keeps the ordinary matrix product for safe
+magnitudes. Potentially overflowing rows use explicit term products/additions,
+with vector-sized intermediates and deterministic batch behavior. OLS, GLM and
+portable/database learned-state prediction reuse it. Fits, SQL kernels, retained
+rows and covariance calculations are unchanged. Real positive/negative infinite
+predictors and the Poisson lower mean bound retain their defined behavior.
+Tests assert cancellation/batch behavior directly; fixest comparisons cover all
+representable predictor rows, with unchanged finite-value tolerances.
+
+Current full local: 5,433 assertions, zero failures. Current actual native tail
+suite: 22 assertions, zero failures. Nine direct matrix-product checks cover
+normal/sparse/empty products, cancellation and partial-sum overflow. Earlier
+238 native acceptance checks and 5,418 local checks are historical at 447f92c;
+the follow-up audit verifies those manifests against that commit and its exact
+archives, and current follow-up manifests against the current code. Source,
+failed CI excerpts, timings and package-check evidence are in
+_benchmarks/prediction_overflow_20261025/.
+
+The 100,000-row/five-column prediction probe has identical ordinary outputs.
+Observed medians are .0978s for the previous product and .0938s guarded, within
+run noise; no speedup is claimed. Fitting paths are unaffected by this correction.

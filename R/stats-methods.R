@@ -285,7 +285,7 @@ predict.dbreg = function(
   }
 
   # Generate predictions
-  fit = as.vector(mm %*% betas)
+  fit = prediction_matrix_product(mm, betas)
   if (strategy == "demean") {
     fit = fit + y_group_mean
   }

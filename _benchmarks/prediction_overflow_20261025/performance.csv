@@ -1,0 +1,3 @@
+"mode","rows","columns","median_seconds","min_seconds","max_seconds"
+"matrix_product",100000,5,0.0978000000000002,0.0682,0.1778
+"guarded",100000,5,0.0938000000000001,0.0582000000000001,0.0988

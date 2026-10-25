@@ -1,5 +1,9 @@
 # Fixest compatibility (development branch)
 
+- R prediction explicitly sums potentially overflowing rows, avoiding BLAS- and
+  batch-dependent `Inf - Inf` results. Ordinary predictions retain the matrix
+  product; real infinite Poisson means and its lower bound remain supported.
+
 - Added supported additive `i()` indicators/numeric group slopes with fitted
   references and literal `ref`/`keep` controls. Bounded typed dictionaries drive
   R/SQL prediction, preserving large integer and adjacent-double categories.

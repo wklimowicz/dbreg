@@ -1,0 +1,1 @@
+Current follow-up manifests match; preceding acceptance is verified against commit 447f92c and its exact archives.

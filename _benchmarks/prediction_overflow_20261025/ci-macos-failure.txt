@@ -1,0 +1,29 @@
+Workflow: https://github.com/wklimowicz/dbreg/actions/runs/40145216907
+Commit: 447f92c8cd802cbf444f7206c1b0f41c90ed7192
+2026-10-25T00:15:10.6383410Z   ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:15:10.6384080Z    call| expect_identical(is.na(actual), is.na(expected))
+2026-10-25T00:15:10.6384750Z    diff| 1 element mismatch
+2026-10-25T00:15:10.6385880Z   ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:15:10.6386590Z    call| expect_identical(is.infinite(actual), is.infinite(expected))
+2026-10-25T00:15:10.6387240Z    diff| 1 element mismatch
+2026-10-25T00:15:10.6387780Z   ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:15:10.6388440Z    call| expect_identical(is.na(actual), is.na(reference_prediction))
+2026-10-25T00:15:10.6389180Z    diff| 1 element mismatch
+2026-10-25T00:15:10.6390230Z   ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:15:10.6397840Z    call| expect_identical(is.infinite(actual), is.infinite(reference_prediction))
+2026-10-25T00:15:10.6399400Z    diff| 1 element mismatch
+2026-10-25T00:15:10.6400770Z   Error: 4 out of 5430 tests failed
+2026-10-25T00:15:10.6514090Z Status: 1 ERROR, 1 NOTE
+2026-10-25T00:15:12.2579790Z ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:15:12.2579980Z  call| expect_identical(is.na(actual), is.na(expected))
+2026-10-25T00:15:12.2580090Z  diff| 1 element mismatch
+2026-10-25T00:15:12.2580260Z ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:15:12.2580510Z  call| expect_identical(is.infinite(actual), is.infinite(expected))
+2026-10-25T00:15:12.2580610Z  diff| 1 element mismatch
+2026-10-25T00:15:12.2580790Z ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:15:12.2581020Z  call| expect_identical(is.na(actual), is.na(reference_prediction))
+2026-10-25T00:15:12.2581310Z  diff| 1 element mismatch
+2026-10-25T00:15:12.2581480Z ----- FAILED[data]: test_sql_prediction_tails.R<3--7>
+2026-10-25T00:15:12.2581770Z  call| expect_identical(is.infinite(actual), is.infinite(reference_prediction))
+2026-10-25T00:15:12.2581870Z  diff| 1 element mismatch
+2026-10-25T00:15:12.2582770Z ##[error]Error: 4 out of 5430 tests failed

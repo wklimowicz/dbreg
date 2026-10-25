@@ -1,0 +1,11 @@
+ℹ Loading dbreg
+Failed to connect to system scope bus via local transport: Operation not permitted (consider using --machine=<user>@.host --user to connect to bus of other user)
+                         mode   rows columns median_seconds min_seconds
+matrix_product matrix_product 100000       5         0.0978      0.0682
+guarded               guarded 100000       5         0.0938      0.0582
+               max_seconds
+matrix_product      0.1778
+guarded             0.0988
+Warning message:
+In system("timedatectl", intern = TRUE) :
+  running command 'timedatectl' had status 1

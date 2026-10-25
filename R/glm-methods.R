@@ -168,8 +168,12 @@ glance.dbglm = function(x, ...) {
 #' @rdname dbglm-methods
 #' @export
 print.dbglm = function(x, ...) {
-  cat("Database ", x[["family"]][["family"]], " GLM (", x[["family"]][["link"]], "), ", x[["nobs_orig"]],
-    " observations; ", x[["iterations"]], " IRLS iterations\n", sep = "")
+  if (isTRUE(x[["linear_model"]])) {
+    cat("Database OLS, ", x[["nobs_orig"]], " observations\n", sep = "")
+  } else {
+    cat("Database ", x[["family"]][["family"]], " GLM (", x[["family"]][["link"]], "), ", x[["nobs_orig"]],
+      " observations; ", x[["iterations"]], " IRLS iterations\n", sep = "")
+  }
   if (isFALSE(x[["finite_mle"]])) cat("Boundary probability approximation; no finite MLE established; inference unavailable.\n")
   print(x[["coeftable"]])
   invisible(x)

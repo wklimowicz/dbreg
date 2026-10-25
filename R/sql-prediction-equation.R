@@ -55,8 +55,7 @@ sql_prediction_equation = function(object, context, source, dictionaries, conn, 
   factor_valid = vapply(names(context[["design"]][["factor_levels"]]), function(name) {
     levels = context[["design"]][["factor_levels"]][[name]]
     class = prediction_factor_class(context[["design"]], name)
-    literals = if (isTRUE(context[["design"]][["factor_labels"]])) sql_value_literals(conn, as.character(levels)) else
-      sql_factor_literals(conn, stats::setNames(list(levels), name), stats::setNames(class, name))[[name]]
+    literals = context[["design"]][["level_sql"]][[name]]
     if (!length(literals)) return("FALSE")
     paste0("r.", q(name), " IN (", paste(literals, collapse = ","), ")")
   }, character(1))

@@ -16,9 +16,13 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
     levels = specification[["factor_levels"]]
     classes = specification[["factor_classes"]]
     if (factor_labels) classes = stats::setNames(rep("character", length(levels)), names(levels))
-    info = list(types = as.list(stats::setNames(ifelse(aliases %in% names(levels), "factor", "numeric"), aliases)),
+    info = list(i_specs = specification[["i_specs"]],types = as.list(stats::setNames(ifelse(aliases %in% names(levels), "factor", "numeric"), aliases)),
       levels = levels, factor_classes = classes, level_sql = if (factor_labels)
         lapply(levels, function(value) sql_value_literals(conn, as.character(value))) else sql_factor_literals(conn, levels, classes))
+    if (!factor_labels) for (name in names(specification[["i_specs"]])) {
+      values = stats::setNames(list(specification[["i_specs"]][[name]][["values"]]),name)
+      info[["level_sql"]][[name]] = sql_factor_literals(conn,values,classes)[[name]]
+    }
     design = glm_model_matrix_from_info(attr(stats::terms(rhs), "term.labels"), info)
     names = design[["coef_names"]]
     expressions = design[["select_exprs"]]
@@ -70,6 +74,7 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
   }
   list(expressions = expressions, names = names, sources = sources,
     factor_levels = levels, factor_classes = classes,
+    level_sql = info[["level_sql"]],
     factor_labels = factor_labels,
     numeric_sources = setdiff(aliases, names(levels)))
 }

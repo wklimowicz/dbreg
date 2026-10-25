@@ -29,7 +29,30 @@ prediction_dataframe_source = function(object, data, required) {
   labels = safe_identifiers(paste0("dbreg_prediction_factor", seq_along(factors), "__"), taken = names(data))
   if (!length(factors)) labels = character()
   for (i in seq_along(factors)) data[[labels[[i]]]] = as.character(data[[factors[[i]]]])
-  list(data = data[unique(c(required, labels))], labels = stats::setNames(labels, factors))
+  names(labels) = factors
+  if (length(object[["model_spec"]][["i_specs"]])) {
+    eligible = rep(TRUE,nrow(data))
+    for (name in prediction_required_columns(object)) {
+      value = data[[name]]
+      eligible = eligible & !is.na(value)
+      if (is.numeric(value) && !inherits(value,"integer64")) eligible = eligible & is.finite(value)
+    }
+  }
+  for (spec in object[["model_spec"]][["i_specs"]]) {
+    first = spec[["first"]]
+    public = object[["factor_sources"]][[first]]
+    index = rep(NA_integer_,nrow(data))
+    index[eligible] = i_match_values(spec,data[[public]][eligible],strict=FALSE)
+    label = safe_identifiers(paste0("dbreg_prediction_i",length(labels)+1L,"__"),taken=names(data))
+    data[[label]] = spec[["labels"]][index]
+    # Leave rejection to the SQL validity/known-FE checks, in the same order
+    # as R prediction. The marker cannot alias an actual fitted label.
+    marker = "dbreg_prediction_unseen_i__"
+    while (marker %in% spec[["labels"]]) marker = paste0(marker,"_")
+    data[[label]][eligible & is.na(index)] = marker
+    labels[first] = label
+  }
+  list(data = data[unique(c(required, labels))], labels = labels)
 }
 
 sql_prediction_context = function(object, conn, dataframe_labels = NULL) {
@@ -42,7 +65,7 @@ sql_prediction_context = function(object, conn, dataframe_labels = NULL) {
   design = sql_fitted_prediction_design(object, conn, factor_labels = !is.null(dataframe_labels))
   for (name in names(design[["factor_levels"]])) {
     public = design[["sources"]][[name]]
-    if (!is.null(dataframe_labels)) design[["sources"]][name] = dataframe_labels[[public]]
+    if (!is.null(dataframe_labels)) design[["sources"]][name] = dataframe_labels[[if(name %in% names(dataframe_labels)) name else public]]
   }
   if (is.null(state)) {
     beta = stats::coef(object)
@@ -115,7 +138,7 @@ sql_prediction_numeric = function(conn, column, class) {
   if (class == "POSIXct") {
     return(if (native) paste0("unix_micros(", column, ")/1e6") else paste0("epoch(", column, ")"))
   }
-  if (!class %in% c("numeric", "integer", "integer64")) stop("Numeric prediction inputs require numeric or date/time SQL columns.", call. = FALSE)
+  if (!class %in% c("numeric", "integer", "integer64", "logical")) stop("Numeric prediction inputs require numeric or date/time SQL columns.", call. = FALSE)
   paste0("CAST(", column, " AS DOUBLE)")
 }
 

@@ -345,10 +345,9 @@ dbbinsreg = function(
   }
 
   # Convert binsreg parameters to internal parameters
-  # For now, we use the points parameters as the primary model
-  degree = points_p
-
-  smooth = points_s
+  # A line-only request uses its own basis; otherwise retain the points default.
+  degree = if (!points_on && line_on) line_p else points_p
+  smooth = if (!points_on && line_on) line_s else points_s
   B = as.integer(nbins)
 
   # Validate linegrid

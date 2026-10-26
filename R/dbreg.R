@@ -222,7 +222,7 @@
 #' statistics on the aggregated data. The reason for this is that time and unit
 #' FE are typically high dimensional, but covariate averages are not; see
 #' Arkhangelsky & Imbens (2024).
-#' 
+#'
 #' However, the demeaning approaches invite tradeoffs of their own. For example,
 #' the single-pass double demeaning transformation only obtains exact TWFE
 #' results for balanced panels with two FE. For unbalanced panels, weighted
@@ -254,16 +254,16 @@
 #' Successful bounded moment projections
 #' report `ap_method = "bounded_moments"`; `ap_iterations` counts solve and
 #' refinement steps and `ap_max_abs` reports the certified group-mean residual.
-#' 
+#'
 #' Users should weigh these tradeoffs when choosing their acceleration strategy.
 #' Summarising, we can provide a few guiding principles. `"compress"` is a good
-#' default that guarantees the "exact" FE estimates and is usually very 
+#' default that guarantees the "exact" FE estimates and is usually very
 #' efficient (barring data I/O costs and high FE dimensionality). `"mundlak"` is
 #' another efficient alternative provided that the CRE estimand is acceptable
 #' (don't be alarmed if your coefficients are not identical). Finally, the
 #' `"demean"` and `"moments"` strategies are great for particular use cases
 #' (i.e., balanced panels and cases without FE, respectively).
-#' 
+#'
 #' If this all sounds like too much to think about, don't fret. The good news
 #' is that `dbreg` can do a lot (all?) of the deciding for you. Specifically, it
 #' will invoke an `"auto"` heuristic behind the scenes if a user does not
@@ -282,7 +282,7 @@
 #' - ELSE IF 3+ FE AND (poor compression ratio OR too big compressed data)
 #'   THEN `"demean"` via joint FE projection.
 #' - ELSE THEN `"compress"`.
-#' 
+#'
 #' _Tip: set `dbreg(..., verbose = TRUE)` to print information about the auto
 #' strategy decision criteria._
 #'
@@ -319,54 +319,54 @@
 #'
 #' @examples
 #' ## In-memory data ----
-#' 
+#'
 #' # We can pass in-memory R data frames to an ephemeral DuckDB connection via
 #' # the `data` argument. This is convenient for small(er) datasets and demos.
 #'
 #' # Default "compress" strategy reduces the data to 4 rows before running OLS
 #' dbreg(weight ~ Diet, data = ChickWeight)
-#' 
+#'
 #' # Compare with lm
 #' summary(lm(weight ~ Diet, data = ChickWeight))$coefficients
-#' 
-#' # Add "fixed effects" after a `|` 
+#'
+#' # Add "fixed effects" after a `|`
 #' dbreg(weight ~ Time | Diet, data = ChickWeight)
-#' 
+#'
 #' # "robust" SEs can also be computed using a sufficient statistics approach
 #' dbreg(weight ~ Time | Diet, data = ChickWeight, vcov = "hc1")
 #' dbreg(weight ~ Time | Diet, data = ChickWeight, vcov = ~Chick)
-#' 
+#'
 #' # Different acceleration strategies + specifications
 #' dbreg(weight ~ Time | Diet, data = ChickWeight, strategy = "demean")
 #' dbreg(weight ~ Time | Diet, data = ChickWeight, strategy = "mundlak")
 #' dbreg(weight ~ Time | Diet + Chick, data = ChickWeight, strategy = "mundlak") # two-way Mundlak
 #' dbreg(weight ~ Time, data = ChickWeight, strategy = "moments") # no FEs
 #' # etc.
-#' 
+#'
 #' # Interactions: does the effect of Time vary by Diet?
 #' # (Diet main effects are collinear with Chick FE, so these drop out)
 #' dbreg(weight ~ Time * Diet | Chick, data = ChickWeight)
-#' 
+#'
 #' # Event study with fixest-style i() terms (reference period 5)
 #' if (requireNamespace("fixest", quietly = TRUE)) {
 #'   data("base_did", package = "fixest")
 #'   dbreg(y ~ x1 + i(period, treat, ref = 5) | id + period, data = base_did)
 #' }
-#' 
+#'
 #' #
 #' ## DBI connection ----
-#' 
+#'
 #' # For persistent databases or more control, use the `conn` + `table` args.
 #' # Again, we use DuckDB below but any other DBI-supported backend should work
 #' # too (e.g., odbc, bigrquery, noctua (AWS Athena),  etc.) See:
 #' # https://r-dbi.org/backends/
-#' 
+#'
 #' library(DBI)
 #' con = dbConnect(duckdb::duckdb())
 #' dbWriteTable(con, "cw", as.data.frame(ChickWeight))
-#' 
+#'
 #' dbreg(weight ~ Time | Diet, conn = con, table = "cw")
-#' 
+#'
 #' # Tip: Rather than creating or writing (temp) tables, use CREATE VIEW to
 #' # define subsets or computed columns without materializing data. This is more
 #' # efficient and especially useful for filtering or adding variables.
@@ -380,24 +380,24 @@
 #'   "
 #' )
 #' dbreg(weight ~ Time | Chick, conn = con, table = "cw1")
-#' 
+#'
 #' #
 #' ## Path to file ----
 #' #
 #' # For file-based data (e.g., parquet), use the path argument.
-#' 
+#'
 #' tmp = tempfile(fileext = ".parquet")
 #' dbExecute(con, sprintf("COPY cw TO '%s' (FORMAT PARQUET)", tmp))
-#' 
+#'
 #' dbreg(weight ~ Time | Diet, path = tmp)
-#' 
+#'
 #' # Cleanup
 #' dbDisconnect(con)
 #' unlink(tmp)
-#' 
+#'
 #' #
 #' ## Big dataset ----
-#' 
+#'
 #' # For a more compelling and appropriate dbreg use-case, i.e. regression on a
 #' # big (~180 million row) dataset of Hive-partioned parquet files, see the
 #' # package website:
@@ -432,7 +432,6 @@ dbreg = function(
   fixef_rm = c("none", "singletons"),
   ...
 ) {
-
   weights = formula_column(weights, "weights")
   offset = formula_column(offset, "offset")
   verbose = isTRUE(verbose)
@@ -448,7 +447,7 @@ dbreg = function(
   if (retain_prediction(retain)) {
     prediction_state_limit()
   }
-  if (strategy == "within") strategy = "demean"  # alias
+  if (strategy == "within") strategy = "demean" # alias
 
   # superseded args handled through ...
   dots = list(...)
@@ -497,10 +496,13 @@ dbreg = function(
   )
   # Release any connection/registration we create, including on errors during
   # input processing (process_dbreg_inputs() records them in `inputs` first)
-  on.exit({
-    release_fit_resources(inputs[["sample_resources"]])
-    release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]])
-  }, add = TRUE)
+  on.exit(
+    {
+      release_fit_resources(inputs[["sample_resources"]])
+      release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]])
+    },
+    add = TRUE
+  )
 
   # Process and validate inputs (writes parsed/derived fields into `inputs`)
   validate_fit_diagnostics(inputs)
@@ -516,8 +518,7 @@ dbreg = function(
   }
 
   # Execute chosen strategy (see R/strategies.R)
-  result = switch(
-    chosen_strategy,
+  result = switch(chosen_strategy,
     # sufficient statistics with no fixed effects
     "moments" = execute_moments_strategy(inputs),
     # Fixed effects via analytic demeaning or joint projection.
@@ -602,8 +603,10 @@ process_dbreg_inputs = function(inputs) {
   from_statement = composite[["from_statement"]]
   fml_parsed = composite[["parsed"]]
   inputs[["composite_fes"]] = composite[["composites"]]
-  adjusted = linear_offset_frame(conn, from_statement, fml_parsed,
-    src[["to_safe"]](inputs[["offset"]]))
+  adjusted = linear_offset_frame(
+    conn, from_statement, fml_parsed,
+    src[["to_safe"]](inputs[["offset"]])
+  )
   from_statement = adjusted[["from_statement"]]
   fml_parsed = adjusted[["parsed"]]
   if (!is.null(adjusted[["alias"]])) {
@@ -631,9 +634,13 @@ process_dbreg_inputs = function(inputs) {
 
   inputs[["weights"]] = weights
   inputs[["source_map"]] = source_map
-  inputs[["sample_diagnostics"]] = sample_diagnostics(inputs, from_statement,
-    list(outcome = yvar, regressor = source_xvars, fixed_effect = source_fes, weight = weights, cluster = cluster_var,
-      offset = src[["to_safe"]](inputs[["offset"]])))
+  inputs[["sample_diagnostics"]] = sample_diagnostics(
+    inputs, from_statement,
+    list(
+      outcome = yvar, regressor = source_xvars, fixed_effect = source_fes, weight = weights, cluster = cluster_var,
+      offset = src[["to_safe"]](inputs[["offset"]])
+    )
+  )
 
   if (!is.null(inputs[["subset"]])) {
     schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from_statement), 0, detect_backend(conn)[["name"]]))
@@ -641,8 +648,10 @@ process_dbreg_inputs = function(inputs) {
     from_statement = filter_source_predicate(from_statement, predicate)
   }
 
-  if (!is.null(adjusted[["finite"]])) from_statement = paste0("FROM (SELECT * ", from_statement,
-    ") dbreg_finite_offset WHERE ", adjusted[["finite"]])
+  if (!is.null(adjusted[["finite"]])) from_statement = paste0(
+    "FROM (SELECT * ", from_statement,
+    ") dbreg_finite_offset WHERE ", adjusted[["finite"]]
+  )
 
   from_statement = filter_estimation_sample(
     from_statement,
@@ -700,7 +709,7 @@ resolve_compress_ratio = function(compress_ratio, fe) {
     return(if (length(fe) %in% 1:2) 0.6 else 0.01)
   }
   if (!is.numeric(compress_ratio) || length(compress_ratio) != 1L ||
-      !is.finite(compress_ratio) || compress_ratio < 0 || compress_ratio > 1) {
+    !is.finite(compress_ratio) || compress_ratio < 0 || compress_ratio > 1) {
     stop("Argument `compress_ratio` ratio must be a numeric in the range [0, 1]\n.")
   }
   compress_ratio
@@ -766,8 +775,10 @@ filter_estimation_sample = function(from_statement, vars, weights = NULL, drop_m
     # typeof() is constant for each DuckDB column, so this folds to a numeric
     # NaN test or TRUE without a separate schema round trip. Text "NaN" stays
     # a valid category; nonnumeric columns are never cast by the selected arm.
-    where_clauses = c(where_clauses, paste0("(CASE WHEN typeof(", missing,
-      ") IN ('DOUBLE','FLOAT') THEN NOT isnan(TRY_CAST(", missing, " AS DOUBLE)) ELSE TRUE END)"))
+    where_clauses = c(where_clauses, paste0(
+      "(CASE WHEN typeof(", missing,
+      ") IN ('DOUBLE','FLOAT') THEN NOT isnan(TRY_CAST(", missing, " AS DOUBLE)) ELSE TRUE END)"
+    ))
   } else if (identical(backend, "spark") && length(missing)) {
     schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from_statement), 0, backend))
     numeric = missing[vapply(missing, function(name) is.numeric(schema[[name]]) && !inherits(schema[[name]], "integer64"), logical(1))]
@@ -887,7 +898,7 @@ dbreg_is_balanced_panel = function(inputs) {
 ap_method = function(backend) {
   method = getOption("dbreg.ap_method", if (backend == "spark") "window" else "join")
   if (!identical(method, "window") && !identical(method, "join")) {
-    stop('[dbreg] dbreg.ap_method must be "window" or "join".', call. = FALSE)
+    stop("[dbreg] dbreg.ap_method must be \"window\" or \"join\".", call. = FALSE)
   }
   method
 }
@@ -932,16 +943,16 @@ dbreg_alternating_projections = function(
   }
   solver = getOption("dbreg.ap_solver", "auto")
   if (!is.character(solver) || length(solver) != 1L || is.na(solver) ||
-      !solver %in% c("auto", "moments", "iterative")) {
-    stop('`dbreg.ap_solver` must be "auto", "moments" or "iterative".', call. = FALSE)
+    !solver %in% c("auto", "moments", "iterative")) {
+    stop("`dbreg.ap_solver` must be \"auto\", \"moments\" or \"iterative\".", call. = FALSE)
   }
   backend = detect_backend(conn)[["name"]]
   inputs[["projection_limits"]] = projection_limits()
   if (backend == "duckdb") {
     method = getOption("dbreg.duckdb_ap_method", "join")
     if (!is.character(method) || length(method) != 1L || is.na(method) ||
-        !method %in% c("join", "cg")) {
-      stop('`dbreg.duckdb_ap_method` must be "join" or "cg".', call. = FALSE)
+      !method %in% c("join", "cg")) {
+      stop("`dbreg.duckdb_ap_method` must be \"join\" or \"cg\".", call. = FALSE)
     }
     if (method == "cg" && length(fe) == 2L && solver != "moments") {
       attempt = projection_attempt("bounded_pcg", dbreg_duckdb_cg_projections(
@@ -963,7 +974,8 @@ dbreg_alternating_projections = function(
     if (solver == "auto" && !explicit_method && backend == "duckdb" && length(fe) == 2L) {
       attempt = projection_attempt("bounded_pcg", dbreg_duckdb_cg_projections(
         conn, from_statement, fe, yvar, xvars_sql, xvar_names, weights,
-        unique(c(cluster_var, inputs[["retained_key_safe"]])), verbose, max_iter, tol))
+        unique(c(cluster_var, inputs[["retained_key_safe"]])), verbose, max_iter, tol
+      ))
       projected = record_projection_attempt(inputs, attempt)
       if (!is.null(projected)) return(projected)
     }
@@ -997,14 +1009,17 @@ dbreg_alternating_projections = function(
   mean_table = temp_table_name(paste0("dbreg_ap_m_", seed), backend)
 
   success = FALSE
-  on.exit({
-    if (!success) {
-      drop_table_if_exists(conn, cur_table, backend)
-      drop_table_if_exists(conn, alt_table, backend)
-      drop_table_if_exists(conn, mean_table, backend)
-      drop_table_if_exists(conn, base_table, backend)
-    }
-  }, add = TRUE)
+  on.exit(
+    {
+      if (!success) {
+        drop_table_if_exists(conn, cur_table, backend)
+        drop_table_if_exists(conn, alt_table, backend)
+        drop_table_if_exists(conn, mean_table, backend)
+        drop_table_if_exists(conn, base_table, backend)
+      }
+    },
+    add = TRUE
+  )
 
   base_select = c(
     setdiff(id_cols, c(yvar, xvar_names)), # overlaps are selected below
@@ -1018,7 +1033,7 @@ dbreg_alternating_projections = function(
   vars_all = c(yvar, xvar_names)
   original = dbGetQuery(conn, sql_ap_original_scale(base_table, vars_all, conn))
   original_scale = vapply(original, as.numeric, numeric(1))
-  roundoff = 128*.Machine[["double.eps"]]*original_scale
+  roundoff = 128 * .Machine[["double.eps"]] * original_scale
   tilde_names = paste0(vars_all, "_tilde")
   mean_names = paste0(vars_all, "_mean")
 
@@ -1078,7 +1093,7 @@ dbreg_alternating_projections = function(
       # into a spurious identified regressor. Continue until its remainder is
       # below roundoff, or its group equations converge relative to its RMS.
       identified = is.finite(rms) & rms > roundoff
-      max_relative = if (any(identified)) max(vapply(res, as.numeric, numeric(1))[identified]/rms[identified]) else 0
+      max_relative = if (any(identified)) max(vapply(res, as.numeric, numeric(1))[identified] / rms[identified]) else 0
     }
     if (is.finite(max_abs) && max_abs < tol && is.finite(max_relative) && max_relative <= tol) {
       success = TRUE
@@ -1158,7 +1173,7 @@ choose_strategy = function(inputs) {
 
     if (verbose) {
       data_msg = paste0(
-        "        - ", 
+        "        - ",
         "data has ",
         format(total_n, big.mark = ","), " rows"
       )
@@ -1253,7 +1268,7 @@ choose_strategy = function(inputs) {
     if (verbose) {
       message("        - decision: ", chosen_strategy)
     }
-    } else {
+  } else {
     chosen_strategy = strategy
     if (verbose) {
       message(sprintf("[%s] Using strategy: ", tag), chosen_strategy)

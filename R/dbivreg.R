@@ -140,8 +140,7 @@ dbivreg = function(
 
   chosen_strategy = choose_dbivreg_strategy(inputs)
 
-  result = switch(
-    chosen_strategy,
+  result = switch(chosen_strategy,
     "moments" = execute_iv_moments_strategy(inputs),
     "compress" = execute_iv_compress_strategy(inputs),
     "demean" = execute_iv_demean_strategy(inputs),
@@ -202,15 +201,19 @@ process_dbivreg_inputs = function(inputs) {
   inputs[["source_map"]] = name_map
   if (!is.null(inputs[["subset"]])) {
     schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from_statement), 0, detect_backend(conn)[["name"]]))
-    from_statement = filter_source_predicate(from_statement,
-      sql_subset_predicate(conn, inputs[["subset"]], schema, src[["to_safe"]]))
+    from_statement = filter_source_predicate(
+      from_statement,
+      sql_subset_predicate(conn, inputs[["subset"]], schema, src[["to_safe"]])
+    )
   }
   adjusted = offset_source_frame(conn, from_statement, yvar, src[["to_safe"]](inputs[["offset"]]))
   if (!is.null(adjusted[["alias"]])) {
     from_statement = filter_source_predicate(adjusted[["from_statement"]], adjusted[["finite"]])
-    formula = paste(adjusted[["alias"]], "~", parsed_fml[["exog_rhs_text"]], "|",
+    formula = paste(
+      adjusted[["alias"]], "~", parsed_fml[["exog_rhs_text"]], "|",
       if (length(fe)) paste(parsed_fml[["fe_rhs_text"]], "|"),
-      parsed_fml[["endog_rhs_text"]], "~", parsed_fml[["instr_rhs_text"]])
+      parsed_fml[["endog_rhs_text"]], "~", parsed_fml[["instr_rhs_text"]]
+    )
     parsed_fml = dbivreg_parse_formula(stats::as.formula(formula, env = baseenv()))
     yvar = parsed_fml[["yvar"]]
     name_map[[adjusted[["alias"]]]] = restore_names(adjusted[["outcome"]], src[["map"]])
@@ -225,10 +228,14 @@ process_dbivreg_inputs = function(inputs) {
     validate_weights(weights, NULL, conn, from_statement)
   }
   inputs[["weights"]] = weights
-  inputs[["sample_diagnostics"]] = sample_diagnostics(inputs, from_statement,
-    list(outcome = yvar, regressor = parsed_fml[["exog_vars"]],
+  inputs[["sample_diagnostics"]] = sample_diagnostics(
+    inputs, from_statement,
+    list(
+      outcome = yvar, regressor = parsed_fml[["exog_vars"]],
       endogenous = parsed_fml[["endog_vars"]], instrument = parsed_fml[["instr_vars"]],
-      fixed_effect = fe, weight = weights, cluster = cluster_var))
+      fixed_effect = fe, weight = weights, cluster = cluster_var
+    )
+  )
   from_statement = filter_estimation_sample(
     from_statement,
     vars = c(
@@ -524,7 +531,7 @@ execute_iv_compress_strategy = function(inputs) {
         wy = if (is.null(weights)) dat[["sum_wy"]] else dat[["sum_w2y"]]
         wy_sq = if (is.null(weights)) dat[["sum_wy_sq"]] else dat[["sum_w2y_sq"]]
       } else {
-        centered_y = dat[[y]]-fit[["centers"]][[y]]
+        centered_y = dat[[y]] - fit[["centers"]][[y]]
         wy = w * centered_y
         wy_sq = w * centered_y^2
       }
@@ -746,18 +753,18 @@ dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(),
     fe_vars = fe_vars,
     intercept = intercept
   )
-  if (anyDuplicated(sql_design$aliases) > 0) {
-    dupes = unique(sql_design$aliases[duplicated(sql_design$aliases)])
+  if (anyDuplicated(sql_design[["aliases"]]) > 0) {
+    dupes = unique(sql_design[["aliases"]][duplicated(sql_design[["aliases"]])])
     stop(
       "IV design matrix contains duplicate column names: ",
       paste(standardize_coef_names(dupes), collapse = ", ")
     )
   }
   list(
-    sql = sql_design$select_exprs,
-    names = sql_design$aliases,
-    factor_levels = sql_design$factor_levels,
-    level_aliases = sql_design$level_aliases,
+    sql = sql_design[["select_exprs"]],
+    names = sql_design[["aliases"]],
+    factor_levels = sql_design[["factor_levels"]],
+    level_aliases = sql_design[["level_aliases"]],
     i_columns = sql_design[["i_columns"]],
     i_specs = sql_design[["i_specs"]],
     vars = model_vars(rhs_formula),
@@ -812,8 +819,8 @@ compute_dbivreg_diagnostics = function(
       nested_levels = nested_levels
     ),
     overid = overid,
-    sargan = if (identical(overid$test, "Sargan")) overid else NULL,
-    hansen_j = if (identical(overid$test, "Hansen J")) overid else NULL
+    sargan = if (identical(overid[["test"]], "Sargan")) overid else NULL,
+    hansen_j = if (identical(overid[["test"]], "Hansen J")) overid else NULL
   )
 }
 
@@ -879,12 +886,15 @@ compute_dbivreg_first_stage_wald = function(
     )
     beta_q = fit_u[["coef"]][excluded, , drop = FALSE]
     vcov_q = as.matrix(vcov_u[excluded, excluded, drop = FALSE])
-    stat = tryCatch({
-      if (qr(vcov_q, tol = 1e-10)$rank < q) {
-        stop("first-stage covariance of the excluded instruments is singular")
-      }
-      max(as.numeric(Matrix::t(beta_q) %*% solve_with_fallback(vcov_q, beta_q)$betahat) / q, 0)
-    }, error = function(e) dbivreg_diag_unavailable("First-stage Wald test", e))
+    stat = tryCatch(
+      {
+        if (qr(vcov_q, tol = 1e-10)[["rank"]] < q) {
+          stop("first-stage covariance of the excluded instruments is singular")
+        }
+        max(as.numeric(Matrix::t(beta_q) %*% solve_with_fallback(vcov_q, beta_q)[["betahat"]]) / q, 0)
+      },
+      error = function(e) dbivreg_diag_unavailable("First-stage Wald test", e)
+    )
     list(
       stat = stat,
       p = stats::pf(stat, q, attr(vcov_u, "df.t"), lower.tail = FALSE),
@@ -912,23 +922,26 @@ compute_dbivreg_overid = function(inputs, S, fit, z, n_total, meat = NULL) {
   # Sample moment conditions Z'e at coefficients b
   moments = function(b) S[z, y, drop = FALSE] - S[z, x, drop = FALSE] %*% b
 
-  stat = tryCatch({
-    if (iid) {
-      # Sargan: Z'e (Z'Z)^-1 Z'e / sigma^2 at the 2SLS estimate
-      m = moments(fit[["moment_coef"]])
-      scale = if (is.null(attr(S, "weight_scale"))) 1 else attr(S, "weight_scale")
-      as.numeric(Matrix::t(m) %*% solve_with_fallback(S[z, z, drop = FALSE], m)$betahat) / (fit[["rss"]] / scale / n_total)
-    } else {
-      # Hansen J: minimised efficient-GMM criterion. Two-step GMM with the
-      # moment covariance (meat) estimated from the 2SLS residuals.
-      if (qr(meat, tol = 1e-10)$rank < ncol(meat)) {
-        stop("moment covariance is singular (e.g. fewer clusters than instruments)")
+  stat = tryCatch(
+    {
+      if (iid) {
+        # Sargan: Z'e (Z'Z)^-1 Z'e / sigma^2 at the 2SLS estimate
+        m = moments(fit[["moment_coef"]])
+        scale = if (is.null(attr(S, "weight_scale"))) 1 else attr(S, "weight_scale")
+        as.numeric(Matrix::t(m) %*% solve_with_fallback(S[z, z, drop = FALSE], m)[["betahat"]]) / (fit[["rss"]] / scale / n_total)
+      } else {
+        # Hansen J: minimised efficient-GMM criterion. Two-step GMM with the
+        # moment covariance (meat) estimated from the 2SLS residuals.
+        if (qr(meat, tol = 1e-10)[["rank"]] < ncol(meat)) {
+          stop("moment covariance is singular (e.g. fewer clusters than instruments)")
+        }
+        W = solve_with_fallback(meat, diag(ncol(meat)))[["XtX_inv"]]
+        m = moments(fit_gmm(S, y, x, z, W)[["moment_coef"]])
+        as.numeric(Matrix::t(m) %*% W %*% m)
       }
-      W = solve_with_fallback(meat, diag(ncol(meat)))[["XtX_inv"]]
-      m = moments(fit_gmm(S, y, x, z, W)[["moment_coef"]])
-      as.numeric(Matrix::t(m) %*% W %*% m)
-    }
-  }, error = function(e) dbivreg_diag_unavailable(paste(test_name, "test"), e))
+    },
+    error = function(e) dbivreg_diag_unavailable(paste(test_name, "test"), e)
+  )
   if (is.na(stat)) {
     return(na_out)
   }
@@ -958,67 +971,67 @@ print.dbivreg = function(x, ...) {
   ct = x[["coeftable"]]
   colnames(ct) = c("Estimate", "Std. Error", "t value", "Pr(>|t|)")
 
-  se_type = attr(x$vcov, "type")
-  n_clusters = attr(x$vcov, "n_clusters")
+  se_type = attr(x[["vcov"]], "type")
+  n_clusters = attr(x[["vcov"]], "n_clusters")
   se_type = format_vcov_label(se_type, n_clusters)
 
-  if (x$strategy == "compress") {
-    cat("Compressed 2SLS estimation, Dep. Var.:", x$yvar, "\n")
+  if (x[["strategy"]] == "compress") {
+    cat("Compressed 2SLS estimation, Dep. Var.:", x[["yvar"]], "\n")
     cat(
       "Observations.:",
-      prettyNum(x$nobs_orig, big.mark = ","),
+      prettyNum(x[["nobs_orig"]], big.mark = ","),
       "(original) |",
-      prettyNum(x$nobs, big.mark = ","),
+      prettyNum(x[["nobs"]], big.mark = ","),
       "(compressed)",
       "\n"
     )
-  } else if (x$strategy == "moments") {
-    cat("Moments-based 2SLS estimation, Dep. Var.:", x$yvar, "\n")
-    cat("Observations.:", prettyNum(x$nobs_orig, big.mark = ","), "\n")
-  } else if (x$strategy == "demean") {
-    mstring = if (length(x$fe) == 1) {
+  } else if (x[["strategy"]] == "moments") {
+    cat("Moments-based 2SLS estimation, Dep. Var.:", x[["yvar"]], "\n")
+    cat("Observations.:", prettyNum(x[["nobs_orig"]], big.mark = ","), "\n")
+  } else if (x[["strategy"]] == "demean") {
+    mstring = if (length(x[["fe"]]) == 1) {
       "Demeaned"
-    } else if (length(x$fe) == 2) {
+    } else if (length(x[["fe"]]) == 2) {
       "Double Demeaned"
     } else {
       "Multi-way Demeaned"
     }
-    cat(mstring, "2SLS estimation, Dep. Var.:", x$yvar, "\n")
-    cat("Observations.:", prettyNum(x$nobs_orig, big.mark = ","), "\n")
+    cat(mstring, "2SLS estimation, Dep. Var.:", x[["yvar"]], "\n")
+    cat("Observations.:", prettyNum(x[["nobs_orig"]], big.mark = ","), "\n")
   }
-  cat("Endogenous:", paste(x$endogenous, collapse = ", "), "\n")
-  cat("Excluded instruments:", paste(x$instruments, collapse = ", "), "\n")
+  cat("Endogenous:", paste(x[["endogenous"]], collapse = ", "), "\n")
+  cat("Excluded instruments:", paste(x[["instruments"]], collapse = ", "), "\n")
   cat("Standard Errors:", se_type, "\n")
-  if (!is.null(x$diagnostics$first_stage_f)) {
+  if (!is.null(x[["diagnostics"]][["first_stage_f"]])) {
     fst_lines = vapply(
-      names(x$diagnostics$first_stage_f),
+      names(x[["diagnostics"]][["first_stage_f"]]),
       function(nm) {
-        diag = x$diagnostics$first_stage_f[[nm]]
-        sprintf("%s = %.3f (p=%.3g)", nm, diag$stat, diag$p)
+        diag = x[["diagnostics"]][["first_stage_f"]][[nm]]
+        sprintf("%s = %.3f (p=%.3g)", nm, diag[["stat"]], diag[["p"]])
       },
       character(1)
     )
     cat("First-stage F:", paste(fst_lines, collapse = ", "), "\n")
   }
-  if (!identical(se_type, "IID") && !is.null(x$diagnostics$first_stage_wald)) {
+  if (!identical(se_type, "IID") && !is.null(x[["diagnostics"]][["first_stage_wald"]])) {
     wald_lines = vapply(
-      names(x$diagnostics$first_stage_wald),
+      names(x[["diagnostics"]][["first_stage_wald"]]),
       function(nm) {
-        diag = x$diagnostics$first_stage_wald[[nm]]
-        sprintf("%s = %.3f (p=%.3g)", nm, diag$stat, diag$p)
+        diag = x[["diagnostics"]][["first_stage_wald"]][[nm]]
+        sprintf("%s = %.3f (p=%.3g)", nm, diag[["stat"]], diag[["p"]])
       },
       character(1)
     )
     cat("First-stage Wald:", paste(wald_lines, collapse = ", "), "\n")
   }
-  if (!is.null(x$diagnostics$overid) && is.finite(x$diagnostics$overid$stat)) {
+  if (!is.null(x[["diagnostics"]][["overid"]]) && is.finite(x[["diagnostics"]][["overid"]][["stat"]])) {
     cat(
-      paste0("Over-ID (", x$diagnostics$overid$test, "):"),
-      sprintf("%.3f (p=%.3g, df=%d)", x$diagnostics$overid$stat, x$diagnostics$overid$p, x$diagnostics$overid$df),
+      paste0("Over-ID (", x[["diagnostics"]][["overid"]][["test"]], "):"),
+      sprintf("%.3f (p=%.3g, df=%d)", x[["diagnostics"]][["overid"]][["stat"]], x[["diagnostics"]][["overid"]][["p"]], x[["diagnostics"]][["overid"]][["df"]]),
       "\n"
     )
   }
 
-  print_coeftable(ct, gof_vals = gof(x), has_fes = !is.null(x$fe))
+  print_coeftable(ct, gof_vals = gof(x), has_fes = !is.null(x[["fe"]]))
   invisible(ct)
 }

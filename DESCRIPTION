@@ -2,7 +2,6 @@ Package: dbreg
 Type: Package
 Title: Fast Regressions on Database Backends
 Version: 0.0.3.99
-Date: 2026-03-16
 Authors@R:
   c(
     person(
@@ -42,7 +41,7 @@ Authors@R:
 Description: Leverages database backends to run regressions on very large
   datasets, which may not fit into R's memory. Various acceleration
   strategies---e.g., Wong et al. (2021) <doi:10.48550/arXiv.2102.11297> and
-  Arkhangelsky & Imbens (2024) <https://doi.org/10.1093/restud/rdad089>---allow
+  Arkhangelsky & Imbens (2024) <doi:10.1093/restud/rdad089>---allow
   for highly efficient computation, while robust standard errors are
   computed from sufficient statistics.
 Imports:
@@ -51,13 +50,13 @@ Imports:
   Formula,
   generics,
   glue,
-  jsonlite,
   MASS,
   Matrix,
   stats,
   tinyplot,
   utils
 Suggests:
+  jsonlite,
   broom,
   insight,
   modelsummary,
@@ -79,6 +78,5 @@ Encoding: UTF-8
 License: MIT + file LICENSE
 URL: https://grantmcdermott.com/dbreg/
 BugReports: https://github.com/grantmcdermott/dbreg/issues
-VignetteBuilder: quarto
 Config/roxygen2/version: 8.1.0
 RoxygenNote: 7.3.3

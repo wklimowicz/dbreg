@@ -47,7 +47,7 @@ cross_moments = function(moment_df, vars, y, intercept = TRUE) {
   original = paste0("dbreg_moment_original_", seq_along(vars))
   if (length(vars) && all(original %in% names(moment_df))) {
     maximum = vapply(original, function(name) moment_df[[name]], numeric(1))
-    floor = moment_df[["sum_w"]]*(128*.Machine[["double.eps"]]*maximum)^2
+    floor = moment_df[["sum_w"]] * (128 * .Machine[["double.eps"]] * maximum)^2
     absorbed = vars[diag(S[vars, vars, drop = FALSE]) <= floor]
     S[absorbed, ] = 0
     S[, absorbed] = 0
@@ -78,12 +78,12 @@ restore_moment_fit = function(fit, S, y) {
   if (is.null(scale)) scale = 1
   fit[["moment_coef"]] = fit[["coef"]]
   fit[["centers"]] = attr(S, "centers")
-  fit[["sandwich_bread"]] = (A %*% fit[["bread"]])/scale
+  fit[["sandwich_bread"]] = (A %*% fit[["bread"]]) / scale
   fit[["coef"]] = A %*% fit[["coef"]]
   if ("(Intercept)" %in% fit[["x"]] && !is.null(attr(S, "centers")))
     fit[["coef"]]["(Intercept)", 1L] = fit[["coef"]]["(Intercept)", 1L] + attr(S, "centers")[[y]]
-  fit[["bread"]] = (A %*% fit[["bread"]] %*% t(A))/scale
-  fit[["rss"]] = fit[["rss"]]*scale
+  fit[["bread"]] = (A %*% fit[["bread"]] %*% t(A)) / scale
+  fit[["rss"]] = fit[["rss"]] * scale
   fit[["weight_scale"]] = scale
   fit
 }
@@ -96,10 +96,10 @@ moment_rss = function(S, y, x, beta) {
 # TSS from moments: centered if S carries an intercept, else uncentered
 moment_tss = function(S, y) {
   total = S[y, y]
-  if ("(Intercept)" %in% rownames(S)) total = total-S["(Intercept)", y]^2/S["(Intercept)", "(Intercept)"]
+  if ("(Intercept)" %in% rownames(S)) total = total - S["(Intercept)", y]^2 / S["(Intercept)", "(Intercept)"]
   scale = attr(S, "weight_scale")
   if (is.null(scale)) scale = 1
-  total*scale
+  total * scale
 }
 
 #' OLS on sufficient statistics
@@ -240,13 +240,14 @@ fit_residual_sql = function(fit, frame, y, conn) {
     b = fit[["coef"]]
     if ("(Intercept)" %in% fit[["x"]] && !is.null(fit[["centers"]])) {
       slopes = setdiff(fit[["x"]], "(Intercept)")
-      b["(Intercept)", 1L] = b["(Intercept)", 1L]-fit[["centers"]][[y]]+sum(fit[["centers"]][slopes]*b[slopes, 1L])
+      b["(Intercept)", 1L] = b["(Intercept)", 1L] - fit[["centers"]][[y]] + sum(fit[["centers"]][slopes] * b[slopes, 1L])
     }
   }
   slopes = setdiff(fit[["x"]], "(Intercept)")
   paste0("(", fit_column_sql(fit, frame, y, conn), "-", sql_linear_predictor(
     vapply(slopes, function(name) fit_column_sql(fit, frame, name, conn), character(1)), b[slopes, 1L],
-    if ("(Intercept)" %in% fit[["x"]]) b["(Intercept)", 1L]), ")")
+    if ("(Intercept)" %in% fit[["x"]]) b["(Intercept)", 1L]
+  ), ")")
 }
 
 #' @rdname fit_meats
@@ -266,10 +267,10 @@ compressed_cross_moments = function(X, dat, y, center_columns = seq_len(ncol(X))
   center = setNames(rep(0, ncol(X)), colnames(X))
   center_columns = setdiff(center_columns, match("(Intercept)", colnames(X)))
   if ("(Intercept)" %in% names(center) && length(center_columns)) {
-    center[center_columns] = as.numeric(Matrix::crossprod(dat[["sum_w"]], X[, center_columns, drop = FALSE])/sum(dat[["sum_w"]]))
+    center[center_columns] = as.numeric(Matrix::crossprod(dat[["sum_w"]], X[, center_columns, drop = FALSE]) / sum(dat[["sum_w"]]))
   }
   C = center_compressed_design(X, center)
-  H = as.matrix(Matrix::crossprod(C, C*dat[["sum_w"]]))
+  H = as.matrix(Matrix::crossprod(C, C * dat[["sum_w"]]))
   xy = as.numeric(Matrix::crossprod(C, dat[["sum_wy"]]))
   S = rbind(cbind(H, xy), c(xy, sum(dat[["sum_wy_sq"]])))
   dimnames(S) = rep(list(c(colnames(X), y)), 2L)

@@ -23,12 +23,10 @@ standardize_coef_names = function(x) gsub("_x_", ":", x, fixed = TRUE)
 #' Format variance-covariance type labels for printing
 #' @keywords internal
 format_vcov_label = function(vcov_type, n_clusters = NULL) {
-  switch(
-    vcov_type,
+  switch(vcov_type,
     "iid" = "IID",
     "hc1" = "Heteroskedasticity-robust",
-    "cluster" = if (length(n_clusters) > 1L) paste0("Clustered (", paste(n_clusters, collapse = " and "), " clusters)") else
-      if (!is.null(n_clusters)) sprintf("Clustered (%d clusters)", n_clusters) else "Clustered",
+    "cluster" = if (length(n_clusters) > 1L) paste0("Clustered (", paste(n_clusters, collapse = " and "), " clusters)") else if (!is.null(n_clusters)) sprintf("Clustered (%d clusters)", n_clusters) else "Clustered",
     vcov_type
   )
 }
@@ -47,25 +45,25 @@ gen_coeftable = function(betahat, vcov_mat, df_residual) {
 }
 
 #' Detect and handle collinearity in design matrix
-#' 
+#'
 #' Uses QR decomposition with pivoting to identify rank deficiency.
 #' Returns reduced XtX/Xty matrices and lists of kept/dropped variables.
-#' 
+#'
 #' @keywords internal
 detect_collinearity = function(XtX, Xty, tol = 1e-10, verbose = FALSE) {
   p = ncol(XtX)
   var_names = colnames(XtX)
-  
+
   scales = sqrt(pmax(as.numeric(Matrix::diag(XtX)), .Machine[["double.xmin"]]))
   qr_decomp = qr(XtX / outer(scales, scales), tol = tol)
   rank = qr_decomp[["rank"]]
-  
+
   if (rank < p) {
     keep_idx = qr_decomp[["pivot"]][seq_len(rank)]
     drop_idx = qr_decomp[["pivot"]][(rank + 1):p]
     drop_names = var_names[drop_idx]
     keep_names = var_names[keep_idx]
-    
+
     if (verbose) {
       message(sprintf(
         "[dbreg] %d variable(s) removed due to collinearity: %s",
@@ -73,7 +71,7 @@ detect_collinearity = function(XtX, Xty, tol = 1e-10, verbose = FALSE) {
         paste(drop_names, collapse = ", ")
       ))
     }
-    
+
     list(
       XtX = XtX[keep_idx, keep_idx, drop = FALSE],
       Xty = Xty[keep_idx, , drop = FALSE],
@@ -96,8 +94,8 @@ detect_collinearity = function(XtX, Xty, tol = 1e-10, verbose = FALSE) {
 #' @keywords internal
 solve_with_fallback = function(XtX, Xty) {
   scales = sqrt(pmax(as.numeric(Matrix::diag(XtX)), .Machine[["double.xmin"]]))
-  XtX = XtX/outer(scales, scales)
-  Xty = Xty/scales
+  XtX = XtX / outer(scales, scales)
+  Xty = Xty / scales
   Rch = tryCatch(chol(XtX), error = function(e) NULL)
   if (is.null(Rch)) {
     # Cholesky failed, use QR fallback
@@ -110,7 +108,7 @@ solve_with_fallback = function(XtX, Xty) {
     XtX_inv = chol2inv(Rch)
   }
   dimnames(XtX_inv) = dimnames(XtX)
-  list(betahat = betahat/scales, XtX_inv = XtX_inv/outer(scales, scales))
+  list(betahat = betahat / scales, XtX_inv = XtX_inv / outer(scales, scales))
 }
 
 
@@ -180,8 +178,10 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
   if (is.null(conn)) {
     integer64_data = is.null(table) && is.data.frame(data) &&
       any(vapply(data, inherits, logical(1), "integer64"))
-    conn = dbConnect(duckdb(config = duckdb_config,
-      bigint = if (integer64_data) "integer64" else "numeric"), shutdown = TRUE)
+    conn = dbConnect(duckdb(
+      config = duckdb_config,
+      bigint = if (integer64_data) "integer64" else "numeric"
+    ), shutdown = TRUE)
     own_conn = TRUE
     is_duckdb = TRUE
   } else {
@@ -193,8 +193,8 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
   flush_retired_resources(conn)
 
   if (!is.null(resources)) {
-    resources$conn = conn
-    resources$own_conn = own_conn
+    resources[["conn"]] = conn
+    resources[["own_conn"]] = own_conn
   }
 
   # Process data source with precedence: table > data > path
@@ -229,15 +229,19 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
     data = as.data.frame(data)
     # Register with DuckDB (requires DuckDB connection)
     if (!is_duckdb) {
-      stop("In-memory data frames are only supported with DuckDB connections. ",
-           "Use `table` or `path` for other backends.")
+      stop(
+        "In-memory data frames are only supported with DuckDB connections. ",
+        "Use `table` or `path` for other backends."
+      )
     }
-    temp_name = sprintf("__%s_%s",
-                        caller,
-                        gsub("[^0-9]", "", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3")))
+    temp_name = sprintf(
+      "__%s_%s",
+      caller,
+      gsub("[^0-9]", "", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"))
+    )
     if (!is.null(resources)) {
       temp_name = basename(tempfile(paste0("__", caller, "_")))
-      resources$registered_table = temp_name
+      resources[["registered_table"]] = temp_name
     }
     duckdb_register(conn, temp_name, data)
     registered_table = temp_name
@@ -250,7 +254,9 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
       types = schema[["column_type"]][match(integer64_columns, schema[["column_name"]])]
       if (anyNA(types) || any(types != "BIGINT")) {
         stop("DuckDB did not preserve integer64 input columns. Use a connection created with ",
-          "duckdb::duckdb(bigint = 'integer64'), or convert those columns explicitly before fitting.", call. = FALSE)
+          "duckdb::duckdb(bigint = 'integer64'), or convert those columns explicitly before fitting.",
+          call. = FALSE
+        )
       }
     }
     table_name = temp_name
@@ -261,7 +267,7 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg",
     }
     # Handle path: check if it's already a read_* function call or raw path
     if (!(grepl("^read|^scan", path) && grepl("'", path))) {
-      path = gsub('"', "'", path)
+      path = gsub("\"", "'", path)
       from_statement = glue("FROM '{path}'")
       table_name = glue("'{path}'")
     } else {
@@ -337,20 +343,20 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
     stop("Exactly one outcome variable required.")
   }
   check_simple_terms(paste(deparse(lhs[[2]], backtick = TRUE), collapse = " "), "outcome", allow_interactions = FALSE)
-  
+
   # Extract RHS part 1: variables and term structure
   rhs1 = formula(fml, lhs = 0, rhs = 1)
   tt = terms(rhs1)
   term_labels = attr(tt, "term.labels")
   has_intercept = attr(tt, "intercept") == 1L
-  xvars = model_vars(rhs1)  # unique variable names
+  xvars = model_vars(rhs1) # unique variable names
   # i() terms need SQL expansion, like interactions
   has_i = vapply(term_labels, function(t) {
     !is.null(parse_sql_i_term(t))
   }, logical(1))
   has_interactions = any(grepl(":", term_labels)) || any(has_i)
   has_transformations = any(grepl("^I\\(", term_labels)) || length(explicit_factor_sources(term_labels)) > 0L
-  
+
   if (isTRUE(allow_empty) || isTRUE(allow_extended)) {
     validate_regressor_expression = function(expr) {
       if (is.symbol(expr) || is.numeric(expr)) return(invisible(NULL))
@@ -377,9 +383,9 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
       }
       if (call_name == "I") {
         if (length(expr) != 2 || !is.call(expr[[2]]) ||
-            !identical(as.character(expr[[2]][[1]]), "^") ||
-            !is.symbol(expr[[2]][[2]]) || !is.numeric(expr[[2]][[3]]) ||
-            !as.numeric(expr[[2]][[3]]) %in% c(2, 3)) {
+          !identical(as.character(expr[[2]][[1]]), "^") ||
+          !is.symbol(expr[[2]][[2]]) || !is.numeric(expr[[2]][[3]]) ||
+          !as.numeric(expr[[2]][[3]]) %in% c(2, 3)) {
           stop(
             "Unsupported regressor expression `", deparse(expr),
             "`. Only `I(column^2)` and `I(column^3)` are supported.",
@@ -403,11 +409,11 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
   } else {
     check_simple_terms(term_labels, "regressors")
   }
-  
+
   if (!length(xvars) && !isTRUE(allow_empty)) {
     stop("No regressors on RHS.")
   }
-  
+
   # Extract fixed effects (RHS part 2, after |)
   fe_components = NULL
   fe_labels = NULL
@@ -457,7 +463,7 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
       fe_components = as.list(fe)
     }
   }
-  
+
   list(
     fml = fml,
     yvar = yvar,
@@ -707,8 +713,10 @@ register_factor_display = function(inputs, factor_levels = list(), level_aliases
       spec[["first"]] = public(spec[["first"]])
       spec[["second"]] = public(spec[["second"]])
       spec[["term"]] = restore_term_names(spec[["term"]], inputs[["source_map"]])
-      spec[["names"]] = if (!length(spec[["selected"]])) character() else paste0(spec[["first"]], "::", spec[["labels"]][spec[["selected"]]],
-        if (!is.null(spec[["second"]])) paste0(":", spec[["second"]]))
+      spec[["names"]] = if (!length(spec[["selected"]])) character() else paste0(
+        spec[["first"]], "::", spec[["labels"]][spec[["selected"]]],
+        if (!is.null(spec[["second"]])) paste0(":", spec[["second"]])
+      )
       spec
     })
     specs = c(inputs[["i_specs"]], specs)
@@ -868,7 +876,7 @@ parse_vcov_args = function(vcov, cluster = NULL, valid_types = c("iid", "hc1")) 
   } else if (!is.null(vcov)) {
     stop("vcov must be a character string or a formula for clustering")
   }
-  
+
   # Handle separate cluster argument (overrides vcov if provided)
   if (!is.null(cluster)) {
     if (inherits(cluster, "formula")) {
@@ -880,7 +888,7 @@ parse_vcov_args = function(vcov, cluster = NULL, valid_types = c("iid", "hc1")) 
     }
     vcov_type = "cluster"
   }
-  
+
   list(
     vcov_type = vcov_type,
     cluster_var = cluster_var
@@ -892,9 +900,9 @@ parse_vcov_args = function(vcov, cluster = NULL, valid_types = c("iid", "hc1")) 
 # =============================================================================
 
 #' Check if backend supports COUNT_BIG
-#' 
+#'
 #' SQL Server and Azure SQL use COUNT_BIG for large tables to avoid overflow.
-#' 
+#'
 #' @param conn A DBI database connection object.
 #' @return Logical: TRUE if backend supports COUNT_BIG, FALSE otherwise.
 #' @keywords internal
@@ -920,8 +928,10 @@ backend_info_from_metadata = function(
   connection_class = character()
 ) {
   if ("BigQueryConnection" %in% connection_class) {
-    return(list(name = "bigquery", supports_count_big = FALSE, is_databricks = FALSE,
-                supports_physical_temp_tables = FALSE, supports_persistent_ap_tables = FALSE, native_query = NA))
+    return(list(
+      name = "bigquery", supports_count_big = FALSE, is_databricks = FALSE,
+      supports_physical_temp_tables = FALSE, supports_persistent_ap_tables = FALSE, native_query = NA
+    ))
   }
   flatten_metadata = function(x) {
     if (is.null(x)) {
@@ -996,9 +1006,9 @@ backend_info_from_metadata = function(
 }
 
 #' Detect SQL backend from connection
-#' 
+#'
 #' Returns backend name and capabilities for SQL dialect handling.
-#' 
+#'
 #' @param conn A DBI database connection object.
 #' @return List with backend name and capabilities.
 #' @keywords internal
@@ -1065,8 +1075,7 @@ validate_databricks_ap_backend = function(backend_info) {
 #' which limits moment accuracy to ~1e-7. Use each backend's 8-byte type.
 #' @keywords internal
 sql_cast_double = function(sql, conn) {
-  type = switch(
-    detect_backend(conn)[["name"]],
+  type = switch(detect_backend(conn)[["name"]],
     postgres = "DOUBLE PRECISION",
     sqlserver = "FLOAT",
     bigquery = "FLOAT64",
@@ -1076,12 +1085,12 @@ sql_cast_double = function(sql, conn) {
 }
 
 #' Generate SQL COUNT expression with proper casting
-#' 
+#'
 #' Returns an aliased COUNT expression that handles:
 #' - COUNT_BIG for SQL Server (avoids int overflow on large tables)
 #' - CAST to BIGINT for other backends
 #' - DISTINCT counting when needed
-#' 
+#'
 #' @param conn Database connection (used to detect backend)
 #' @param alias Column alias for the count result
 #' @param expr Expression to count (default "*")
@@ -1105,9 +1114,9 @@ sql_count = function(conn, alias, expr = "*", distinct = FALSE) {
 }
 
 #' Get simple COUNT expression for backend
-#' 
+#'
 #' Returns just the count expression without alias (for use in aggregations).
-#' 
+#'
 #' @param backend Backend name from detect_backend()
 #' @return SQL expression: "COUNT_BIG(*)" for SQL Server, "COUNT(*)" otherwise
 #' @keywords internal
@@ -1125,9 +1134,9 @@ sql_ntile = function(x_name, n_bins) {
 }
 
 #' Get backend-specific RANDOM() expression
-#' 
+#'
 #' Different SQL backends use different syntax for random number generation.
-#' 
+#'
 #' @param backend Backend name from detect_backend()
 #' @return SQL expression for random value (e.g., "RANDOM()", "NEWID()", "RAND()")
 #' @keywords internal
@@ -1138,14 +1147,14 @@ sql_random = function(backend) {
     "postgres" = "RANDOM()",
     "sqlite" = "RANDOM()",
     "mysql" = "RAND()",
-    "RANDOM()"  # default fallback
+    "RANDOM()" # default fallback
   )
 }
 
 #' Build efficient sample query (backend-specific)
-#' 
+#'
 #' Uses native SAMPLE/TABLESAMPLE when available, falls back to ORDER BY RANDOM().
-#' 
+#'
 #' @param select_clause The SELECT clause (e.g., "*" or "col1, col2")
 #' @param table_name Table to sample from
 #' @param where_clause WHERE clause without "WHERE" keyword (or NULL)
@@ -1155,7 +1164,7 @@ sql_random = function(backend) {
 #' @keywords internal
 sql_sample = function(select_clause, table_name, where_clause, n, backend) {
   where_sql = if (!is.null(where_clause)) paste("WHERE", where_clause) else ""
-  
+
   if (backend == "duckdb") {
     # DuckDB: efficient reservoir sampling
     glue("SELECT {select_clause} FROM {table_name} {where_sql} USING SAMPLE {n} ROWS")
@@ -1181,9 +1190,9 @@ sql_sample = function(select_clause, table_name, where_clause, n, backend) {
 }
 
 #' Apply row limit to a SQL query (backend-specific)
-#' 
+#'
 #' SQL Server uses TOP after SELECT, others use LIMIT at end.
-#' 
+#'
 #' @param query The SQL query string
 #' @param n Number of rows to limit to
 #' @param backend Backend name from detect_backend()
@@ -1200,9 +1209,9 @@ sql_limit = function(query, n, backend) {
 }
 
 #' Generate a temp table name with optional SQL Server prefix
-#' 
+#'
 #' SQL Server uses # prefix for local temp tables.
-#' 
+#'
 #' @param base_name Base name for the temp table
 #' @param backend Backend name from detect_backend()
 #' @return Temp table name (with # prefix for SQL Server)
@@ -1216,11 +1225,11 @@ temp_table_name = function(base_name, backend) {
 }
 
 #' Create a temp table from a SELECT query
-#' 
+#'
 #' Handles SQL dialect differences:
 #' - SQL Server: SELECT ... INTO #table FROM (SELECT ...) AS __subq
 #' - Others: CREATE TEMPORARY TABLE name AS SELECT ...
-#' 
+#'
 #' @param conn Database connection
 #' @param table_name Name for the temp table
 #' @param select_sql The SELECT statement (without CREATE TABLE)
@@ -1229,8 +1238,10 @@ temp_table_name = function(base_name, backend) {
 create_temp_table_as = function(conn, table_name, select_sql, backend) {
   if (backend == "sqlserver") {
     # SQL Server: SELECT ... INTO #table FROM ...
-    sql = sub("^SELECT", paste0("SELECT * INTO ", table_name, " FROM (SELECT"), 
-               select_sql, ignore.case = TRUE)
+    sql = sub("^SELECT", paste0("SELECT * INTO ", table_name, " FROM (SELECT"),
+      select_sql,
+      ignore.case = TRUE
+    )
     sql = paste0(sql, ") AS __subq")
     dbExecute(conn, sql)
   } else if (backend == "spark") {
@@ -1277,7 +1288,8 @@ check_unused_args = function(dots, allowed = character()) {
   unused = !nzchar(labels) | !labels %in% allowed
   if (any(unused)) {
     stop("Unused arguments: ", paste(ifelse(nzchar(labels[unused]),
-      paste0("`", labels[unused], "`"), "<unnamed>"), collapse = ", "), call. = FALSE)
+      paste0("`", labels[unused], "`"), "<unnamed>"
+    ), collapse = ", "), call. = FALSE)
   }
   invisible(NULL)
 }
@@ -1288,10 +1300,13 @@ drop_ap_table_if_exists = function(conn, table_name, backend_info) {
   backend = if (is.character(backend_info)) backend_info else backend_info[["name"]]
   if (is.list(backend_info) && isTRUE(backend_info[["is_databricks"]])) {
     sql = glue("DROP TEMP TABLE IF EXISTS {table_name}")
-    tryCatch({
-      dbExecute(conn, sql)
-      invisible(TRUE)
-    }, error = function(e) invisible(FALSE))
+    tryCatch(
+      {
+        dbExecute(conn, sql)
+        invisible(TRUE)
+      },
+      error = function(e) invisible(FALSE)
+    )
   } else {
     drop_table_if_exists(conn, table_name, backend)
     invisible(TRUE)

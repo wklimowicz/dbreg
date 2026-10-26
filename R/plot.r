@@ -1,6 +1,5 @@
-
 #' Plot method for dbbinsreg objects
-#' 
+#'
 #' @md
 #' @description
 #' Visualizes binned regression results from \code{\link{dbbinsreg}}.
@@ -8,7 +7,7 @@
 #' confidence bands, and optionally overlays a smooth line if computed.
 #' Uses tinyplot for rendering but works with both \code{plot()} and
 #' \code{tinyplot()} generics.
-#' 
+#'
 #' @param x A `dbbinsreg` object
 #' @param type The type of plot. If `NULL` (the default), then the type will be
 #' inferred based on the underlying object (e.g, `"pointrange"` for points with
@@ -42,7 +41,7 @@ plot.dbbinsreg = function(
   opt = x[["opt"]]
   x_var = opt[["x_var"]]
   y_var = opt[["y_var"]]
-  
+
   # Grab plot dimensions up front (so added layers don't get clipped)
   has_pts = !is.null(x[["points"]])
   has_ln = isTRUE(line) && !is.null(x[["line"]])
@@ -121,7 +120,7 @@ plot.dbbinsreg = function(
       ymax = pts[["upr"]]
     )
   }
-  
+
   invisible(x)
 }
 

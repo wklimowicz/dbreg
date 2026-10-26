@@ -7,7 +7,7 @@
 execute_constrained_binsreg(inputs)
 }
 \description{
-Uses regression splines with truncated power basis to enforce continuity 
+Uses regression splines with truncated power basis to enforce continuity
 constraints at bin boundaries.
 }
 \keyword{internal}

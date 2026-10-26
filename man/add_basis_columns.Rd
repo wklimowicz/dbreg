@@ -8,7 +8,7 @@ add_basis_columns(binned_data, geo, x_name, degree)
 }
 \description{
 Uses binsreg's basis construction: u = (x - x_left) / h where h is bin width.
-This normalizes u to [0, 1] within each bin, matching binsreg's polynomial 
+This normalizes u to [0, 1] within each bin, matching binsreg's polynomial
 parameterization for s=0 (unconstrained) estimation.
 }
 \keyword{internal}

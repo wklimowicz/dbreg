@@ -13,9 +13,9 @@
 #' @return A validated list of numerical controls.
 #' @export
 dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
-                          step_max_halvings = 25L, collin_tol = 1e-10,
-                          fe_tol = 1e-10, fe_max_iter = 10000L,
-                          projection_method = c("auto", "sql")) {
+                         step_max_halvings = 25L, collin_tol = 1e-10,
+                         fe_tol = 1e-10, fe_max_iter = 10000L,
+                         projection_method = c("auto", "sql")) {
   controls = as.list(environment())
   projection_method = match.arg(projection_method)
   controls[["projection_method"]] = NULL
@@ -183,14 +183,24 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #' predict(m, newdata = d, type = "response")
 #' @export
 dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
-                  family = stats::gaussian(), weights = NULL, offset = NULL,
-                  factor_refs = NULL, vcov = "iid", ssc = NULL, start = NULL,
-                  control = dbglm_control(), verbose = FALSE,
-                  fixef_rm = c("perfect_fit", "singletons", "infinite_coef", "none"),
-                  row_id = NULL, sample_table = NULL, separation = c("error", "prediction"),
-                  retain = c("none", "prediction", "inference", "all"), subset = NULL,
-                  strategy = c("auto", "compress", "moments", "ap"),
-                  compress_ratio = NULL, compress_nmax = 1e6) {
+                 family = stats::gaussian(), weights = NULL, offset = NULL,
+                 factor_refs = NULL, vcov = "iid", ssc = NULL, start = NULL,
+                 control = dbglm_control(), verbose = FALSE,
+                 fixef_rm = c("perfect_fit", "singletons", "infinite_coef", "none"),
+                 row_id = NULL, sample_table = NULL, separation = c("error", "prediction"),
+                 retain = c("none", "prediction", "inference", "all"), subset = NULL,
+                 strategy = c("auto", "compress", "moments", "ap"),
+                 compress_ratio = NULL, compress_nmax = 1e6) {
+  inputs = new.env(parent = emptyenv())
+  env2env(environment(), inputs, names(formals(dbglm)))
+  inputs[["resources"]] = fit_resources()
+  on.exit(release_fit_resources(inputs[["resources"]]), add = TRUE)
+  process_dbglm_inputs(inputs)
+  execute_dbglm_fit(inputs)
+}
+
+process_dbglm_inputs = function(inputs) {
+  env2env(inputs, environment(), c(names(formals(dbglm)), "resources"))
   weights = formula_column(weights, "weights")
   offset = formula_column(offset, "offset")
   family = dbglm_family(family)
@@ -203,12 +213,12 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   control = do.call(dbglm_control, control)
   ssc = dbglm_ssc(ssc)
   covariance = parse_vcov_args(vcov)
-  fixef_rm = match.arg(fixef_rm)
-  separation = match.arg(separation)
-  retain = match.arg(retain)
-  strategy = match.arg(strategy)
+  fixef_rm = match.arg(fixef_rm, c("perfect_fit", "singletons", "infinite_coef", "none"))
+  separation = match.arg(separation, c("error", "prediction"))
+  retain = match.arg(retain, c("none", "prediction", "inference", "all"))
+  strategy = match.arg(strategy, c("auto", "compress", "moments", "ap"))
   if (!is.numeric(compress_nmax) || length(compress_nmax) != 1L ||
-      is.na(compress_nmax) || compress_nmax < 1 || compress_nmax != floor(compress_nmax)) {
+    is.na(compress_nmax) || compress_nmax < 1 || compress_nmax != floor(compress_nmax)) {
     stop("`compress_nmax` must be one positive whole number or Inf.", call. = FALSE)
   }
   if (retain_prediction(retain)) prediction_state_limit()
@@ -219,13 +229,13 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   # Replace only display names; fitted SQL/R design continues to use aliases.
   display = function(names) {
     names = as.character(names)
-    i_columns = rep(FALSE,length(names))
+    i_columns = rep(FALSE, length(names))
     for (a in normalized[["i_aliases"]]) {
-      selected = startsWith(names,paste0(a,"::"))
+      selected = startsWith(names, paste0(a, "::"))
       i_columns = i_columns | selected
-      names[selected] = paste0(normalized[["factor_display"]][[a]],substring(names[selected],nchar(a)+1L))
+      names[selected] = paste0(normalized[["factor_display"]][[a]], substring(names[selected], nchar(a) + 1L))
     }
-    for (a in setdiff(names(normalized[["factors"]]),normalized[["i_aliases"]])) {
+    for (a in setdiff(names(normalized[["factors"]]), normalized[["i_aliases"]])) {
       names[!i_columns] = gsub(a, normalized[["factor_display"]][[a]], names[!i_columns], fixed = TRUE)
     }
     names
@@ -267,17 +277,19 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     }
   }
 
-  resources = fit_resources()
-  on.exit(release_fit_resources(resources), add = TRUE)
   retained_data = prepare_retained_data(data, table, retain)
   data = retained_data[["data"]]
-  setup = setup_db_connection(conn, table, data, path, caller = "dbglm", resources = resources,
-    duckdb_config = list(temp_directory = ""))
+  setup = setup_db_connection(conn, table, data, path,
+    caller = "dbglm", resources = resources,
+    duckdb_config = list(temp_directory = "")
+  )
   conn = setup[["conn"]]
   data = setup[["data"]]
   table = setup[["table"]]
-  retained_source = if (retain_sample(retain)) materialize_retained_source(conn, setup[["from_statement"]], resources,
-    retained_data[["key"]], retained_data[["r_input"]]) else NULL
+  retained_source = if (retain_sample(retain)) materialize_retained_source(
+    conn, setup[["from_statement"]], resources,
+    retained_data[["key"]], retained_data[["r_input"]]
+  ) else NULL
   source_from = if (is.null(retained_source)) setup[["from_statement"]] else paste("FROM", DBI::dbQuoteIdentifier(conn, retained_source[["table"]]))
   resources[["retain_scores"]] = retain_sample(retain)
   backend_info = detect_backend(conn)
@@ -293,10 +305,11 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   variables = unique(c(parsed[["yvar"]], parsed[["xvars"]], unlist(parsed[["fe_components"]]), weights, offset, covariance[["cluster_var"]], unlist(normalized[["slopes"]])))
   real_vars = unique(c(setdiff(variables, names(normalized[["factors"]])), unlist(normalized[["factors"]]), row_id, subset_variables(subset)))
   if (any(startsWith(real_vars, "__dbglm_")) || any(startsWith(real_vars, "dbglm_factor_"))) stop("Source names use a reserved GLM prefix.", call. = FALSE)
-  snapshot = create(paste("SELECT", paste(c(quote_id(real_vars),
+  snapshot = create(paste("SELECT", paste(c(
+    quote_id(real_vars),
     vapply(names(normalized[["factors"]]), function(a) paste(quote_id(normalized[["factors"]][[a]]), "AS", a), character(1)),
-    if (!is.null(retained_source)) paste(quote_id(retained_source[["key"]]), "AS __dbglm_key") else
-      if (isTRUE(backend_info[["is_databricks"]])) "monotonically_increasing_id() AS __dbglm_key" else "ROW_NUMBER() OVER () AS __dbglm_key"), collapse = ", "), source_from), materialize = !is.null(sample_table) && is.null(row_id))
+    if (!is.null(retained_source)) paste(quote_id(retained_source[["key"]]), "AS __dbglm_key") else if (isTRUE(backend_info[["is_databricks"]])) "monotonically_increasing_id() AS __dbglm_key" else "ROW_NUMBER() OVER () AS __dbglm_key"
+  ), collapse = ", "), source_from), materialize = !is.null(sample_table) && is.null(row_id))
   validate_source_row_id(conn, paste("FROM", snapshot), row_id)
   schema = backend_get_query(conn, paste("SELECT * FROM", snapshot, "LIMIT 0"))
   for (name in c(parsed[["yvar"]], weights, offset, unlist(normalized[["slopes"]]))) {
@@ -312,13 +325,14 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   if (!is.null(weights)) eligible = c(eligible, paste(quote_id(weights), "> 0"))
   elig_cond = paste(eligible, collapse = " AND ")
   outcome = quote_id(parsed[["yvar"]])
-  invalid_y = if (family[["family"]] == "poisson") paste0("(", outcome, "<0 OR ", outcome, "!=FLOOR(", outcome, "))") else
-    if (family[["family"]] == "gaussian") "FALSE" else paste(outcome, "NOT IN (0,1)")
+  invalid_y = if (family[["family"]] == "poisson") paste0("(", outcome, "<0 OR ", outcome, "!=FLOOR(", outcome, "))") else if (family[["family"]] == "gaussian") "FALSE" else paste(outcome, "NOT IN (0,1)")
   invalid_message = if (family[["family"]] == "poisson") "Poisson outcomes must be nonnegative integers." else "Binomial outcomes must be zero or one."
   w_bad_sql = if (!is.null(weights)) {
     w = quote_id(weights)
-    paste0("SUM(CASE WHEN ", w, " < 0 THEN 1 ELSE 0 END) AS bad_w, ",
-      "SUM(CASE WHEN ", elig_cond, " AND ", w, " != FLOOR(", w, ") THEN 1 ELSE 0 END) AS fractional_w, ")
+    paste0(
+      "SUM(CASE WHEN ", w, " < 0 THEN 1 ELSE 0 END) AS bad_w, ",
+      "SUM(CASE WHEN ", elig_cond, " AND ", w, " != FLOOR(", w, ") THEN 1 ELSE 0 END) AS fractional_w, "
+    )
   } else "0 AS bad_w, 0 AS fractional_w, "
   snap_info = backend_get_query(conn, paste0(
     "SELECT COUNT(*) AS n_input, ", w_bad_sql,
@@ -350,13 +364,17 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   retained = pruning[["table"]]
   from = paste("FROM", retained)
   if (pruning[["rounds"]] == 0L) {
-    sample = list(n = n_eligible, ymin = snap_info[["ymin"]], ymax = snap_info[["ymax"]],
-      weight_max = snap_info[["weight_max"]], bad = 0)
+    sample = list(
+      n = n_eligible, ymin = snap_info[["ymin"]], ymax = snap_info[["ymax"]],
+      weight_max = snap_info[["weight_max"]], bad = 0
+    )
   } else {
-    sample = backend_get_query(conn, paste("SELECT COUNT(*) AS n, MIN(", quote_id(parsed[["yvar"]]),
+    sample = backend_get_query(conn, paste(
+      "SELECT COUNT(*) AS n, MIN(", quote_id(parsed[["yvar"]]),
       ") AS ymin, MAX(", quote_id(parsed[["yvar"]]), ") AS ymax, SUM(CASE WHEN",
       invalid_y, "THEN 1 ELSE 0 END) AS bad, MAX(",
-      if (is.null(weights)) "1.0" else quote_id(weights), ") AS weight_max", from))
+      if (is.null(weights)) "1.0" else quote_id(weights), ") AS weight_max", from
+    ))
   }
   n = as.numeric(sample[["n"]])
   if (n == 0) {
@@ -372,10 +390,12 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     family[["family"]] == "binomial" && sample[["ymin"]] == sample[["ymax"]])) {
     stop("Constant outcome with an intercept has no finite ", family[["family"]], " solution.", call. = FALSE)
   }
-  for (a in setdiff(names(normalized[["factors"]]),normalized[["i_aliases"]])) {
+  for (a in setdiff(names(normalized[["factors"]]), normalized[["i_aliases"]])) {
     source = normalized[["factors"]][[a]]
-    ref = if (source %in% names(factor_refs)) factor_refs[[source]] else backend_get_query(conn,
-      paste("SELECT", a, from, "GROUP BY", a, "ORDER BY", a, "LIMIT 1"))[[1]][1]
+    ref = if (source %in% names(factor_refs)) factor_refs[[source]] else backend_get_query(
+      conn,
+      paste("SELECT", a, from, "GROUP BY", a, "ORDER BY", a, "LIMIT 1")
+    )[[1]][1]
     factor_refs[[a]] = ref
   }
   if (family[["family"]] != "gaussian" && length(fe) && fixef_rm != "perfect_fit" && fixef_rm != "infinite_coef") {
@@ -387,24 +407,26 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     pure = backend_get_query(conn, paste0("SELECT COUNT(*) AS n FROM (", paste(pure_queries, collapse = " UNION ALL "), ") t"))[["n"]]
     if (pure) stop("GLM fixed-effect separation remains under fixef_rm='", fixef_rm, "'; no finite solution.", call. = FALSE)
   }
-  spec = build_model_spec(parsed[["fml"]], conn, from, factor_refs = factor_refs, reserved_names = variables, absorbed = length(fe)>0L)
-  if (!has_intercept && length(setdiff(names(spec[["factor_levels"]]),names(spec[["i_specs"]])))) {
+  spec = build_model_spec(parsed[["fml"]], conn, from, factor_refs = factor_refs, reserved_names = variables, absorbed = length(fe) > 0L)
+  if (!has_intercept && length(setdiff(names(spec[["factor_levels"]]), names(spec[["i_specs"]])))) {
     stop("Categorical no-intercept designs are not implemented yet.", call. = FALSE)
   }
   has_intercept = has_intercept && !length(fe)
   public = c(if (has_intercept) "(Intercept)", spec[["columns"]][["name"]])
-  if (anyDuplicated(display(public))) stop("Formula terms produce duplicate public coefficient names.",call.=FALSE)
+  if (anyDuplicated(display(public))) stop("Formula terms produce duplicate public coefficient names.", call. = FALSE)
   x = c(if (has_intercept) "__dbglm_intercept", spec[["columns"]][["alias"]])
   if (!length(x) && !length(fe)) stop("No GLM design columns were specified.", call. = FALSE)
   prediction_keys = if (retain_prediction(retain) && length(fe)) prediction_key_fields(conn, parsed[["fe_components"]]) else
     list(fields = character(), columns = list())
   trend_fields = vapply(trend_sources, function(v) paste0("CAST(", quote_id(v), " AS DOUBLE) AS ", trend_aliases[[v]]), character(1))
-  fields = c("__dbglm_key", fe, prediction_keys[["fields"]], trend_fields, sprintf("CAST((%s) AS DOUBLE) AS %s", quote_id(parsed[["yvar"]]), "__dbglm_y"),
+  fields = c(
+    "__dbglm_key", fe, prediction_keys[["fields"]], trend_fields, sprintf("CAST((%s) AS DOUBLE) AS %s", quote_id(parsed[["yvar"]]), "__dbglm_y"),
     sprintf("CAST((%s) AS DOUBLE)/(%s) AS __dbglm_a", if (is.null(weights)) "1.0" else quote_id(weights), dbglm_number(weight_scale)),
     sprintf("CAST((%s) AS DOUBLE) AS __dbglm_o", if (is.null(offset)) "0.0" else quote_id(offset)),
     if (has_intercept) "CAST(1.0 AS DOUBLE) AS __dbglm_intercept",
     sprintf("CAST((%s) AS DOUBLE) AS %s", spec[["columns"]][["sql"]], spec[["columns"]][["alias"]]),
-    if (!is.null(covariance[["cluster_var"]])) paste(quote_id(covariance[["cluster_var"]]), "AS __dbglm_cluster"))
+    if (!is.null(covariance[["cluster_var"]])) paste(quote_id(covariance[["cluster_var"]]), "AS __dbglm_cluster")
+  )
   base = create(paste("SELECT", paste(fields, collapse = ", "), from))
   if (is.null(sample_table)) drop(retained)
   base_terms = c(
@@ -429,21 +451,27 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     # raw second moments in R. No observation-sized result leaves the database.
     design_center[] = vapply(seq_along(x), function(i) as.numeric(row[[paste0("center_", i)]]), numeric(1))
     if (any(!is.finite(design_center))) stop("GLM design centering is nonfinite.", call. = FALSE)
-    centered_sql = paste0("SELECT * EXCLUDE(", paste(x, collapse = ","), "),",
-      paste(sprintf("(%s-(%s)) AS %s", x, dbglm_number(design_center), x), collapse = ","), " FROM ", base)
+    centered_sql = paste0(
+      "SELECT * EXCLUDE(", paste(x, collapse = ","), "),",
+      paste(sprintf("(%s-(%s)) AS %s", x, dbglm_number(design_center), x), collapse = ","), " FROM ", base
+    )
     base = if (isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) create(centered_sql) else
       paste0("(", backend_sql(conn, centered_sql), ")")
     centered_row = backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "__dbglm_a"), collapse = ","), "FROM", base))
     for (name in names(centered_row)) row[[name]] = centered_row[[name]]
   }
   original_base = base
-  cell_groups = unique(c(x, fe, unlist(attr(fe, "slopes")),
+  cell_groups = unique(c(
+    x, fe, unlist(attr(fe, "slopes")),
     unlist(prediction_keys[["columns"]]), "__dbglm_o",
-    if (!is.null(covariance[["cluster_var"]])) "__dbglm_cluster"))
-  compression = dbglm_cell_source(conn, base, cell_groups, n,
+    if (!is.null(covariance[["cluster_var"]])) "__dbglm_cluster"
+  ))
+  compression = dbglm_cell_source(
+    conn, base, cell_groups, n,
     strategy,
     family[["family"]], as.numeric(row[["ybar"]]), create, drop, weight_scale,
-    compress_ratio, compress_nmax)
+    compress_ratio, compress_nmax
+  )
   cell = compression[["enabled"]]
   base = compression[["table"]]
   if (length(fe)) {
@@ -483,6 +511,36 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     }
     beta[] = start
   }
+  env2env(environment(), inputs, c(
+    "public", "all_names", "beta", "display", "all_x",
+    "base", "cell", "compress_nmax", "compress_ratio", "compression",
+    "conn", "control", "count_input", "covariance", "create",
+    "data", "design_center", "drop", "family", "fe",
+    "fixef_rm", "fml", "from", "has_intercept", "keep",
+    "n", "n_eligible", "normalized", "offset", "original_base",
+    "parsed", "path", "precomputed_fe_sizes", "prediction_keys", "pruning",
+    "resources", "retain", "retained_source", "row", "row_id",
+    "sample_table", "separation", "setup", "snap_info", "spec",
+    "ssc", "strategy", "subset", "table", "trend_aliases",
+    "verbose", "weight_scale", "weights", "x"
+  ))
+  invisible(NULL)
+}
+
+execute_dbglm_fit = function(inputs) {
+  env2env(inputs, environment(), c(
+    "public", "all_names", "beta", "display", "all_x",
+    "base", "cell", "compress_nmax", "compress_ratio", "compression",
+    "conn", "control", "count_input", "covariance", "create",
+    "data", "design_center", "drop", "family", "fe",
+    "fixef_rm", "fml", "from", "has_intercept", "keep",
+    "n", "n_eligible", "normalized", "offset", "original_base",
+    "parsed", "path", "precomputed_fe_sizes", "prediction_keys", "pruning",
+    "resources", "retain", "retained_source", "row", "row_id",
+    "sample_table", "separation", "setup", "snap_info", "spec",
+    "ssc", "strategy", "subset", "table", "trend_aliases",
+    "verbose", "weight_scale", "weights", "x"
+  ))
   counts = dbglm_fe_counts(conn, base, fe, length(x), covariance[["vcov_type"]], ssc, parsed[["fe_labels"]], covariance[["cluster_var"]], sizes = precomputed_fe_sizes)
   if (length(fe)) {
     fit = dbglm_fe_fit(conn, base, x, fe, beta, family, control, create, drop, verbose, cache = resources, ybar = row[["ybar"]], vcov_type = covariance[["vcov_type"]], cell = cell)
@@ -495,9 +553,9 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   public = display(public)
   all_names = display(all_names)
   V = covariance_result[["matrix"]]
-  dispersion_scaled = if (family[["family"]] == "gaussian") fit[["deviance"]]/max(n-counts[["model"]], 1) else 1
-  dispersion = if (family[["family"]] == "gaussian") dispersion_scaled*weight_scale else 1
-  if (covariance[["vcov_type"]] == "iid") V = V*(if (family[["family"]] == "gaussian") dispersion_scaled else 1/weight_scale)
+  dispersion_scaled = if (family[["family"]] == "gaussian") fit[["deviance"]] / max(n - counts[["model"]], 1) else 1
+  dispersion = if (family[["family"]] == "gaussian") dispersion_scaled * weight_scale else 1
+  if (covariance[["vcov_type"]] == "iid") V = V * (if (family[["family"]] == "gaussian") dispersion_scaled else 1 / weight_scale)
   if (!isFALSE(fit[["finite_mle"]]) && (any(!is.finite(V)) || any(diag(V) < 0))) {
     stop("GLM covariance is invalid; check identification and weight scale.", call. = FALSE)
   }
@@ -506,9 +564,11 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   se = sqrt(diag(V))
   z = beta / se
   test_df = if (is.numeric(ssc[["t.df"]])) ssc[["t.df"]] else if (!is.null(covariance_result[["clusters"]]) && ssc[["t.df"]] == "min")
-    max(covariance_result[["clusters"]]-1, 1) else max(n-counts[["covariance"]], 1)
-  coeftable = cbind(estimate = beta, std.error = se, statistic = z,
-    p.value = if (family[["family"]] == "gaussian") 2*stats::pt(-abs(z), test_df) else 2 * stats::pnorm(-abs(z)))
+    max(covariance_result[["clusters"]] - 1, 1) else max(n - counts[["covariance"]], 1)
+  coeftable = cbind(
+    estimate = beta, std.error = se, statistic = z,
+    p.value = if (family[["family"]] == "gaussian") 2 * stats::pt(-abs(z), test_df) else 2 * stats::pnorm(-abs(z))
+  )
   full = stats::setNames(rep(NA_real_, length(all_names)), all_names)
   full[public] = beta
   saved_formula = Formula::Formula(stats::as.formula(paste(deparse(Formula::Formula(fml), width.cutoff = 500L), collapse = ""), env = baseenv()))
@@ -543,16 +603,19 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   weighted_loglik = (saturated_loglik - fit[["deviance"]] / 2) * weight_scale
   reported_loglik = weighted_loglik
   if (family[["family"]] == "gaussian") {
-    log_weights = if (is.null(weights)) 0 else as.numeric(row[["log_weights"]])+n*log(weight_scale)
-    weighted_loglik = -n/2*(log(2*pi)+log(fit[["deviance"]]/n)+log(weight_scale)+1)+log_weights/2
-    reported_loglik = weighted_loglik-1
+    log_weights = if (is.null(weights)) 0 else as.numeric(row[["log_weights"]]) + n * log(weight_scale)
+    weighted_loglik = -n / 2 * (log(2 * pi) + log(fit[["deviance"]] / n) + log(weight_scale) + 1) + log_weights / 2
+    reported_loglik = weighted_loglik - 1
   }
   if (family[["family"]] == "binomial" && isTRUE(snap_info[["fractional_w"]] > 0)) {
-    working = if (length(fe)) fit[["working"]] else paste0("(",
-      dbglm_working_sql(base, x, fit[["beta"]], family[["link"]], cell = cell), "SELECT * FROM working)")
+    working = if (length(fe)) fit[["working"]] else paste0(
+      "(",
+      dbglm_working_sql(base, x, fit[["beta"]], family[["link"]], cell = cell), "SELECT * FROM working)"
+    )
     reported_loglik = dbglm_binomial_loglik(conn, working, weight_scale, cell = cell)
   }
-  result = list(coeftable = coeftable, vcov = V, collin.coef = full,
+  result = list(
+    coeftable = coeftable, vcov = V, collin.coef = full,
     projection_diagnostics = resources[["projection_diagnostics"]],
     collin.var = setdiff(all_names, public), coef_names = public, coef_names_all = all_names,
     family = family, fml = saved_formula, model_spec = spec, has_intercept = has_intercept,
@@ -576,7 +639,8 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     factor_sources = normalized[["factors"]], design_names = c(if (has_intercept) "(Intercept)", spec[["columns"]][["name"]])[keep],
     varying_slopes = normalized[["slopes"]], row_id = row_id, sample_table = sample_table, ap_cycles = fit[["ap_cycles"]], ap_residual = fit[["ap_residual"]],
     projection_iterations = fit[["ap_cycles"]], projection_residual = fit[["ap_residual"]],
-    projection_method = if (!is.null(fit[["projection_method"]])) fit[["projection_method"]] else if (length(fe)) "group" else "none", call = call)
+    projection_method = if (!is.null(fit[["projection_method"]])) fit[["projection_method"]] else if (length(fe)) "group" else "none", call = call
+  )
   if (retain_prediction(retain) && length(fe)) {
     prediction_beta = numeric(length(all_x))
     prediction_beta[keep] = fit[["beta"]]
@@ -584,13 +648,18 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
       fe, parsed[["fe_components"]], all_x, spec[["columns"]][["name"]],
       design_center, trend_aliases, counts[["sizes"]], create, drop, n,
       dictionary_components = prediction_keys[["columns"]], fitted_beta = prediction_beta,
-      recovery_control = list(tol = control[["fe_tol"]], max_iter = control[["fe_max_iter"]]))
+      recovery_control = list(tol = control[["fe_tol"]], max_iter = control[["fe_max_iter"]])
+    )
   }
   if (retain_sample(retain)) {
-    if (cell) fit = dbglm_expand_cell_fit(conn, original_base, fit, x, fe,
-      compression[["groups"]], family[["link"]], create)
-    result = retain_glm_score_frame(result, fit, conn, original_base, x, fe, retained_source, resources,
-      parsed[["fe_components"]], row_id, weights, weight_scale, counts, ssc)
+    if (cell) fit = dbglm_expand_cell_fit(
+      conn, original_base, fit, x, fe,
+      compression[["groups"]], family[["link"]], create
+    )
+    result = retain_glm_score_frame(
+      result, fit, conn, original_base, x, fe, retained_source, resources,
+      parsed[["fe_components"]], row_id, weights, weight_scale, counts, ssc
+    )
   }
   if (!is.null(sample_table)) {
     keys = if (length(row_id)) row_id else "__dbglm_key"
@@ -599,4 +668,315 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
   result = finalize_retained_resources(result, resources)
   class(result) = c("dbglm", "dbreg")
   result
+}
+
+# GLM-only formula normalization. Keep OLS parsing and contrasts unchanged.
+dbglm_formula = function(fml) {
+  fml = Formula::Formula(fml)
+  if (length(fml)[1] != 1 || length(fml)[2] > 2) stop("Use one outcome and at most one fixed-effect block.", call. = FALSE)
+  state = new.env(parent = emptyenv())
+  state[["factors"]] = list()
+  state[["factor_display"]] = character()
+  state[["i_aliases"]] = character()
+  state[["i_terms"]] = character()
+  state[["slopes"]] = list()
+  replace = function(e) {
+    if (!is.call(e)) return(e)
+    declaration = parse_sql_i_term(e, env = environment(fml))
+    if (!is.null(declaration)) {
+      index = match(declaration[["term"]], state[["i_terms"]])
+      if (is.na(index)) {
+        index = length(state[["i_terms"]]) + 1L
+        state[["i_terms"]] = c(state[["i_terms"]], declaration[["term"]])
+      }
+      name = paste0("dbglm_factor_i", index, "__")
+      state[["factors"]][[name]] = declaration[["first"]]
+      state[["factor_display"]][name] = declaration[["first"]]
+      state[["i_aliases"]] = unique(c(state[["i_aliases"]], name))
+      result = declaration[["call"]]
+      result[["factor_var"]] = as.name(name)
+      return(result)
+    }
+    if ((identical(e[[1L]], as.name(":")) || identical(e[[1L]], as.name("*"))) && contains_i_term(e)) {
+      stop("i() terms must be additive; interactions with i() are unsupported.", call. = FALSE)
+    }
+    if (identical(e[[1]], as.name("factor"))) {
+      if (length(e) != 2 || !is.symbol(e[[2]])) stop("Use factor(column) without additional arguments.", call. = FALSE)
+      source = as.character(e[[2]])
+      name = paste0("dbglm_factor_", match(source, unique(c(unlist(state[["factors"]]), source))), "__")
+      state[["factors"]][[name]] = source
+      state[["factor_display"]][name] = paste0("factor(", source, ")")
+      return(as.name(name))
+    }
+    as.call(lapply(as.list(e), replace))
+  }
+  rhs = stats::formula(fml, lhs = 0, rhs = 1)[[2]]
+  rhs = replace(rhs)
+  fe = if (length(fml)[2] > 1) stats::formula(fml, lhs = 0, rhs = 2)[[2]] else NULL
+  if (contains_i_term(fe)) stop("i() is supported in additive regressor terms, not the fixed-effect block.", call. = FALSE)
+  extract_slopes = function(e) {
+    if (!is.call(e)) return(e)
+    if (identical(e[[1]], as.name("["))) {
+      args = as.list(e)[-1]
+      if (length(args) < 2 || length(args) > 3 || !all(vapply(args, is.symbol, logical(1)))) stop("Use group[trend] or group[trend,trend2].", call. = FALSE)
+      group = as.character(args[[1]])
+      state[["slopes"]][[group]] = unique(c(state[["slopes"]][[group]], vapply(args[-1], as.character, character(1))))
+      return(args[[1]])
+    }
+    as.call(lapply(as.list(e), extract_slopes))
+  }
+  if (!is.null(fe)) fe = replace(extract_slopes(fe))
+  lhs = stats::formula(fml, lhs = 1, rhs = 0)[[2]]
+  normalized = stats::as.formula(call("~", lhs, if (is.null(fe)) rhs else call("|", rhs, fe)), env = baseenv())
+  list(
+    fml = normalized, factors = state[["factors"]], slopes = state[["slopes"]],
+    factor_display = state[["factor_display"]], i_aliases = state[["i_aliases"]]
+  )
+}
+
+# A raw-key preflight avoids ranking and joining every FE dictionary just to
+# discover that no group needs pruning. Only a proven empty removal set skips
+# the existing recursive pruner; any removable group keeps that exact path.
+dbglm_pruning_needed = function(conn, table, groups, y, mode, family) {
+  if (!length(groups) || mode == "none") return(FALSE)
+  if (length(unique(unlist(groups))) > 30L) return(TRUE)
+  condition = switch(mode,
+    singletons = "__n = 1",
+    infinite_coef = if (family == "poisson") "__hi = 0" else "__lo = __hi",
+    perfect_fit = if (family == "poisson") "(__n = 1 OR __hi = 0)" else "(__n = 1 OR __lo = __hi)"
+  )
+  sql = paste0(
+    "SELECT COUNT(*) AS n FROM (SELECT COUNT(*) AS __n, MIN(", y,
+    ") AS __lo, MAX(", y, ") AS __hi FROM ", table, " GROUP BY GROUPING SETS (",
+    paste(vapply(groups, function(g) paste0("(", paste(g, collapse = ","), ")"), character(1)), collapse = ","),
+    ")) __dbglm_prune WHERE ", condition
+  )
+  as.numeric(backend_get_query(conn, sql)[["n"]]) > 0
+}
+
+# Recursion operates on a snapshot and never rediscovers keys.
+dbglm_prune = function(
+  conn, table, fe, y, mode, create, drop, family = "binomial",
+  flags = c("__dbglm_single", "__dbglm_infinite")
+) {
+  rounds = 0L
+  counts = c(singleton = 0, infinite_coef = 0)
+  if (!length(fe) || mode == "none") return(list(table = table, rounds = rounds, counts = counts))
+  repeat {
+    # Per-FE group summaries are tiny; joining them avoids N-row window sorts.
+    singleton = infinite = joins = character()
+    for (k in seq_along(fe)) {
+      f = fe[k]
+      s = paste0("__dbglm_p", k)
+      joins = c(joins, paste0(
+        " JOIN (SELECT ", f, " AS __dbglm_g, COUNT(*) AS n, MIN(", y, ") AS lo, MAX(", y,
+        ") AS hi FROM ", table, " GROUP BY ", f, ") ", s, " ON __dbglm_t.", f, " = ", s, ".__dbglm_g"
+      ))
+      singleton = c(singleton, paste0(s, ".n = 1"))
+      infinite = c(infinite, if (family == "poisson") paste0(s, ".hi = 0") else paste0(s, ".lo = ", s, ".hi"))
+    }
+    flagged = paste0(
+      "(SELECT __dbglm_t.*, (", paste(singleton, collapse = " OR "), ") AS ", flags[[1L]], ", (",
+      paste(infinite, collapse = " OR "), ") AS ", flags[[2L]], " FROM ", table, " __dbglm_t",
+      paste(joins, collapse = ""), ")"
+    )
+    condition = switch(mode,
+      perfect_fit = paste0("(", flags[[1L]], " OR ", flags[[2L]], ")"),
+      singletons = flags[[1L]],
+      infinite_coef = flags[[2L]]
+    )
+    info = backend_get_query(conn, paste0(
+      "SELECT COUNT(*) FILTER (WHERE ", condition, ") AS removed, ",
+      "COUNT(*) FILTER (WHERE ", condition, " AND ", flags[[1L]], ") AS single FROM ", flagged, " __dbglm_f"
+    ))
+    if (info[["removed"]] == 0) break
+    counts = counts + c(singleton = as.numeric(info[["single"]]), infinite_coef = as.numeric(info[["removed"]] - info[["single"]]))
+    # Each round refers to its input once per FE. Inlining successive rounds
+    # on Databricks grows the plan exponentially, even on a tiny sample.
+    # Materialize only after a removal; the common no-pruning case adds no write.
+    next_table = create(paste0("SELECT * EXCLUDE (", paste(flags, collapse = ","), ") FROM ", flagged, " __dbglm_f WHERE NOT ", condition), materialize = TRUE)
+    drop(table)
+    table = next_table
+    rounds = rounds + 1L
+  }
+  list(table = table, rounds = rounds, counts = counts)
+}
+
+# fixest's default parameter convention is intentionally not exact dummy rank.
+dbglm_fe_counts = function(conn, table, fe, p, kind, ssc, fe_names = NULL, cluster_var = NULL, sizes = NULL) {
+  if (!length(fe)) return(list(model = p, covariance = p, sizes = integer(), nested = logical()))
+  if (is.null(sizes)) {
+    size_row = backend_get_query(conn, paste(
+      "SELECT",
+      paste(sprintf("COUNT(DISTINCT %s) AS n%d", fe, seq_along(fe)), collapse = ", "),
+      "FROM", table
+    ))
+    sizes = vapply(size_row, as.numeric, numeric(1))
+  }
+  slope_df = sum(sizes * lengths(attr(fe, "slopes")))
+  model = p + slope_df + sum(sizes) - length(fe) + 1
+  nested = rep(FALSE, length(fe))
+  explicit = if (length(fe_names) && length(cluster_var)) vapply(strsplit(fe_names, "^", fixed = TRUE), function(parts) cluster_var %in% parts, logical(1)) else rep(FALSE, length(fe))
+  if (kind == "cluster" && any(explicit)) nested = explicit
+  if (kind == "cluster" && !any(explicit)) {
+    nest_queries = vapply(seq_along(fe), function(i) {
+      paste0(
+        "SELECT ", i, " AS idx, MAX(n) AS max_n FROM (SELECT COUNT(DISTINCT __dbglm_cluster) AS n FROM ",
+        table, " GROUP BY ", fe[i], ") t"
+      )
+    }, character(1))
+    nest_df = backend_get_query(conn, paste(nest_queries, collapse = " UNION ALL "))
+    nested[nest_df[["idx"]]] = (nest_df[["max_n"]] == 1)
+  }
+  K = model
+  if (ssc[["K.fixef"]] == "none") K = p + slope_df
+  if (kind == "cluster" && ssc[["K.fixef"]] == "nonnested" && any(nested)) {
+    K = if (all(nested)) p + slope_df + 1 else model - sum(sizes[nested] - 1)
+    K = max(K, p + 1)
+  }
+  list(model = model, covariance = K, sizes = sizes, nested = nested)
+}
+
+# Cell summaries use centered within-cell outcome moments. They preserve the
+# original likelihood and individual-row sandwich meat at a common predictor.
+dbglm_compress_base = function(conn, base, groups, family, center, create, drop,
+                               weight_scale = 1) {
+  groups = unique(groups)
+  if (family == "binomial") return(dbglm_compress_binary(conn, base, groups, create, weight_scale))
+  sum = function(expr) sql_stable_sum(conn, expr)
+  centered = paste0("(__dbglm_y-(", dbglm_number(center), "))")
+  mean = if (family == "gaussian") paste0(
+    "(", dbglm_number(center), ")+",
+    sum(paste0("__dbglm_a*", centered)), "/", sum("__dbglm_a")
+  ) else
+    paste0(sum("__dbglm_a*__dbglm_y"), "/", sum("__dbglm_a"))
+  totals = paste0(
+    "SELECT ", paste(c(
+      groups, "MIN(__dbglm_key) AS __dbglm_key",
+      paste(sum("__dbglm_a"), "AS __dbglm_a"),
+      paste(mean, "AS __dbglm_y")
+    ), collapse = ","),
+    " FROM ", base, if (length(groups)) paste(" GROUP BY", paste(groups, collapse = ","))
+  )
+  means = create(totals)
+  on.exit(drop(means), add = TRUE)
+  delta = "(b.__dbglm_y-c.__dbglm_y)"
+  within = switch(family,
+    gaussian = paste0("b.__dbglm_a*", delta, "*", delta),
+    poisson = paste0(
+      "2.0*b.__dbglm_a*(CASE WHEN b.__dbglm_y=0 THEN c.__dbglm_y ELSE ",
+      "b.__dbglm_y*LN(b.__dbglm_y/c.__dbglm_y)-b.__dbglm_y+c.__dbglm_y END)"
+    )
+  )
+  fields = c(paste0("c.", groups), "c.__dbglm_key", "c.__dbglm_a", "c.__dbglm_y")
+  aggregate = c(
+    "COUNT(*) AS __dbglm_cell_n",
+    paste(sum("b.__dbglm_a*b.__dbglm_a"), "AS __dbglm_a2"),
+    paste(sum(paste0("b.__dbglm_a*b.__dbglm_a*", delta)), "AS __dbglm_a2delta"),
+    paste(sum(paste0("b.__dbglm_a*b.__dbglm_a*", delta, "*", delta)), "AS __dbglm_a2delta2"),
+    paste(sum(within), "AS __dbglm_dev_const")
+  )
+  join = if (length(groups)) paste0(
+    " JOIN ", means, " c ON ",
+    paste(paste0("b.", groups, "=c.", groups), collapse = " AND ")
+  ) else paste0(" CROSS JOIN ", means, " c")
+  create(paste0(
+    "SELECT ", paste(c(fields, aggregate), collapse = ","), " FROM ", base, " b", join,
+    " GROUP BY ", paste(fields, collapse = ",")
+  ))
+}
+
+# A binary outcome needs only positive sums for its two outcome categories.
+# Their squared-weight totals give exact HC1 moments without a second row pass.
+dbglm_compress_binary = function(conn, base, groups, create, weight_scale) {
+  sum = function(expr) sql_stable_sum(conn, expr)
+  rounded = sql_round_even(paste0("__dbglm_a*(", dbglm_number(weight_scale), ")"))
+  fields = c(
+    groups, "MIN(__dbglm_key) AS __dbglm_key", "COUNT(*) AS __dbglm_cell_n",
+    paste(sum("__dbglm_a"), "AS __dbglm_a"),
+    paste0(sum("__dbglm_a*__dbglm_y"), "/", sum("__dbglm_a"), " AS __dbglm_y"),
+    paste(sum("CASE WHEN __dbglm_y=1 THEN __dbglm_a*__dbglm_a ELSE 0.0 END"), "AS __dbglm_cell_s1"),
+    paste(sum("CASE WHEN __dbglm_y=0 THEN __dbglm_a*__dbglm_a ELSE 0.0 END"), "AS __dbglm_cell_s0"),
+    paste(sum(rounded), "AS __dbglm_round_a"),
+    paste(sum(paste0("(", rounded, ")*__dbglm_y")), "AS __dbglm_round_ay")
+  )
+  grouped = paste0(
+    "SELECT ", paste(fields, collapse = ","), " FROM ", base,
+    if (length(groups)) paste(" GROUP BY", paste(groups, collapse = ","))
+  )
+  fields = c(
+    groups, "__dbglm_key", "__dbglm_cell_n", "__dbglm_a", "__dbglm_y",
+    "__dbglm_cell_s1+__dbglm_cell_s0 AS __dbglm_a2",
+    "__dbglm_cell_s1*(1.0-__dbglm_y)-__dbglm_cell_s0*__dbglm_y AS __dbglm_a2delta",
+    "__dbglm_cell_s1*POWER(1.0-__dbglm_y,2)+__dbglm_cell_s0*POWER(__dbglm_y,2) AS __dbglm_a2delta2",
+    "0.0 AS __dbglm_dev_const", "__dbglm_round_a", "__dbglm_round_ay"
+  )
+  create(paste0("SELECT ", paste(fields, collapse = ","), " FROM (", grouped, ") binary_cells"))
+}
+
+sql_round_even = function(value) {
+  paste0(
+    "(CASE WHEN ", value, "-FLOOR(", value, ")<0.5 THEN FLOOR(", value, ") ",
+    "WHEN ", value, "-FLOOR(", value, ")>0.5 THEN CEIL(", value, ") ",
+    "WHEN MOD(FLOOR(", value, "),2.0)=0 THEN FLOOR(", value, ") ELSE CEIL(", value, ") END)"
+  )
+}
+
+dbglm_cell_score_square = function(link) {
+  variance = "GREATEST(0.0,__dbglm_a2delta2+2.0*(__dbglm_y-mu)*__dbglm_a2delta+POWER(__dbglm_y-mu,2)*__dbglm_a2)"
+  if (link %in% c("identity", "log")) return(variance)
+  paste0("(", variance, ")*POWER(d/(mu*(1.0-mu)),2)")
+}
+
+dbglm_cell_source = function(conn, base, groups, n, strategy, family, center,
+                             create, drop, weight_scale, ratio, nmax) {
+  if (!strategy %in% c("auto", "compress")) {
+    return(list(table = base, enabled = FALSE, cells = n, groups = groups))
+  }
+  if (strategy == "compress") {
+    table = dbglm_compress_base(conn, base, groups, family, center, create, drop, weight_scale)
+    size = as.numeric(backend_get_query(conn, paste("SELECT COUNT(*) AS n FROM", table))[["n"]])
+    return(list(table = table, enabled = TRUE, cells = size, groups = groups))
+  }
+  count = if (length(groups)) paste0(
+    "SELECT COUNT(*) AS n FROM (SELECT DISTINCT ",
+    paste(groups, collapse = ","), " FROM ", base, ") cell_keys"
+  ) else "SELECT 1 AS n"
+  size = as.numeric(backend_get_query(conn, count)[["n"]])
+  if (strategy == "auto" && (size / n > ratio || size > nmax)) {
+    return(list(table = base, enabled = FALSE, cells = n, groups = groups))
+  }
+  table = dbglm_compress_base(conn, base, groups, family, center, create, drop, weight_scale)
+  list(table = table, enabled = TRUE, cells = size, groups = groups)
+}
+
+# Only requested original-row inference needs this relation. Join the compact
+# final projector to original rows; never refit or repeat weighted projection.
+dbglm_expand_cell_fit = function(conn, original, fit, x, fe, groups, link, create) {
+  if (!length(fe)) return(fit)
+  rows = fit[["raw_projected"]]
+  if (is.null(rows)) {
+    fields = c("b.*", if (length(x)) paste0("p.", x, " AS ", x, "_tilde"))
+    rows = paste0(
+      "(SELECT ", paste(fields, collapse = ","), " FROM ", fit[["working"]], " b",
+      if (length(x)) paste(" JOIN", fit[["projected"]], "p USING (__dbglm_key)"), ")"
+    )
+  }
+  fields = c(
+    groups, "eta AS dbglm_cell_eta__", "mu AS dbglm_cell_mu__",
+    "d AS dbglm_cell_derivative__", if (length(x)) paste0(x, "_tilde")
+  )
+  lookup = create(paste("SELECT", paste(fields, collapse = ","), "FROM", rows))
+  multiplier = if (link %in% c("identity", "log")) "1.0" else
+    "c.dbglm_cell_derivative__/(c.dbglm_cell_mu__*(1.0-c.dbglm_cell_mu__))"
+  score = paste0("b.__dbglm_a*(b.__dbglm_y-c.dbglm_cell_mu__)*(", multiplier, ") AS score")
+  fields = c(
+    "b.*", "c.dbglm_cell_eta__ AS eta", "c.dbglm_cell_mu__ AS mu", score,
+    if (length(x)) paste0("c.", x, "_tilde AS ", x, "_tilde")
+  )
+  fit[["raw_projected"]] = paste0(
+    "(SELECT ", paste(fields, collapse = ","), " FROM ", original,
+    " b JOIN ", lookup, " c ON ", paste(paste0("b.", groups, "=c.", groups), collapse = " AND "), ")"
+  )
+  fit
 }

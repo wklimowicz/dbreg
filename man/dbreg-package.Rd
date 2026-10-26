@@ -5,7 +5,7 @@
 \alias{dbreg-package}
 \title{dbreg: Fast Regressions on Database Backends}
 \description{
-Leverages database backends to run regressions on very large datasets, which may not fit into R's memory. Various acceleration strategies---e.g., Wong et al. (2021) \doi{10.48550/arXiv.2102.11297} and Arkhangelsky & Imbens (2024) \url{https://doi.org/10.1093/restud/rdad089}---allow for highly efficient computation, while robust standard errors are computed from sufficient statistics.
+Leverages database backends to run regressions on very large datasets, which may not fit into R's memory. Various acceleration strategies---e.g., Wong et al. (2021) \doi{10.48550/arXiv.2102.11297} and Arkhangelsky & Imbens (2024) \doi{10.1093/restud/rdad089}---allow for highly efficient computation, while robust standard errors are computed from sufficient statistics.
 }
 \seealso{
 Useful links:

@@ -27,13 +27,17 @@ frame_select = function(y, x_sql, x_names, id_cols = NULL, extra = NULL) {
 # raw outcome squares at the scale of a possibly enormous intercept.
 compression_moment_source = function(conn, from, y, weights, intercept = TRUE) {
   w = sql_weight_expr(weights)
-  location = paste0("SELECT ", if (intercept) paste0("AVG(", sql_cast_double(y, conn), ")") else "MAX(0.0)",
+  location = paste0(
+    "SELECT ", if (intercept) paste0("AVG(", sql_cast_double(y, conn), ")") else "MAX(0.0)",
     " AS dbreg_cell_center__, ", if (is.null(w)) "MAX(1.0)" else paste0("MAX(", w, ")"),
-    " AS dbreg_cell_scale__ ", from)
-  list(from = paste0("FROM (SELECT * ", from, ") dbreg_cell_source CROSS JOIN (", location, ") dbreg_cell_location"),
+    " AS dbreg_cell_scale__ ", from
+  )
+  list(
+    from = paste0("FROM (SELECT * ", from, ") dbreg_cell_source CROSS JOIN (", location, ") dbreg_cell_location"),
     y = paste0("(", sql_cast_double(y, conn), "-dbreg_cell_center__)"),
     weights = if (!is.null(w)) paste0("(", w, ")/dbreg_cell_scale__"),
-    prefix = c("MAX(dbreg_cell_center__) AS dbreg_cell_center__", "MAX(dbreg_cell_scale__) AS dbreg_cell_scale__"))
+    prefix = c("MAX(dbreg_cell_center__) AS dbreg_cell_center__", "MAX(dbreg_cell_scale__) AS dbreg_cell_scale__")
+  )
 }
 
 restore_compressed_data = function(dat) {
@@ -45,11 +49,11 @@ restore_compressed_data = function(dat) {
     wy = paste0(w, "y")
     yy = paste0(wy, "_sq")
     if (!all(c(w, wy, yy) %in% names(dat))) next
-    dat[[yy]] = (dat[[yy]]+2*c*dat[[wy]]+c*c*dat[[w]])*scale^(if (suffix == "2") 2 else 1)
-    dat[[wy]] = (dat[[wy]]+c*dat[[w]])*scale^(if (suffix == "2") 2 else 1)
-    dat[[w]] = dat[[w]]*scale^(if (suffix == "2") 2 else 1)
+    dat[[yy]] = (dat[[yy]] + 2 * c * dat[[wy]] + c * c * dat[[w]]) * scale^(if (suffix == "2") 2 else 1)
+    dat[[wy]] = (dat[[wy]] + c * dat[[w]]) * scale^(if (suffix == "2") 2 else 1)
+    dat[[w]] = dat[[w]] * scale^(if (suffix == "2") 2 else 1)
   }
-  if ("mean_Y" %in% names(dat)) dat[["mean_Y"]] = dat[["mean_Y"]]+c
+  if ("mean_Y" %in% names(dat)) dat[["mean_Y"]] = dat[["mean_Y"]] + c
   if ("wts" %in% names(dat)) dat[["wts"]] = sqrt(dat[["sum_w"]])
   dat
 }
@@ -60,29 +64,39 @@ compressed_cell_moments_sql = function(conn, from, y, groups, weights = NULL,
                                        intercept = TRUE, fit_columns = TRUE) {
   if (!is.null(weights) || !identical(detect_backend(conn)[["name"]], "duckdb")) return(NULL)
   private = safe_identifiers(c("dbreg_cell_mean__", "dbreg_cell_within__", "dbreg_cell_anchor__"),
-    taken = c(groups, y), fold_case = folds_identifier_case(conn))
+    taken = c(groups, y), fold_case = folds_identifier_case(conn)
+  )
   mean = private[[1L]]
   within = private[[2L]]
   anchor = private[[3L]]
   value = sql_cast_double(y, conn)
-  cells = paste0("dbreg_cells AS (SELECT ", paste(c(groups, "COUNT(*) AS n",
-    paste0("FAVG(", value, ") AS ", mean),
-    paste0("COVAR_POP(", value, ",", value, ")*COUNT(*) AS ", within)), collapse = ","), " ", from,
-    if (length(groups)) paste(" GROUP BY", paste(groups, collapse = ",")), ")")
+  cells = paste0(
+    "dbreg_cells AS (SELECT ", paste(c(
+      groups, "COUNT(*) AS n",
+      paste0("FAVG(", value, ") AS ", mean),
+      paste0("COVAR_POP(", value, ",", value, ")*COUNT(*) AS ", within)
+    ), collapse = ","), " ", from,
+    if (length(groups)) paste(" GROUP BY", paste(groups, collapse = ",")), ")"
+  )
   location = if (intercept) paste0(
     "dbreg_cell_anchor AS (SELECT MIN(", mean, ")/2.0+MAX(", mean, ")/2.0 AS ", anchor, " FROM dbreg_cells),",
     "dbreg_cell_location AS (SELECT MAX(", anchor, ")+SUM(n*(", mean, "-", anchor,
-    "))/SUM(n) AS dbreg_cell_center__ FROM dbreg_cells CROSS JOIN dbreg_cell_anchor)") else
-      "dbreg_cell_location AS (SELECT MAX(0.0) AS dbreg_cell_center__ FROM dbreg_cells)"
+    "))/SUM(n) AS dbreg_cell_center__ FROM dbreg_cells CROSS JOIN dbreg_cell_anchor)"
+  ) else
+    "dbreg_cell_location AS (SELECT MAX(0.0) AS dbreg_cell_center__ FROM dbreg_cells)"
   centered = paste0("(", mean, "-dbreg_cell_center__)")
   wy = paste0("n*", centered)
   yy = paste0("(", within, "+n*", centered, "*", centered, ")")
-  fields = c(groups, "n", "n AS sum_w", paste(wy, "AS sum_wy"), paste(yy, "AS sum_wy_sq"),
+  fields = c(
+    groups, "n", "n AS sum_w", paste(wy, "AS sum_wy"), paste(yy, "AS sum_wy_sq"),
     "n AS sum_w2", paste(wy, "AS sum_w2y"), paste(yy, "AS sum_w2y_sq"),
     "dbreg_cell_center__", "1.0 AS dbreg_cell_scale__",
-    if (fit_columns) c(paste(centered, "AS mean_Y"), "SQRT(n) AS wts"))
-  paste0("WITH ", cells, ",", location, " SELECT ", paste(fields, collapse = ","),
-    " FROM dbreg_cells CROSS JOIN dbreg_cell_location")
+    if (fit_columns) c(paste(centered, "AS mean_Y"), "SQRT(n) AS wts")
+  )
+  paste0(
+    "WITH ", cells, ",", location, " SELECT ", paste(fields, collapse = ","),
+    " FROM dbreg_cells CROSS JOIN dbreg_cell_location"
+  )
 }
 
 # Translate the cell design's actual contrasts into SQL. This also handles
@@ -119,7 +133,9 @@ compressed_score_expressions = function(conn, formula, dat, X, classes, numeric_
     })
     condition = Reduce(function(a, b) paste(a, b, sep = " AND "), conditions)
     paste0("(", product_sql, ")*(CASE ", paste0("WHEN ", condition, " THEN ",
-      dbglm_number(loads), collapse = " "), " ELSE 0.0 END)")
+      dbglm_number(loads),
+      collapse = " "
+    ), " ELSE 0.0 END)")
   }, character(1))
   setNames(out, colnames(X))
 }
@@ -132,12 +148,16 @@ sql_rank_fixed_effects = function(conn, source, components, fe) {
     columns = q(unique(components[[i]]))
     keys = paste(columns, collapse = ",")
     alias = paste0("__dbglm_d", i)
-    paste0(" JOIN (SELECT ", keys, ", DENSE_RANK() OVER (ORDER BY ", keys,
+    paste0(
+      " JOIN (SELECT ", keys, ", DENSE_RANK() OVER (ORDER BY ", keys,
       ") AS ", fe[i], " FROM (SELECT DISTINCT ", keys, " FROM ", source, ") __dbglm_k) ", alias, " ON ",
-      paste(sprintf("__dbglm_r.%s = %s.%s", columns, alias, columns), collapse = " AND "))
+      paste(sprintf("__dbglm_r.%s = %s.%s", columns, alias, columns), collapse = " AND ")
+    )
   }, character(1))
-  paste0("SELECT __dbglm_r.*, ", paste(sprintf("__dbglm_d%d.%s", seq_along(fe), fe), collapse = ", "),
-    " FROM ", source, " __dbglm_r", paste(joins, collapse = ""))
+  paste0(
+    "SELECT __dbglm_r.*, ", paste(sprintf("__dbglm_d%d.%s", seq_along(fe), fe), collapse = ", "),
+    " FROM ", source, " __dbglm_r", paste(joins, collapse = "")
+  )
 }
 
 #' Untransformed estimation frame
@@ -214,7 +234,8 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
   cleanup = function() invisible(NULL)
   rank_columns = rank_values = NULL
   rank_names = safe_identifiers(paste0("dbreg_frame_original_", seq_along(vars)),
-    taken = c(vars, fe, weights, cluster_var, inputs[["retained_key_safe"]]), fold_case = folds_identifier_case(conn))
+    taken = c(vars, fe, weights, cluster_var, inputs[["retained_key_safe"]]), fold_case = folds_identifier_case(conn)
+  )
   if (use_ap) {
     ap_res = dbreg_alternating_projections(inputs, x_sql, x_names)
     ap_tables = unique(c(if (!isTRUE(ap_res[["inline"]])) ap_res[["table"]], ap_res[["base_table"]], ap_res[["all_tables"]]))
@@ -320,8 +341,10 @@ build_centered_moment_terms = function(y, x, prefix = character()) {
 frame_moments_sql = function(frame, y, x, conn) {
   if (!is.null(frame[["moments"]])) {
     row = frame[["moments"]]
-    return(paste("SELECT", paste(paste(dbglm_number(as.numeric(row[1L, ])), "AS",
-      as.character(DBI::dbQuoteIdentifier(conn, names(row)))), collapse = ",")))
+    return(paste("SELECT", paste(paste(
+      dbglm_number(as.numeric(row[1L, ])), "AS",
+      as.character(DBI::dbQuoteIdentifier(conn, names(row)))
+    ), collapse = ",")))
   }
   col = function(v) {
     sql = unname(frame[["cols"]][v])
@@ -333,10 +356,12 @@ frame_moments_sql = function(frame, y, x, conn) {
   backend = detect_backend(conn)[["name"]]
   variables = c(x, y)
   if (is.null(w) && isTRUE(frame[["intercept"]]) && is.null(frame[["rank_source"]]) &&
-      identical(backend, "duckdb")) {
+    identical(backend, "duckdb")) {
     terms = build_centered_moment_terms(col(y), vapply(x, col, character(1)), frame[["prefix_terms"]])
-    location = c(paste0(if (backend == "duckdb") "FAVG(" else "AVG(", vapply(variables, col, character(1)), ") AS dbreg_moment_center_", seq_along(variables)),
-      "MAX(1.0) AS dbreg_moment_weight_scale")
+    location = c(
+      paste0(if (backend == "duckdb") "FAVG(" else "AVG(", vapply(variables, col, character(1)), ") AS dbreg_moment_center_", seq_along(variables)),
+      "MAX(1.0) AS dbreg_moment_weight_scale"
+    )
     return(paste0(frame[["cte_sql"]], " SELECT ", paste(c(terms, location), collapse = ","), " FROM ", frame[["cte_name"]]))
   }
   # Center before multiplying: reconstructing a variance from raw squares loses
@@ -348,13 +373,15 @@ frame_moments_sql = function(frame, y, x, conn) {
   taken = unique(unlist(regmatches(tokens, gregexpr("[A-Za-z_][A-Za-z_0-9]*", tokens))))
   private = safe_identifiers(c(center_fields, "dbreg_moment_weight_scale", rank_fields), taken = taken, fold_case = TRUE)
   centers = private[seq_along(variables)]
-  weight_field = private[[length(variables)+1L]]
+  weight_field = private[[length(variables) + 1L]]
   rank_names = utils::tail(private, length(variables))
   center_terms = if (isTRUE(frame[["intercept"]])) paste0("AVG(", vapply(variables, col, character(1)), ")") else rep("MAX(0.0)", length(variables))
   w = frame[["weights_expr"]]
   scale = if (is.null(w)) "MAX(1.0)" else paste0("MAX(", sql_cast_double(w, conn), ")")
-  stats = paste0(",\ndbreg_moment_location AS (SELECT ", paste(c(paste(center_terms, "AS", centers),
-    paste(scale, "AS", weight_field)), collapse = ","), " FROM ", frame[["cte_name"]], ")")
+  stats = paste0(",\ndbreg_moment_location AS (SELECT ", paste(c(
+    paste(center_terms, "AS", centers),
+    paste(scale, "AS", weight_field)
+  ), collapse = ","), " FROM ", frame[["cte_name"]], ")")
   centered = setNames(paste0("(", vapply(variables, col, character(1)), "-", centers, ")"), variables)
   location_join = " CROSS JOIN dbreg_moment_location"
   location_terms = paste0("MAX(", c(centers, weight_field), ") AS ", c(center_fields, "dbreg_moment_weight_scale"))
@@ -374,9 +401,11 @@ frame_moments_sql = function(frame, y, x, conn) {
     # Projection noise must not be normalized into an identified column. Bound
     # that noise in each variable's original units, rather than using the scale
     # of an unrelated regressor as an absolute rank threshold.
-    stats = paste0(stats, ",\ndbreg_moment_original AS (SELECT ",
+    stats = paste0(
+      stats, ",\ndbreg_moment_original AS (SELECT ",
       paste(paste0("MAX(ABS(", sql_cast_double(variables, conn), ")) AS ", rank_names), collapse = ","),
-      " FROM ", frame[["rank_source"]], ")")
+      " FROM ", frame[["rank_source"]], ")"
+    )
     rank_terms = paste0("MAX(", rank_names, ") AS ", rank_fields)
     rank_join = " CROSS JOIN dbreg_moment_original"
   }
@@ -392,4 +421,54 @@ frame_moments_sql = function(frame, y, x, conn) {
     paste(c(terms, rank_terms, location_terms), collapse = ",\n    "),
     "\n  FROM ", frame[["cte_name"]], location_join, rank_join, "\n)\nSELECT * FROM moments"
   )
+}
+
+validate_linear_offset = function(offset) {
+  if (!is.null(offset) && (!is.character(offset) || length(offset) != 1L || is.na(offset) || !nzchar(offset))) {
+    stop("`offset` must name one numeric column.", call. = FALSE)
+  }
+}
+
+# Derive a distinct outcome column so the original outcome can independently
+# occur in regressors, offsets, weights or identity columns.
+offset_source_frame = function(conn, from, y, offset) {
+  if (is.null(offset)) return(list(from_statement = from))
+  backend = detect_backend(conn)
+  if (backend[["name"]] != "duckdb" && !isTRUE(backend[["is_databricks"]])) {
+    stop("OLS offsets support DuckDB and native Databricks.", call. = FALSE)
+  }
+  schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from), 0, backend[["name"]]))
+  if (!is.numeric(schema[[offset]]) || !(is.numeric(schema[[y]]) || is.logical(schema[[y]]))) {
+    stop("Outcome and offset must be numeric (the outcome may be logical).", call. = FALSE)
+  }
+  alias = safe_identifiers("dbreg_offset_outcome__", taken = names(schema), fold_case = folds_identifier_case(conn))
+  q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
+  expression = paste0("CAST(", q(y), " AS DOUBLE)-CAST(", q(offset), " AS DOUBLE)")
+  from = paste0(
+    "FROM (SELECT dbreg_offset_source.*, (", expression, ") AS ", q(alias),
+    " FROM (SELECT * ", from, ") dbreg_offset_source) dbreg_offset_frame"
+  )
+  list(
+    from_statement = from, alias = alias, outcome = y,
+    finite = backend_sql(conn, paste0("isfinite(", q(y), ") AND isfinite(", q(offset), ")"))
+  )
+}
+
+linear_offset_frame = function(conn, from, parsed, offset) {
+  if (is.null(offset)) return(list(from_statement = from, parsed = parsed))
+  frame = offset_source_frame(conn, from, parsed[["yvar"]], offset)
+  formula = stats::as.formula(call("~", as.name(frame[["alias"]]), parsed[["fml"]][[3L]]), env = baseenv())
+  frame[["parsed"]] = parse_regression_formula(formula, allow_empty = TRUE, allow_extended = TRUE)
+  frame
+}
+
+linear_prediction_offset = function(object, data) {
+  column = object[["offset"]]
+  if (is.null(column)) return(rep(0, nrow(data)))
+  if (!column %in% names(data)) stop("newdata is missing required offset column: ", column, call. = FALSE)
+  value = data[[column]]
+  if (!is.numeric(value)) stop("The prediction offset must be numeric.", call. = FALSE)
+  value = as.numeric(value)
+  value[!is.finite(value)] = NA_real_
+  value
 }

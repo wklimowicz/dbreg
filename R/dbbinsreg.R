@@ -86,9 +86,9 @@
 #' }
 #' If `plot = TRUE` (the default), a binscatter plot is also produced as a
 #' side effect. See \code{\link{plot.dbbinsreg}} for plot customization.
-#' 
+#'
 #' @section Comparison with binsreg:
-#' 
+#'
 #' The \code{dbbinsreg} function is deeply inspired by the \pkg{binsreg}
 #' package (Cattaneo et al., 2024). The main difference is that
 #' \code{dbbinsreg} performs most of its computation on a database backend,
@@ -96,8 +96,8 @@
 #' for large datasets (which may not fit in memory). At the same time, the
 #' database backend introduces its own set of tradeoffs. We cover the most
 #' important points of similarity and difference below.
-#' 
-#' ## Core API and bin selection 
+#'
+#' ## Core API and bin selection
 #'
 #' We aim to mimic the \code{\link[binsreg]{binsreg}} API as much as possible.
 #' Key parameter mappings include:
@@ -189,58 +189,58 @@
 #' @examples
 #' #
 #' ## In-memory data ----
-#' 
+#'
 #' # Like `dbreg`, we can pass in-memory R data frames to an ephemeral DuckDB
-#' # connection via the `data` argument. 
-#' 
+#' # connection via the `data` argument.
+#'
 #' # Canonical binscatter: bin means (default)
 #' dbbinsreg(weight ~ Time, data = ChickWeight, nbins = 10)
-#' 
+#'
 #' # You can pass additional plotting arguments via ... to (tiny)plot.dbbinsreg
 #' dbbinsreg(weight ~ Time, data = ChickWeight, nbins = 10,
 #'           main = "A simple binscatter example", theme = "clean")
-#' 
+#'
 #' # Alternatively, save the object and plot later
 #' bs = dbbinsreg(weight ~ Time, data = ChickWeight, nbins = 10, plot = FALSE)
 #' plot(bs, main = "Same example, different theme", theme = "classic")
-#' 
+#'
 #' # Piecewise linear (p = 1), no smoothness (s = 0)
 #' dbbinsreg(weight ~ Time, data = ChickWeight, nbins = 10, points = c(1, 0))
-#' 
+#'
 #' # Piecewise linear (p = 1) with continuity (s = 1)
 #' dbbinsreg(weight ~ Time, data = ChickWeight, nbins = 10, points = c(1, 1))
-#' 
+#'
 #' # With line overlay for smooth visualization
 #' dbbinsreg(weight ~ Time, data = ChickWeight, nbins = 10, points = c(1, 1), line = TRUE)
-#' 
+#'
 #' # Different line smoothness to points
 #' dbbinsreg(weight ~ Time, data = ChickWeight, nbins = 10, points = c(0, 0), line = c(1, 1))
-#' 
+#'
 #' # With uniform confidence bands (much greater uncertainty)
 #' set.seed(99)
 #' dbbinsreg(weight ~ Time, data = ChickWeight, nbins = 10, cb = TRUE)
-#' 
+#'
 #' # Accounting for Diet "fixed effects" helps to resolve the situation
 #' # (We'll also add a line and change the theme for a nicer plot)
 #' dbbinsreg(weight ~ Time | Diet, data = ChickWeight, nbins = 10, cb = TRUE,
 #'           line = c(1, 1), theme = "clean")
-#' 
+#'
 #' #
 #' ## DBI connection ----
-#' 
+#'
 #' library(DBI)
 #' con = dbConnect(duckdb::duckdb())
 #' dbWriteTable(con, "cw", as.data.frame(ChickWeight))
-#' 
+#'
 #' dbbinsreg(weight ~ Time | Diet, conn = con, table = "cw", nbins = 10,
 #'           theme = "clean")
 #' # etc.
-#' 
+#'
 #' # See ?dbreg for more connection examples
-#' 
+#'
 #' # Clean up
 #' dbDisconnect(con)
-#' 
+#'
 #' @export
 dbbinsreg = function(
   fml,
@@ -266,26 +266,25 @@ dbbinsreg = function(
   dots = NULL,
   ...
 ) {
-  
   # Handle dots as alias for points (binsreg compatibility)
   if (!is.null(dots)) {
     points = dots
   }
 
   # dots = list(...) ## unused at present (passed directly to plot.dbbinsreg)
-  
+
   # Validate strategy
   strategy = match.arg(strategy)
-  
+
   # -------------------------------------------------------------------------
   # Process binsreg-style arguments: points, line, binspos
   # -------------------------------------------------------------------------
-  
+
   # Parse points argument: c(p, s) or TRUE/FALSE/NULL
   points_p = 0L
   points_s = 0L
   points_on = TRUE
-  
+
   if (is.null(points) || identical(points, FALSE)) {
     points_on = FALSE
   } else if (identical(points, TRUE)) {
@@ -301,12 +300,12 @@ dbbinsreg = function(
   } else {
     stop("points must be NULL, FALSE, TRUE, or a vector c(p, s) with p = degree, s = smoothness")
   }
-  
+
   # Parse line argument: c(p, s) or TRUE/FALSE/NULL
   line_p = NULL
   line_s = NULL
   line_on = FALSE
-  
+
   if (!is.null(line) && !identical(line, FALSE)) {
     line_on = TRUE
     if (identical(line, TRUE)) {
@@ -324,7 +323,7 @@ dbbinsreg = function(
       stop("line must be NULL, FALSE, TRUE, or a vector c(p, s)")
     }
   }
-  
+
   # Parse binspos argument: "qs", "es", or numeric vector
   if (is.character(binspos)) {
     if (!binspos %in% c("qs", "es")) {
@@ -343,27 +342,27 @@ dbbinsreg = function(
   } else {
     stop("binspos must be 'qs', 'es', or a numeric vector of knot positions")
   }
-  
+
   # Convert binsreg parameters to internal parameters
   # For now, we use the points parameters as the primary model
   degree = points_p
 
   smooth = points_s
   B = as.integer(nbins)
-  
+
   # Validate linegrid
   if (!is.numeric(linegrid) || linegrid < 1) {
     stop("linegrid must be a positive integer")
   }
   linegrid = as.integer(linegrid)
-  
+
   # Validate randcut (NULL is allowed for auto behavior)
   if (!is.null(randcut)) {
     if (!is.numeric(randcut) || length(randcut) != 1 || randcut <= 0 || randcut > 1) {
       stop("randcut must be NULL or a numeric value between 0 and 1")
     }
   }
-  
+
   # Validate level (as decimal in [0,1], e.g., 0.95 for 95% CI)
   if (!is.numeric(level) || length(level) != 1 || level <= 0 || level >= 1) {
     stop("level must be a numeric value between 0 and 1 (e.g., 0.95 for 95% CI)")
@@ -373,40 +372,42 @@ dbbinsreg = function(
   if (isTRUE(cb) && (!is.numeric(nsims) || length(nsims) != 1L || !is.finite(nsims) || nsims < 2 || nsims != floor(nsims))) {
     stop("nsims must be an integer of at least two for confidence bands.", call. = FALSE)
   }
-  
+
   # Handle vcov / ci interaction
   # Default to HC1 (heteroskedasticity-robust) to match binsreg package
   if ((isTRUE(ci) || isTRUE(cb)) && is.null(vcov)) {
     vcov = "HC1"
   }
-  
+
   # Parse vcov arguments using shared helper (dbbinsreg accepts more vcov types)
   vcov_parsed = parse_vcov_args(vcov, cluster = NULL, valid_types = c("iid", "hc1", "hc0", "hc2", "hc3"))
   cluster_var = vcov_parsed[["cluster_var"]]
   # Note: we keep vcov as-is for dbbinsreg (not normalized to vcov_type)
-  
+
   # Parse formula using shared helper
   fml_parsed = parse_regression_formula(fml)
   fml = fml_parsed[["fml"]]
   y_name = fml_parsed[["yvar"]]
   fe = fml_parsed[["fe"]]
-  
+
   # Check for interactions - dbbinsreg does not support them
   if (fml_parsed[["has_interactions"]]) {
-    stop("dbbinsreg does not support interaction or i() terms (e.g., x * z, x:z or i(f)). ",
-         "Please specify controls as separate additive terms (e.g., y ~ x + z).")
+    stop(
+      "dbbinsreg does not support interaction or i() terms (e.g., x * z, x:z or i(f)). ",
+      "Please specify controls as separate additive terms (e.g., y ~ x + z)."
+    )
   }
-  
+
   # For dbbinsreg: first RHS variable is the running variable, rest are controls
   rhs1_vars = fml_parsed[["xvars"]]
   x_name = rhs1_vars[1]
   controls = if (length(rhs1_vars) > 1) rhs1_vars[-1] else NULL
-  
+
   # Validate derived parameters
   if (!is.numeric(B) || B < 1) {
     stop("nbins must be a positive integer")
   }
-  
+
   # Set up database connection and data source using shared helper
   db_setup = setup_db_connection(conn, table, data, path, caller = "dbbinsreg")
   conn = db_setup[["conn"]]
@@ -428,11 +429,11 @@ dbbinsreg = function(
   controls = to_safe(controls)
   fe = to_safe(fe)
   cluster_var = to_safe(cluster_var)
-  
+
   # Detect backend for SQL compatibility
   backend_info = detect_backend(conn)
   backend = backend_info[["name"]]
-  
+
   # Construct formula for display
   formula_str = if (!is.null(controls) && !is.null(fe)) {
     sprintf("%s ~ %s | %s | %s", y_name, x_name, paste(controls, collapse = " + "), paste(fe, collapse = " + "))
@@ -443,23 +444,23 @@ dbbinsreg = function(
   } else {
     sprintf("%s ~ %s", y_name, x_name)
   }
-  
+
   # -------------------------------------------------------------------------
   # SAMPLING: Compute breaks from sample if dataset is large
   # -------------------------------------------------------------------------
-  # Auto behavior (randcut = NULL): 
+  # Auto behavior (randcut = NULL):
   #   - If >1M rows: sample 1% for bin boundary computation
   #   - Otherwise: use all data
   # If user provides explicit randcut, use that regardless of row count.
   # This avoids expensive NTILE() or min/max scans on very large datasets.
-  
+
   # Get backend for SQL dialect
   backend_info = detect_backend(conn)
   backend = backend_info[["name"]]
-  
+
   sampled = FALSE
   sampled_table_name = NULL
-  n_rows_orig = NULL  # Track original dataset size
+  n_rows_orig = NULL # Track original dataset size
   if (partition_method != "manual") {
     # Get row count and unique x count in one query
     count_expr = sql_count_expr(backend)
@@ -470,9 +471,9 @@ dbbinsreg = function(
     ")
     counts = dbGetQuery(conn, count_sql)
     n_rows = counts[["n"]]
-    n_rows_orig = n_rows  # Store original size
+    n_rows_orig = n_rows # Store original size
     n_unique_x = counts[["n_unique"]]
-    
+
     # Warn if nbins exceeds unique x values
     if (B > n_unique_x) {
       warning(sprintf(
@@ -480,7 +481,7 @@ dbbinsreg = function(
         B, n_unique_x, n_unique_x
       ), call. = FALSE)
     }
-    
+
     # Determine effective randcut
     if (is.null(randcut)) {
       # Auto: 1% if >1M rows, 100% otherwise
@@ -489,46 +490,51 @@ dbbinsreg = function(
       # User override
       effective_randcut = randcut
     }
-    
+
     # Sample if fraction < 1
     if (effective_randcut < 1) {
       if (verbose) {
-        message(sprintf("Dataset has %.1fM rows, computing breaks from %.0f%% sample...", 
-                       n_rows / 1e6, effective_randcut * 100))
+        message(sprintf(
+          "Dataset has %.1fM rows, computing breaks from %.0f%% sample...",
+          n_rows / 1e6, effective_randcut * 100
+        ))
       }
-      
+
       # Sample data for break computation using direct SQL
-      sample_size = max(10000L, ceiling(n_rows * effective_randcut))  # at least 10k rows
+      sample_size = max(10000L, ceiling(n_rows * effective_randcut)) # at least 10k rows
       where_clause = sprintf("%s IS NOT NULL AND %s IS NOT NULL", x_name, y_name)
-      
+
       # Auto-enable sample_fit when NULL and s > 0
       if (is.null(sample_fit) && smooth > 0) {
         sample_fit = TRUE
         message(
           "Note: Using sampled data for spline regression (s > 0).",
           "\n  Silence this message by explicitly setting `sample_fit = TRUE`.",
-          "\n  Or, use the full dataset by setting `sample_fit = FALSE`.")
+          "\n  Or, use the full dataset by setting `sample_fit = FALSE`."
+        )
       }
-      
+
       # If sample_fit and smooth > 0, sample all columns into temp table
       # Otherwise just sample x for break computation
       if (isTRUE(sample_fit) && smooth > 0) {
         # Create temp table with sampled data (all columns needed for regression)
-        sample_table_base = sprintf("__dbbinsreg_%s_sample", 
-                                    gsub("[^0-9]", "", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3")))
+        sample_table_base = sprintf(
+          "__dbbinsreg_%s_sample",
+          gsub("[^0-9]", "", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"))
+        )
         sample_table = temp_table_name(sample_table_base, backend)
-        
+
         # Pass to sample helper query generator (to handle different SQL dialects)
         sample_sql = sql_sample("*", table_name, where_clause, sample_size, backend)
         create_temp_table_as(conn, sample_table, sample_sql, backend)
         on.exit(try(drop_table_if_exists(conn, sample_table, backend), silent = TRUE), add = TRUE)
-        
+
         # Get x values from sample table for break computation
         x_sample = dbGetQuery(conn, glue("SELECT {x_name} FROM {sample_table}"))[[x_name]]
-        
+
         # Store sample table name to use instead of full table
         sampled_table_name = sample_table
-        
+
         if (verbose) {
           message(sprintf("Created sample table with %d rows for regression fitting.", sample_size))
         }
@@ -539,7 +545,7 @@ dbbinsreg = function(
         x_sample = sampled_data[[x_name]]
         sampled_table_name = NULL
       }
-      
+
       # Compute breaks based on partition method
       if (partition_method == "quantile") {
         # Quantile breaks for equal-count bins
@@ -560,17 +566,17 @@ dbbinsreg = function(
         log_max = log(max(x_pos, na.rm = TRUE))
         breaks = exp(seq(log_min, log_max, length.out = B + 1))
       }
-      
+
       # Switch to manual partitioning with computed breaks
       partition_method = "manual"
       sampled = TRUE
-      
+
       if (verbose) {
         message(sprintf("Computed %d breaks from sample, using manual partitioning.", length(breaks)))
       }
     }
   }
-  
+
   # Bundle inputs (environment for reference semantics, consistent with dbreg)
   inputs = new.env(parent = emptyenv())
   env2env(
@@ -597,11 +603,11 @@ dbbinsreg = function(
   # - If points and line have same (p,s): fit one model, use for both
   # - If different: fit separate models
   # - smooth > 0 uses constrained splines, smooth == 0 uses unconstrained piecewise
-  
+
   # Determine if we need separate models
-  need_separate_models = line_on && points_on && 
+  need_separate_models = line_on && points_on &&
     (points_p != line_p || points_s != line_s)
-  
+
   if (need_separate_models) {
     # Fit separate models for points and line
     result = execute_separate_binsreg(inputs)
@@ -615,7 +621,7 @@ dbbinsreg = function(
       result = execute_constrained_binsreg(inputs)
     }
   }
-  
+
   # Map internal (safe) names back to display names
   if (length(name_map)) {
     result[["opt"]][["x_var"]] = restore_names(result[["opt"]][["x_var"]], name_map)
@@ -635,63 +641,64 @@ dbbinsreg = function(
   if (isTRUE(inputs[["plot"]])) {
     plot(result, ...)
   }
-  
+
   return(result)
 }
 
 #' Execute separate binsreg models for points and line
-#' 
+#'
 #' When points and line have different (p,s) parameters, we need to fit two separate
 #' models following binsreg's approach. This function:
 #' 1. Fits a model with points parameters (points.p, points.s) for data.dots
 #' 2. Fits a model with line parameters (line.p, line.s) for data.line
 #' 3. Combines results into single dbbinsreg output
-#' 
+#'
 #' @keywords internal
 execute_separate_binsreg = function(inputs) {
-  
   if (inputs[["verbose"]]) {
     cat("[dbbinsreg] Fitting separate models for points and line (different parameters)\n")
-    cat(sprintf("        points = c(%d, %d), line = c(%d, %d)\n",
-                inputs[["points"]][1], inputs[["points"]][2], inputs[["line"]][1], inputs[["line"]][2]))
+    cat(sprintf(
+      "        points = c(%d, %d), line = c(%d, %d)\n",
+      inputs[["points"]][1], inputs[["points"]][2], inputs[["line"]][1], inputs[["line"]][2]
+    ))
   }
-  
+
   # Save original parameters
   original_points = inputs[["points"]]
   original_line = inputs[["line"]]
-  
+
   # -------------------------------------------------------------------------
   # Step 1: Fit model for POINTS using points parameters
   # -------------------------------------------------------------------------
   points_inputs = inputs
   points_inputs[["degree"]] = original_points[1]
   points_inputs[["smooth"]] = original_points[2]
-  points_inputs[["line_on"]] = FALSE  # Only compute points
+  points_inputs[["line_on"]] = FALSE # Only compute points
   points_inputs[["points_on"]] = TRUE
-  
+
   if (points_inputs[["smooth"]] == 0) {
     points_result = execute_unconstrained_binsreg(points_inputs)
   } else {
     points_result = execute_constrained_binsreg(points_inputs)
   }
-  
+
   # -------------------------------------------------------------------------
   # Step 2: Fit model for LINE using line parameters
   # -------------------------------------------------------------------------
   line_inputs = inputs
   line_inputs[["degree"]] = original_line[1]
   line_inputs[["smooth"]] = original_line[2]
-  line_inputs[["line_on"]] = TRUE  # Only compute line
+  line_inputs[["line_on"]] = TRUE # Only compute line
   line_inputs[["points_on"]] = FALSE
-  line_inputs[["ci"]] = FALSE  # CIs only for points
-  line_inputs[["cb"]] = FALSE  # CBs only for points
-  
+  line_inputs[["ci"]] = FALSE # CIs only for points
+  line_inputs[["cb"]] = FALSE # CBs only for points
+
   if (line_inputs[["smooth"]] == 0) {
     line_result = execute_unconstrained_binsreg(line_inputs)
   } else {
     line_result = execute_constrained_binsreg(line_inputs)
   }
-  
+
   # -------------------------------------------------------------------------
   # Step 3: Combine results
   # -------------------------------------------------------------------------
@@ -718,7 +725,7 @@ execute_separate_binsreg = function(inputs) {
       vcov = inputs[["vcov"]]
     )
   )
-  
+
   # Add knots if available
   if (!is.null(points_result[["knots"]])) {
     result[["knots"]] = list(points = points_result[["knots"]])
@@ -727,7 +734,7 @@ execute_separate_binsreg = function(inputs) {
     if (is.null(result[["knots"]])) result[["knots"]] = list()
     result[["knots"]][["line"]] = line_result[["knots"]]
   }
-  
+
   class(result) = "dbbinsreg"
   return(result)
 }
@@ -740,7 +747,6 @@ execute_separate_binsreg = function(inputs) {
 #' Build bin assignment CTE and fetch binned data into R
 #' @keywords internal
 create_binned_data = function(inputs, collect = TRUE) {
-  
   conn = inputs[["conn"]]
   table_name = inputs[["table_name"]]
   x_name = inputs[["x_name"]]
@@ -750,18 +756,18 @@ create_binned_data = function(inputs, collect = TRUE) {
   controls = inputs[["controls"]]
   fe = inputs[["fe"]]
   cluster_var = inputs[["cluster_var"]]
-  
+
   # Build column list (deduplicated)
   cols = unique(c(y_name, x_name, controls, fe, cluster_var))
-  
+
   # Weight expression (no weights support for now)
   wt_expr = "1.0"
-  
+
   # Detect backend for SQL compatibility
   # SQL Server doesn't support LEAST() or LN(), so we adapt
   bd = detect_backend(conn)
   is_sql_server = bd[["name"]] == "sqlserver"
-  
+
   # Backend-specific function names
   # SQL Server: LEAST() → CASE WHEN expr < val THEN expr ELSE val END
   # Others: native LEAST()
@@ -770,14 +776,14 @@ create_binned_data = function(inputs, collect = TRUE) {
   } else {
     function(val, expr) sprintf("LEAST(%d, %s)", val, expr)
   }
-  
+
   # SQL Server: LN() → LOG() (natural log)
   # Others: native LN()
   ln_fn = if (is_sql_server) "LOG" else "LN"
-  
+
   # Bin assignment expression
   # Note: NTILE() differs slightly from binsreg's quantile(type=2). See ?dbbinsreg details.
-  
+
   if (partition_method == "quantile") {
     bin_expr = sprintf("ntile(%d) OVER (ORDER BY %s)", B, x_name)
   } else if (partition_method == "equal") {
@@ -808,28 +814,36 @@ create_binned_data = function(inputs, collect = TRUE) {
     for (i in 1:(length(inputs[["breaks"]]) - 1)) {
       lower = inputs[["breaks"]][i]
       upper = inputs[["breaks"]][i + 1]
-      
+
       if (i == length(inputs[["breaks"]]) - 1) {
         # Last bin: closed on both ends
-        case_whens = c(case_whens, 
-                      sprintf("WHEN %s >= %.15g AND %s <= %.15g THEN %d", 
-                             x_name, lower, x_name, upper, i))
+        case_whens = c(
+          case_whens,
+          sprintf(
+            "WHEN %s >= %.15g AND %s <= %.15g THEN %d",
+            x_name, lower, x_name, upper, i
+          )
+        )
       } else {
         # Other bins: left-closed, right-open
-        case_whens = c(case_whens, 
-                      sprintf("WHEN %s >= %.15g AND %s < %.15g THEN %d", 
-                             x_name, lower, x_name, upper, i))
+        case_whens = c(
+          case_whens,
+          sprintf(
+            "WHEN %s >= %.15g AND %s < %.15g THEN %d",
+            x_name, lower, x_name, upper, i
+          )
+        )
       }
     }
-    
+
     bin_expr = sprintf("CASE %s END", paste(case_whens, collapse = " "))
   } else {
     stop("Unknown partition_method type: ", partition_method)
   }
-  
+
   # Build query - fetch binned data into R
   col_list = paste(cols, collapse = ", ")
-  
+
   query = sprintf(
     "SELECT
       %s,
@@ -844,20 +858,22 @@ create_binned_data = function(inputs, collect = TRUE) {
     y_name,
     x_name
   )
-  
+
   # Add filter for x > 0 if using log_equal
   if (partition_method == "log_equal") {
     query = paste0(query, sprintf(" AND %s > 0", x_name))
   }
-  
+
   # Add filter for values within breaks range if using manual
   if (partition_method == "manual") {
     min_break = min(inputs[["breaks"]])
     max_break = max(inputs[["breaks"]])
-    query = paste0(query, sprintf(" AND %s >= %.15g AND %s <= %.15g", 
-                                   x_name, min_break, x_name, max_break))
+    query = paste0(query, sprintf(
+      " AND %s >= %.15g AND %s <= %.15g",
+      x_name, min_break, x_name, max_break
+    ))
   }
-  
+
   # Add filter for non-null controls/fe if present
   if (!is.null(controls)) {
     for (v in controls) {
@@ -869,11 +885,11 @@ create_binned_data = function(inputs, collect = TRUE) {
       query = paste0(query, sprintf(" AND %s IS NOT NULL", v))
     }
   }
-  
+
   # Fetch into R
   if (!isTRUE(collect)) return(query)
   binned_data = dbGetQuery(conn, query)
-  
+
   return(binned_data)
 }
 
@@ -881,19 +897,20 @@ create_binned_data = function(inputs, collect = TRUE) {
 #' Compute bin geometry from binned data
 #' @keywords internal
 compute_bin_geometry = function(binned_data, x_name) {
-  
   x_vals = as.numeric(binned_data[[x_name]])
-  
+
   # Group by bin and compute geometry
   geo = aggregate(
     x_vals,
     by = list(bin = binned_data[["bin"]]),
     FUN = function(x) {
-      c(x_left = min(x), x_right = max(x), x_mid = (min(x) + max(x)) / 2, 
-        x_mean = mean(x), n = length(x))
+      c(
+        x_left = min(x), x_right = max(x), x_mid = (min(x) + max(x)) / 2,
+        x_mean = mean(x), n = length(x)
+      )
     }
   )
-  
+
   # Unpack the matrix column
   geo_mat = geo[["x"]]
   geo = data.frame(
@@ -904,33 +921,32 @@ compute_bin_geometry = function(binned_data, x_name) {
     x_mean = geo_mat[, "x_mean"],
     n = geo_mat[, "n"]
   )
-  
+
   return(geo)
 }
 
 
 #' Add normalized polynomial basis to binned data (binsreg compatible)
-#' 
+#'
 #' Uses binsreg's basis construction: u = (x - x_left) / h where h is bin width.
-#' This normalizes u to [0, 1] within each bin, matching binsreg's polynomial 
+#' This normalizes u to [0, 1] within each bin, matching binsreg's polynomial
 #' parameterization for s=0 (unconstrained) estimation.
-#' 
+#'
 #' @keywords internal
 add_basis_columns = function(binned_data, geo, x_name, degree) {
-  
   if (degree == 0) {
-    return(binned_data)  # No basis needed for means
+    return(binned_data) # No basis needed for means
   }
-  
+
 
   # Merge in bin geometry (x_left and bin width h)
   geo[["h"]] = geo[["x_right"]] - geo[["x_left"]]
   binned_data = merge(binned_data, geo[, c("bin", "x_left", "h")], by = "bin")
-  
+
   # Add normalized polynomial terms matching binsreg: u = (x - x_left) / h
   # This gives u in [0, 1] for each bin
   binned_data[["u"]] = (binned_data[[x_name]] - binned_data[["x_left"]]) / binned_data[["h"]]
-  
+
   # Add higher-order terms only if degree >= 2
   # Note: In R, 2:1 produces c(2,1) not empty, so we need explicit check
   if (degree >= 2) {
@@ -939,35 +955,36 @@ add_basis_columns = function(binned_data, geo, x_name, degree) {
       binned_data[[col_name]] = binned_data[["u"]]^d
     }
   }
-  
+
   return(binned_data)
 }
 
 #' Execute unconstrained binned regression (smooth = 0)
-#' 
+#'
 #' Uses dbreg() with design matrix approach for fast unconstrained estimation.
 #' Leverages compress strategy when possible for efficiency with high-dimensional
 #' factor variables and fixed effects.
-#' 
+#'
 #' @keywords internal
 execute_unconstrained_binsreg = function(inputs) {
-  
   if (inputs[["verbose"]]) {
     cat("[dbbinsreg] Executing unconstrained binned regression (smooth = 0)\n")
   }
-  
+
   # Only bin geometry crosses the client boundary. Basis columns and the
   # regression remain a SQL relation, including on non-DuckDB backends.
   conn = inputs[["conn"]]
   source = paste0("(", create_binned_data(inputs, collect = FALSE), ") dbreg_bins")
   x = inputs[["x_name"]]
-  geo = dbGetQuery(conn, paste0("SELECT bin, MIN(", x, ") AS x_left, MAX(", x,
+  geo = dbGetQuery(conn, paste0(
+    "SELECT bin, MIN(", x, ") AS x_left, MAX(", x,
     ") AS x_right, AVG(", sql_cast_double(x, conn), ") AS x_mean, COUNT(*) AS n FROM ", source,
-    " GROUP BY bin ORDER BY bin"))
+    " GROUP BY bin ORDER BY bin"
+  ))
   geo[["bin"]] = as.integer(geo[["bin"]])
-  geo[["x_mid"]] = (geo[["x_left"]]+geo[["x_right"]])/2
+  geo[["x_mid"]] = (geo[["x_left"]] + geo[["x_right"]]) / 2
   degree = inputs[["degree"]]
-  geo = geo[geo[["n"]] >= degree+1L & (degree == 0L | geo[["x_right"]] > geo[["x_left"]]), , drop = FALSE]
+  geo = geo[geo[["n"]] >= degree + 1L & (degree == 0L | geo[["x_right"]] > geo[["x_left"]]), , drop = FALSE]
   if (!nrow(geo)) stop("No bins have enough distinct observations for the requested degree.", call. = FALSE)
   present_bins = geo[["bin"]]
   fields = "dbreg_bins.*"
@@ -979,15 +996,19 @@ execute_unconstrained_binsreg = function(inputs) {
     basis = c(basis, name)
     if (degree > 0L) for (power in seq_len(degree)) {
       name = paste0(if (power == 1L) "u" else paste0("u", power), "_", bin)
-      u = paste0("((", sql_cast_double(x, conn), "-(", dbglm_number(geo[["x_left"]][[i]]), "))/",
-        dbglm_number(geo[["x_right"]][[i]]-geo[["x_left"]][[i]]), ")")
+      u = paste0(
+        "((", sql_cast_double(x, conn), "-(", dbglm_number(geo[["x_left"]][[i]]), "))/",
+        dbglm_number(geo[["x_right"]][[i]] - geo[["x_left"]][[i]]), ")"
+      )
       value = if (power == 1L) u else paste(rep(u, power), collapse = "*")
       fields = c(fields, sprintf("CASE WHEN bin=%d THEN %s ELSE 0.0 END AS %s", bin, value, name))
       basis = c(basis, name)
     }
   }
-  relation = paste0("(SELECT ", paste(fields, collapse = ","), " FROM ", source,
-    " WHERE bin IN (", paste(present_bins, collapse = ","), ")) dbreg_bin_design")
+  relation = paste0(
+    "(SELECT ", paste(fields, collapse = ","), " FROM ", source,
+    " WHERE bin IN (", paste(present_bins, collapse = ","), ")) dbreg_bin_design"
+  )
   y_name = inputs[["y_name"]]
   controls = inputs[["controls"]]
   fe = inputs[["fe"]]
@@ -1001,7 +1022,7 @@ execute_unconstrained_binsreg = function(inputs) {
     control_terms = paste(controls, collapse = " + ")
     fml_rhs = paste(fml_rhs, control_terms, sep = " + ")
   }
-  
+
   # Build full formula
   if (!is.null(fe)) {
     fe_terms = paste(fe, collapse = " + ")
@@ -1009,10 +1030,10 @@ execute_unconstrained_binsreg = function(inputs) {
   } else {
     fml_str = sprintf("%s ~ %s", y_name, fml_rhs)
   }
-  
+
   fml = as.formula(fml_str)
-  
-  
+
+
   # Fit sufficient statistics without materializing the source in R.
   fit = dbreg(
     fml = fml,
@@ -1022,30 +1043,31 @@ execute_unconstrained_binsreg = function(inputs) {
     vcov = if (isTRUE(inputs[["ci"]]) || isTRUE(inputs[["cb"]])) inputs[["vcov"]] else "iid",
     verbose = inputs[["verbose"]]
   )
-  
+
   # Extract V_beta if available
   V_beta = if ((isTRUE(inputs[["ci"]]) || isTRUE(inputs[["cb"]])) && !is.null(fit[["vcov"]])) fit[["vcov"]] else NULL
-  
+
   # Extract coefficients and construct output
   result = construct_output(inputs, fit, geo, V_beta)
-  
+
   return(result)
 }
 
 
 #' Execute constrained binned regression (smooth > 0)
-#' 
-#' Uses regression splines with truncated power basis to enforce continuity 
+#'
+#' Uses regression splines with truncated power basis to enforce continuity
 #' constraints at bin boundaries.
-#' 
+#'
 #' @keywords internal
 execute_constrained_binsreg = function(inputs) {
-  
   if (inputs[["verbose"]]) {
-    cat("[dbbinsreg] Executing constrained binscatter via regression splines (smooth = ", 
-        inputs[["smooth"]], ")\n", sep = "")
+    cat("[dbbinsreg] Executing constrained binscatter via regression splines (smooth = ",
+      inputs[["smooth"]], ")\n",
+      sep = ""
+    )
   }
-  
+
   # Extract inputs
   conn = inputs[["conn"]]
   # Use sample table if available (sample_fit = TRUE), otherwise full table
@@ -1063,17 +1085,19 @@ execute_constrained_binsreg = function(inputs) {
   controls = inputs[["controls"]]
   fe = inputs[["fe"]]
   vcov_type = if (isTRUE(inputs[["ci"]])) inputs[["vcov"]] else "iid"
-  
+
   # Get backend info
   backend_info = detect_backend(conn)
   backend = backend_info[["name"]]
   count_expr = sql_count_expr(backend)
-  
+
   # Create temp table name for binned data (with # prefix for SQL Server)
-  base_table_name = sprintf("__dbbinsreg_%s_binned", 
-                            gsub("[^0-9]", "", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3")))
+  base_table_name = sprintf(
+    "__dbbinsreg_%s_binned",
+    gsub("[^0-9]", "", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"))
+  )
   binned_table = temp_table_name(base_table_name, backend)
-  
+
   # Step 1: Create binned data table with bin assignments
   if (partition_method == "quantile") {
     # NTILE-based quantile binning
@@ -1084,7 +1108,6 @@ execute_constrained_binsreg = function(inputs) {
       WHERE {x_name} IS NOT NULL AND {y_name} IS NOT NULL
     ")
     create_temp_table_as(conn, binned_table, select_sql, backend)
-    
   } else if (partition_method == "equal") {
     # Equal-width binning using window functions for min/max
     select_sql = glue("
@@ -1103,12 +1126,11 @@ execute_constrained_binsreg = function(inputs) {
       ) t2
     ")
     create_temp_table_as(conn, binned_table, select_sql, backend)
-    
   } else if (partition_method == "manual") {
     # Manual breaks: assign bin based on user-specified breakpoints
     breaks = inputs[["breaks"]]
     n_bins = length(breaks) - 1
-    
+
     # Build CASE WHEN expression for bin assignment
     case_parts = character()
     for (i in 1:(n_bins - 1)) {
@@ -1116,7 +1138,7 @@ execute_constrained_binsreg = function(inputs) {
     }
     case_parts = c(case_parts, glue("ELSE {n_bins}"))
     case_expr = paste("CASE", paste(case_parts, collapse = " "), "END")
-    
+
     select_sql = glue("
       SELECT *, {case_expr} AS bin
       FROM {table_name}
@@ -1124,16 +1146,16 @@ execute_constrained_binsreg = function(inputs) {
         AND {x_name} >= {breaks[1]} AND {x_name} <= {breaks[length(breaks)]}
     ")
     create_temp_table_as(conn, binned_table, select_sql, backend)
-    
+
     # Update B to match number of bins from breaks
     B = n_bins
   } else {
     stop("partition_method = '", partition_method, "' not supported")
   }
-  
+
   # Ensure cleanup of temp table
   on.exit(try(dbRemoveTable(conn, binned_table, fail_if_missing = FALSE), silent = TRUE), add = TRUE)
-  
+
   # Compute bin geometry (boundaries and counts) using direct SQL
   geo_sql = glue("
     SELECT bin,
@@ -1147,30 +1169,30 @@ execute_constrained_binsreg = function(inputs) {
     ORDER BY bin
   ")
   geo = dbGetQuery(conn, geo_sql)
-  
+
   # Update B to actual number of bins (some may be empty)
   B = nrow(geo)
-  
+
   # Step 2: Extract interior knots from bin boundaries
   # Knots are at x_right[1], x_right[2], ..., x_right[B-1]
   knots = extract_knots(geo)
-  
+
   # Safety check: remove any NA knots
 
   if (anyNA(knots)) {
     warning("Some bin boundaries are NA; removing affected knots")
     knots = knots[!is.na(knots)]
   }
-  
+
   if (inputs[["verbose"]]) {
     cat("[dbbinsreg] Using ", length(knots), " interior knots for spline basis\n", sep = "")
   }
-  
+
   # Step 3: Build spline basis columns using SQL
   # We need to add columns to the binned table for the spline basis
   basis_names = character()
   basis_exprs = character()
-  
+
   # Global polynomial part (excluding intercept, which dbreg handles)
   # x, x^2, x^3, ..., x^degree
   for (d in seq_len(degree)) {
@@ -1184,14 +1206,14 @@ execute_constrained_binsreg = function(inputs) {
       basis_exprs = c(basis_exprs, glue("POWER({x_name}, {d}) AS {col_name}"))
     }
   }
-  
+
   # Truncated power terms at each knot: (x - κ_j)₊^r for r = smooth, ..., degree
   # When degree=0 and smooth=0, r=0 creates step functions (bin indicators)
   for (j in seq_along(knots)) {
     kappa = knots[j]
     for (r in smooth:degree) {
       col_name = sprintf("knot%d_pow%d", j, r)
-      
+
       if (r == 0) {
         # (x - κ)₊⁰ = step function: 1 if x > κ, 0 otherwise (bin indicator shift)
         expr = glue("CASE WHEN {x_name} > {kappa} THEN 1.0 ELSE 0.0 END AS {col_name}")
@@ -1209,12 +1231,14 @@ execute_constrained_binsreg = function(inputs) {
       basis_exprs = c(basis_exprs, expr)
     }
   }
-  
+
   # Create new table with basis columns (replace binned table)
-  base_spline_name = sprintf("__dbbinsreg_%s_spline", 
-                             gsub("[^0-9]", "", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3")))
+  base_spline_name = sprintf(
+    "__dbbinsreg_%s_spline",
+    gsub("[^0-9]", "", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"))
+  )
   spline_table = temp_table_name(base_spline_name, backend)
-  
+
   basis_cols_sql = paste(basis_exprs, collapse = ",\n           ")
   spline_select_sql = glue("
     SELECT *,
@@ -1223,7 +1247,7 @@ execute_constrained_binsreg = function(inputs) {
   ")
   create_temp_table_as(conn, spline_table, spline_select_sql, backend)
   on.exit(try(dbRemoveTable(conn, spline_table, fail_if_missing = FALSE), silent = TRUE), add = TRUE)
-  
+
   # Step 4: Build formula for dbreg
   # y ~ basis_terms [+ controls] [| fe]
   rhs_terms = basis_names
@@ -1231,7 +1255,7 @@ execute_constrained_binsreg = function(inputs) {
     rhs_terms = c(rhs_terms, controls)
   }
   rhs = paste(rhs_terms, collapse = " + ")
-  
+
   if (!is.null(fe) && length(fe) > 0) {
     fe_part = paste(fe, collapse = " + ")
     fml_str = sprintf("%s ~ %s | %s", y_name, rhs, fe_part)
@@ -1239,49 +1263,49 @@ execute_constrained_binsreg = function(inputs) {
     fml_str = sprintf("%s ~ %s", y_name, rhs)
   }
   fml = as.formula(fml_str)
-  
+
   if (inputs[["verbose"]]) {
     cat("[dbbinsreg] Fitting regression spline \n")
   }
-  
+
   # Warn if CB requested but not supported for constrained estimation
 
   if (isTRUE(inputs[["cb"]])) {
     warning("Confidence bands (cb) not yet supported for constrained estimation (smoothness > 0). Ignoring cb = TRUE.")
     inputs[["cb"]] = FALSE
   }
-  
+
   # Step 5: Run regression via dbreg
   # Pass the table name as `table` argument
   fit = dbreg(
     fml = fml,
-    table = spline_table,  # Pass table name
+    table = spline_table, # Pass table name
     conn = conn,
     vcov = vcov_type,
     verbose = FALSE
   )
-  
+
   # Step 6: Evaluate fitted spline at bin endpoints
   result = evaluate_spline_at_bins(fit, geo, knots, degree, smooth, basis_names, inputs)
-  
+
   return(result)
 }
 
 
 #' Extract interior knots from bin geometry
-#' 
+#'
 #' @param geo Data frame with bin geometry (must have x_right column)
 #' @return Numeric vector of K = B-1 interior knots
 #' @keywords internal
 extract_knots = function(geo) {
   B = nrow(geo)
   if (B <= 1) return(numeric(0))
-  geo[["x_right"]][1:(B-1)]
+  geo[["x_right"]][1:(B - 1)]
 }
 
 
 #' Evaluate fitted spline at bin boundaries
-#' 
+#'
 #' @param fit dbreg fit object
 #' @param geo Bin geometry data frame
 #' @param knots Numeric vector of knot locations
@@ -1289,28 +1313,27 @@ extract_knots = function(geo) {
 #' @param smooth Smoothness level
 #' @param basis_names Character vector of basis column names
 #' @param inputs Original inputs list (for metadata)
-#' 
+#'
 #' @return Data frame with bin-level fitted values
 #' @keywords internal
 evaluate_spline_at_bins = function(fit, geo, knots, degree, smooth, basis_names, inputs) {
-  
   B = nrow(geo)
-  
+
   # Extract coefficients
   coef_tbl = fit[["coeftable"]]
   coefs = setNames(coef_tbl[, "estimate"], rownames(coef_tbl))
-  
+
   # Get intercept
   intercept = if ("(Intercept)" %in% names(coefs)) coefs["(Intercept)"] else 0
-  
+
   # Get variance-covariance matrix if CI requested
   V = if (isTRUE(inputs[["ci"]])) stats::vcov(fit) else NULL
-  
+
   # Function to build basis vector at a given x value
   build_basis_vector = function(x_val) {
     bvec = numeric(length(basis_names))
     names(bvec) = basis_names
-    
+
     # Global polynomial part: x^1, x^2, ..., x^degree
     for (d in seq_len(degree)) {
       col_name = paste0("x", d, "_spline")
@@ -1318,7 +1341,7 @@ evaluate_spline_at_bins = function(fit, geo, knots, degree, smooth, basis_names,
         bvec[col_name] = x_val^d
       }
     }
-    
+
     # Knot features
     for (j in seq_along(knots)) {
       for (r in smooth:degree) {
@@ -1336,7 +1359,7 @@ evaluate_spline_at_bins = function(fit, geo, knots, degree, smooth, basis_names,
     }
     bvec
   }
-  
+
   # Evaluation function: ŷ(x) = intercept + b(x)' β
   # Note: bin argument is ignored for splines (global fit)
   eval_fn = function(x_val, bin) {
@@ -1345,25 +1368,25 @@ evaluate_spline_at_bins = function(fit, geo, knots, degree, smooth, basis_names,
     beta_basis[is.na(beta_basis)] = 0
     intercept + sum(bvec * beta_basis)
   }
-  
+
   # SE function: sqrt(b(x)' V b(x))
   se_fn = if (!is.null(V)) {
     function(x_val, bin) {
       # Build full basis vector including intercept
       bvec_full = c(1, build_basis_vector(x_val))
       names(bvec_full)[1] = "(Intercept)"
-      
+
       # Match to V dimensions
       v_names = rownames(V)
       bvec_matched = rep(0, length(v_names))
       names(bvec_matched) = v_names
-      
+
       for (nm in names(bvec_full)) {
         if (nm %in% v_names) {
           bvec_matched[nm] = bvec_full[nm]
         }
       }
-      
+
       var_pred = as.numeric(t(bvec_matched) %*% V %*% bvec_matched)
       if (var_pred < 0) {
         if (var_pred > -1e-10) var_pred = 0 else return(NA_real_)
@@ -1371,7 +1394,7 @@ evaluate_spline_at_bins = function(fit, geo, knots, degree, smooth, basis_names,
       sqrt(var_pred)
     }
   } else NULL
-  
+
   # Use the unified output builder
   # Note: CB not yet supported for constrained spline estimation (would need delta method)
   build_dbbinsreg_output(inputs, fit, geo, eval_fn, se_fn, knots = knots, V_beta = NULL)
@@ -1379,43 +1402,42 @@ evaluate_spline_at_bins = function(fit, geo, knots, degree, smooth, basis_names,
 
 
 #' Construct output from unconstrained binned regression
-#' 
+#'
 #' @description Internal helper that transforms coefficient estimates from unconstrained
 #' binned regression into the standard dbbinsreg output list format.
-#' 
+#'
 #' @keywords internal
 construct_output = function(inputs, fit, geo, V_beta = NULL) {
-  
   degree = inputs[["degree"]]
   B = nrow(geo)
-  
+
   # Extract coefficients from coeftable
   if (is.null(fit[["coeftable"]])) {
     stop("No coefficients found in fit object")
   }
-  
+
   coef_names = rownames(fit[["coeftable"]])
   coef_vals = fit[["coeftable"]][, "estimate"]
   names(coef_vals) = coef_names
-  
+
   has_intercept = "(Intercept)" %in% coef_names
-  
+
   # Helper to get SE of linear combination: sqrt(w' V w)
   get_se = function(coef_indices, weights) {
     if (is.null(V_beta)) return(NA_real_)
     idx = match(coef_indices, rownames(V_beta))
     if (anyNA(idx)) return(NA_real_)
-    
+
     w = numeric(nrow(V_beta))
     w[idx] = weights
-    
+
     var_val = as.numeric(t(w) %*% V_beta %*% w)
     if (var_val < 0) {
       if (var_val > -1e-10) var_val = 0 else return(NA_real_)
     }
     structure(sqrt(var_val), contrast = w)
   }
-  
+
   # Build evaluation function based on degree
   if (degree == 0) {
     # Degree 0: bin means (constant within bin)
@@ -1431,7 +1453,7 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
         }
       }
     }
-    
+
     se_fn = if (!is.null(V_beta)) {
       function(x_val, bin) {
         bin_col = paste0("bin", bin)
@@ -1450,7 +1472,6 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
         }
       }
     } else NULL
-    
   } else {
     # Degree >= 1: piecewise polynomial using normalized basis (binsreg compatible)
     # u = (x - x_left) / h where h is bin width, giving u in [0, 1]
@@ -1458,12 +1479,12 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
       bin_col = paste0("bin", bin)
       bin_idx = which(geo[["bin"]] == bin)
       if (length(bin_idx) == 0) return(NA_real_)
-      
+
       # Normalized basis: u = (x - x_left) / h
       x_left = geo[["x_left"]][bin_idx]
       h = geo[["x_right"]][bin_idx] - x_left
       u = (x_val - x_left) / h
-      
+
       # Get intercept (b0)
       if (!has_intercept) {
         b0 = if (bin_col %in% coef_names) coef_vals[bin_col] else 0
@@ -1474,14 +1495,14 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
           b0 = coef_vals["(Intercept)"] + (if (bin_col %in% coef_names) coef_vals[bin_col] else 0)
         }
       }
-      
+
       # Linear term
       b1_name = sprintf("u_%d", bin)
       b1 = if (b1_name %in% coef_names) coef_vals[b1_name] else 0
-      
+
       # Start with intercept + linear term
       result = b0 + b1 * u
-      
+
       # Higher-order polynomial terms: u^2, u^3, ..., u^degree
       # Note: In R, 2:1 produces c(2,1) not empty, so we need explicit check
       if (degree >= 2) {
@@ -1491,21 +1512,21 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
           result = result + bd * u^d
         }
       }
-      
+
       result
     }
-    
+
     se_fn = if (!is.null(V_beta)) {
       function(x_val, bin) {
         bin_col = paste0("bin", bin)
         bin_idx = which(geo[["bin"]] == bin)
         if (length(bin_idx) == 0) return(NA_real_)
-        
+
         # Normalized basis: u = (x - x_left) / h
         x_left = geo[["x_left"]][bin_idx]
         h = geo[["x_right"]][bin_idx] - x_left
         u = (x_val - x_left) / h
-        
+
         # Build coefficient indices and weights
         if (!has_intercept) {
           b0_idx = if (bin_col %in% coef_names) bin_col else NULL
@@ -1519,14 +1540,14 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
             b0_w = c(1, if (bin_col %in% coef_names) 1 else NULL)
           }
         }
-        
+
         # Linear term
         b1_name = sprintf("u_%d", bin)
         b1_idx = if (b1_name %in% coef_names) b1_name else NULL
-        
+
         idx = c(b0_idx, b1_idx)
         w = c(b0_w, if (!is.null(b1_idx)) u else NULL)
-        
+
         # Higher-order polynomial terms: u^2, u^3, ..., u^degree
         # Note: In R, 2:1 produces c(2,1) not empty, so we need explicit check
         if (degree >= 2) {
@@ -1539,26 +1560,26 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
             }
           }
         }
-        
+
         if (length(idx) == 0) return(NA_real_)
         get_se(idx, w)
       }
     } else NULL
   }
-  
+
   # Use the new unified output builder
   build_dbbinsreg_output(inputs, fit, geo, eval_fn, se_fn, V_beta = V_beta)
 }
 
 
 #' Lagrange interpolation through 3 points
-#' 
+#'
 #' @param x_seq Vector of x values to interpolate at
 #' @param x_pts 3-element vector of x control points
 #' @param y_pts 3-element vector of y control points
-#' 
+#'
 #' @return Vector of interpolated y values
-#' 
+#'
 #' @keywords internal
 lagrange_interp_3pt = function(x_seq, x_pts, y_pts) {
   y_seq = numeric(length(x_seq))
@@ -1574,35 +1595,34 @@ lagrange_interp_3pt = function(x_seq, x_pts, y_pts) {
 
 
 #' Build dbbinsreg output list (binsreg-compatible format)
-#' 
+#'
 #' @description Creates the standard dbbinsreg output structure matching binsreg's
 #' output format: data.dots (evaluated at bin means), data.line (on grid),
 #' and data.bin (bin geometry).
-#' 
+#'
 #' @param inputs List of input parameters from dbbinsreg()
 #' @param fit The dbreg model object
 #' @param geo Data frame with bin geometry (x_left, x_right, x_mid, n, x_mean)
 #' @param eval_fn Function that takes (x, bin) and returns fitted y values
 #' @param se_fn Function that takes (x, bin) and returns standard errors (or NULL)
 #' @param knots Optional vector of knots (for constrained estimation)
-#' 
+#'
 #' @return A list with class "dbbinsreg" containing:
 #'   - data.dots: data.frame with columns x, bin, fit, se, lwr, upr (at bin means)
 #'   - data.line: data.frame with columns x, bin, fit (on grid) - only if line requested
 #'   - data.bin: data.frame with id, left, right
 #'   - model: the dbreg fit object
 #'   - opt: list of options (points, line, nbins, binspos, etc.)
-#' 
+#'
 #' @keywords internal
 build_dbbinsreg_output = function(inputs, fit, geo, eval_fn, se_fn = NULL, knots = NULL, V_beta = NULL) {
-  
   B = nrow(geo)
   alpha = inputs[["alpha"]]
   df = attr(fit[["vcov"]], "df.t")
   if (is.null(df)) df = fit[["df_residual"]]
   crit_val = stats::qt(1 - alpha / 2, df = df)
   linegrid = inputs[["linegrid"]]
-  
+
   # -------------------------------------------------------------------------
   # Build data.dots: evaluate at bin means (binsreg style)
   # -------------------------------------------------------------------------
@@ -1610,7 +1630,7 @@ build_dbbinsreg_output = function(inputs, fit, geo, eval_fn, se_fn = NULL, knots
     # Evaluate at bin means
     x_mean = geo[["x_mean"]]
     fit_dots = sapply(seq_len(B), function(i) eval_fn(x_mean[i], geo[["bin"]][i]))
-    
+
     if (!is.null(se_fn) && (isTRUE(inputs[["ci"]]) || isTRUE(inputs[["cb"]]))) {
       uncertainty = lapply(seq_len(B), function(i) se_fn(x_mean[i], geo[["bin"]][i]))
       se_dots = vapply(uncertainty, as.numeric, numeric(1))
@@ -1621,7 +1641,7 @@ build_dbbinsreg_output = function(inputs, fit, geo, eval_fn, se_fn = NULL, knots
       lwr = rep(NA_real_, B)
       upr = rep(NA_real_, B)
     }
-    
+
     # Compute confidence band if requested
     if (isTRUE(inputs[["cb"]]) && !is.null(V_beta) && !all(is.na(se_dots))) {
       nsims = inputs[["nsims"]]
@@ -1644,7 +1664,7 @@ build_dbbinsreg_output = function(inputs, fit, geo, eval_fn, se_fn = NULL, knots
       cb_lwr = NULL
       cb_upr = NULL
     }
-    
+
     data_dots = data.frame(
       x = x_mean,
       bin = geo[["bin"]],
@@ -1663,31 +1683,31 @@ build_dbbinsreg_output = function(inputs, fit, geo, eval_fn, se_fn = NULL, knots
   } else {
     data_dots = NULL
   }
-  
+
   # -------------------------------------------------------------------------
   # Build data.line: evaluate on grid within each bin
   # -------------------------------------------------------------------------
   if (isTRUE(inputs[["line_on"]])) {
     line_list = vector("list", B)
-    
+
     for (i in seq_len(B)) {
       # Generate grid points within bin
       x_seq = seq(geo[["x_left"]][i], geo[["x_right"]][i], length.out = linegrid)
       fit_line = sapply(x_seq, eval_fn, bin = geo[["bin"]][i])
-      
+
       line_list[[i]] = data.frame(
         x = x_seq,
         bin = geo[["bin"]][i],
         fit = fit_line
       )
     }
-    
+
     data_line = do.call(rbind, line_list)
     rownames(data_line) = NULL
   } else {
     data_line = NULL
   }
-  
+
   # -------------------------------------------------------------------------
   # Build bins: bin geometry
   # -------------------------------------------------------------------------
@@ -1697,7 +1717,7 @@ build_dbbinsreg_output = function(inputs, fit, geo, eval_fn, se_fn = NULL, knots
     right = geo[["x_right"]]
   )
   rownames(data_bin) = NULL
-  
+
   # -------------------------------------------------------------------------
   # Build opt: options list (binsreg style)
   # -------------------------------------------------------------------------
@@ -1711,12 +1731,12 @@ build_dbbinsreg_output = function(inputs, fit, geo, eval_fn, se_fn = NULL, knots
     x_var = inputs[["x_name"]],
     y_var = inputs[["y_name"]],
     formula = inputs[["formula"]],
-    level = (1 - alpha) * 100,  # Convert back to percentage for display
+    level = (1 - alpha) * 100, # Convert back to percentage for display
     ci = inputs[["ci"]],
     cb = inputs[["cb"]],
     vcov = inputs[["vcov"]]
   )
-  
+
   # -------------------------------------------------------------------------
   # Build result list
   # -------------------------------------------------------------------------
@@ -1727,12 +1747,12 @@ build_dbbinsreg_output = function(inputs, fit, geo, eval_fn, se_fn = NULL, knots
     model = fit,
     opt = opt
   )
-  
+
   # Add knots if provided (constrained estimation)
   if (!is.null(knots)) {
     result[["knots"]] = knots
   }
-  
+
   class(result) = "dbbinsreg"
 
   if (isTRUE(plot)) {

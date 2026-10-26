@@ -44,9 +44,11 @@ sql_stable_sum = function(conn, expr) {
   # DECIMAL(38,18) stabilizes distributed cancellation but rounds very small
   # scores to zero. When every term is small, ordinary double aggregation
   # preserves their relative scale and avoids that absolute quantization floor.
-  sprintf(paste0("(CASE WHEN MAX(ABS(%2$s)) < 1e-9 THEN SUM(%2$s) ",
+  sprintf(paste0(
+    "(CASE WHEN MAX(ABS(%2$s)) < 1e-9 THEN SUM(%2$s) ",
     "WHEN SUM(CASE WHEN %1$s THEN 0 ELSE 1 END) = 0 THEN ",
-    "CAST(SUM(CAST(CASE WHEN %1$s THEN (%2$s) END AS DECIMAL(38,18))) AS DOUBLE) ELSE SUM(%2$s) END)"), ok, expr)
+    "CAST(SUM(CAST(CASE WHEN %1$s THEN (%2$s) END AS DECIMAL(38,18))) AS DOUBLE) ELSE SUM(%2$s) END)"
+  ), ok, expr)
 }
 
 
@@ -69,7 +71,7 @@ sql_text_bytes = function(conn, expr) {
 # never training observation state. A size limit bounds SQL text. The caller
 # owns materialization and cleanup just as for every other projector state.
 sql_values_frame = function(conn, frame, max_bytes = 8 * 1024^2,
-                             format = getOption("dbreg.glm_databricks_lookup", "json")) {
+                            format = getOption("dbreg.glm_databricks_lookup", "json")) {
   if (!nrow(frame)) stop("A coefficient lookup cannot be empty.", call. = FALSE)
   if (!is.character(format) || length(format) != 1 || !format %in% c("json", "values")) {
     stop("GLM FE lookup format must be json or values.", call. = FALSE)
@@ -81,15 +83,19 @@ sql_values_frame = function(conn, frame, max_bytes = 8 * 1024^2,
     # Arrays avoid repeating field names for every FE. Seventeen digits preserve
     # double round trips (digits=NA rounds some extremes to infinity). Base64
     # keeps SQL string escaping independent of arbitrary key text/Unicode.
-    payload = jsonlite::toJSON(frame, dataframe = "values", digits = 17, na = "null")
-    encoded = gsub("[\r\n]", "", jsonlite::base64_enc(charToRaw(enc2utf8(payload))))
+    payload = json_lookup_rows(frame)
+    encoded = raw_to_base64(charToRaw(enc2utf8(payload)))
     if (nchar(encoded, type = "bytes") + 1024 > max_bytes) return(NULL)
-    fields = sprintf("CAST(item[%d] AS %s) AS %s", seq_along(frame) - 1L,
+    fields = sprintf(
+      "CAST(item[%d] AS %s) AS %s", seq_along(frame) - 1L,
       ifelse(vapply(frame, is.numeric, logical(1)), "DOUBLE", "STRING"),
-      DBI::dbQuoteIdentifier(conn, names(frame)))
-    return(paste0("SELECT ", paste(fields, collapse = ","),
+      DBI::dbQuoteIdentifier(conn, names(frame))
+    )
+    return(paste0(
+      "SELECT ", paste(fields, collapse = ","),
       " FROM explode(from_json(CAST(unbase64('", encoded, "') AS STRING), ",
-      "'ARRAY<ARRAY<STRING>>')) AS lookup(item)"))
+      "'ARRAY<ARRAY<STRING>>')) AS lookup(item)"
+    ))
   }
   fields = lapply(frame, function(x) {
     if (is.numeric(x)) {
@@ -105,4 +111,116 @@ sql_values_frame = function(conn, frame, max_bytes = 8 * 1024^2,
   if (sum(nchar(rows, type = "bytes")) + 3 * nrow(frame) > max_bytes) return(NULL)
   names = paste(DBI::dbQuoteIdentifier(conn, names(frame)), collapse = ",")
   paste0("SELECT * FROM VALUES ", paste0("(", rows, ")", collapse = ","), " AS lookup(", names, ")")
+}
+
+# Native Spark string parsing differs from DBI's standard quote doubling and
+# backslash handling. Base64 keeps arbitrary UTF-8 values out of that parser.
+# Other backends retain their DBI literal representation and native value type.
+sql_value_literals = function(conn, values) {
+  if (!length(values)) return(character())
+  # ODBC can quote logicals as 1/0, which Spark cannot use as booleans.
+  if (is.logical(values)) {
+    result = rep("NULL", length(values))
+    result[!is.na(values)] = ifelse(values[!is.na(values)], "TRUE", "FALSE")
+    return(result)
+  }
+  if (is.factor(values)) values = as.character(values)
+  if (is.numeric(values) && !inherits(values, "integer64")) {
+    valid = !is.na(values)
+    if (any(!is.finite(values[valid]))) stop("SQL factor levels must be finite or missing.", call. = FALSE)
+    result = rep("NULL", length(values))
+    result[valid] = dbglm_number(values[valid])
+    return(result)
+  }
+  if (is.character(values) && isTRUE(detect_backend(conn)[["is_databricks"]])) {
+    return(vapply(values, function(value) {
+      if (is.na(value)) return("CAST(NULL AS STRING)")
+      encoded = raw_to_base64(charToRaw(enc2utf8(value)))
+      paste0("CAST(unbase64('", encoded, "') AS STRING)")
+    }, character(1), USE.NAMES = FALSE))
+  }
+  as.character(DBI::dbQuoteLiteral(conn, values))
+}
+
+sql_factor_literals = function(conn, levels, classes = character()) {
+  result = lapply(names(levels), function(name) {
+    value = sql_value_literals(conn, levels[[name]])
+    # Spark's stacked category query returns exact integer text. Restore the
+    # numeric SQL type explicitly so comparison never promotes BIGINT to double.
+    if (is.character(levels[[name]])) {
+      type = switch(unname(classes[name]),
+        integer64 = "BIGINT",
+        integer = "DOUBLE",
+        numeric = "DOUBLE",
+        logical = "BOOLEAN",
+        Date = "DATE",
+        NULL
+      )
+      if (!is.null(type)) value = paste0("CAST(", value, " AS ", type, ")")
+    }
+    value
+  })
+  stats::setNames(result, names(levels))
+}
+
+# Bounded SQL lookup payloads need only UTF-8 strings and numeric arrays.
+raw_to_base64 = function(value) {
+  n = length(value)
+  if (!n) return("")
+  padding = (3L - n %% 3L) %% 3L
+  bytes = matrix(as.integer(c(value, raw(padding))), ncol = 3L, byrow = TRUE)
+  words = bytes[, 1L] * 65536L + bytes[, 2L] * 256L + bytes[, 3L]
+  alphabet = strsplit("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", "", fixed = TRUE)[[1L]]
+  indices = vapply(c(18L, 12L, 6L, 0L), function(shift) bitwAnd(bitwShiftR(words, shift), 63L) + 1L, integer(length(words)))
+  output = alphabet[as.vector(t(matrix(indices, ncol = 4L)))]
+  if (padding) output[length(output) - seq_len(padding) + 1L] = "="
+  paste0(output, collapse = "")
+}
+
+json_string = function(value) {
+  value = enc2utf8(value)
+  value = gsub("\\", "\\\\", value, fixed = TRUE)
+  value = gsub("\"", "\\\"", value, fixed = TRUE)
+  for (code in seq_len(31L)) {
+    value = gsub(intToUtf8(code), sprintf("\\u%04x", code), value, fixed = TRUE)
+  }
+  ifelse(is.na(value), "null", paste0("\"", value, "\""))
+}
+
+json_lookup_rows = function(frame) {
+  fields = lapply(frame, function(value) {
+    if (is.numeric(value) && !inherits(value, "integer64")) {
+      ifelse(is.na(value), "null", sprintf("%.17g", value))
+    } else if (is.logical(value)) {
+      ifelse(is.na(value), "null", ifelse(value, "true", "false"))
+    } else json_string(as.character(value))
+  })
+  rows = do.call(paste, c(fields, sep = ","))
+  paste0("[", paste0("[", rows, "]", collapse = ","), "]")
+}
+
+# Spark generates flat numeric arrays/objects, never nested user JSON. Parse
+# that deliberately narrow schema without adding a package dependency.
+read_numeric_json = function(value) {
+  value = trimws(value)
+  object = startsWith(value, "{") && endsWith(value, "}")
+  array = startsWith(value, "[") && endsWith(value, "]")
+  if (!object && !array) stop("Invalid numeric SQL payload.", call. = FALSE)
+  body = trimws(substr(value, 2L, nchar(value) - 1L))
+  if (!nzchar(body)) return(if (object) list() else numeric())
+  if (endsWith(body, ",")) stop("Invalid numeric SQL payload.", call. = FALSE)
+  fields = trimws(strsplit(body, ",", fixed = TRUE)[[1L]])
+  keys = NULL
+  if (object) {
+    valid = grepl("^\"[A-Za-z_][A-Za-z_0-9]*\"[[:space:]]*:", fields)
+    if (!all(valid)) stop("Invalid numeric SQL payload keys.", call. = FALSE)
+    keys = sub("^\"([A-Za-z_][A-Za-z_0-9]*)\"[[:space:]]*:.*$", "\\1", fields)
+    fields = trimws(sub("^\"[A-Za-z_][A-Za-z_0-9]*\"[[:space:]]*:", "", fields))
+  }
+  valid = grepl("^(null|-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?)$", fields)
+  if (!all(valid) || anyDuplicated(keys)) stop("Invalid numeric SQL payload values.", call. = FALSE)
+  result = rep(NA_real_, length(fields))
+  nonnull = fields != "null"
+  result[nonnull] = as.numeric(fields[nonnull])
+  if (object) stats::setNames(as.list(result), keys) else result
 }

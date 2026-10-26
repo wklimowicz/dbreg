@@ -23,8 +23,8 @@ the LHS (response variable) is ignored.}
 
 \item{table}{Table name or FROM clause}
 
-\item{expand}{Character: `"all"` expands factors and interactions, 
-`"interactions"` only expands interaction terms (factors in main effects 
+\item{expand}{Character: `"all"` expands factors and interactions,
+`"interactions"` only expands interaction terms (factors in main effects
 kept as-is for grouping)}
 
 \item{sep}{Character separator for interaction term names. Default is

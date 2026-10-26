@@ -365,7 +365,7 @@ dbreg(weight ~ Diet, data = ChickWeight)
 # Compare with lm
 summary(lm(weight ~ Diet, data = ChickWeight))$coefficients
 
-# Add "fixed effects" after a `|` 
+# Add "fixed effects" after a `|`
 dbreg(weight ~ Time | Diet, data = ChickWeight)
 
 # "robust" SEs can also be computed using a sufficient statistics approach

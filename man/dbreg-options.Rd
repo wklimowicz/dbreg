@@ -38,6 +38,56 @@ table write is costly, and \code{"join"} elsewhere.
 }
 }
 
+\section{Projection solvers and budgets}{
+
+Budgets bound compact FE summaries and matrix allocations. Exceeding a
+solver budget selects another supported projection method; it does not
+collect the observation-level dataset into R.
+\itemize{
+\item \code{dbreg.ap_solver}: \code{"auto"} (default), \code{"moments"}, or \code{"iterative"} selects
+the compact-moment solver or iterative SQL projection.
+\item \code{dbreg.duckdb_ap_method}: DuckDB SQL projection method, \code{"join"} (default)
+or \code{"cg"} for the bounded two-FE PCG solver. The general SQL AP cycle
+method is controlled separately by \code{dbreg.ap_method}.
+\item \code{dbreg.duckdb_ap_max_edges}: Maximum compact summary rows. Default \code{1e6}.
+\item \code{dbreg.duckdb_ap_max_entries}: Maximum FE design entries. Default \code{2e6}.
+\item \code{dbreg.ap_moment_max_cells}: Maximum transferred summary cells.
+Default \code{8e6}.
+\item \code{dbreg.glm_fe_dense_max}: Maximum levels in a dense FE system.
+Default \code{4096}.
+\item \code{dbreg.glm_fe_cross_max}: Maximum dense FE cross-product entries.
+Default \code{5e7}.
+\item \code{dbreg.projection_max_bytes}: Projection matrix memory budget in bytes.
+Default \code{512 * 1024^2} (512 MiB).
+\item \code{dbreg.spark_ap_chunk_cycles}: SQL AP cycles per Spark batch. Default \code{3}.
+}
+}
+
+\section{Design and retained prediction}{
+
+\itemize{
+\item \code{dbreg.i_max_columns}: Maximum total columns expanded by \code{i()} terms.
+Default \code{1000}.
+\item \code{dbreg.prediction_max_entries}: Matrix and dictionary entry budget for
+portable learned-effect prediction. Default \code{2e6}. Supported oversized
+one- or two-FE states can instead remain in their owning database session.
+}
+}
+
+\section{GLM diagnostics and Databricks transport}{
+
+\itemize{
+\item \code{dbreg.glm_databricks_lookup}: \code{"json"} (default) or \code{"values"} for bounded
+SQL coefficient/key lookups. Both preserve double precision and UTF-8 keys.
+\item \code{dbreg.glm_databricks_array_max_entries}: Maximum entries in a dense
+coefficient-array lookup. Default \code{65536}; larger lookups use joins.
+\item \code{dbreg.glm_databricks_materialize_intermediates}: Materialize intermediate
+GLM relations for diagnostic comparisons. Default \code{FALSE}.
+\item \code{dbreg.glm_trace}: Emit periodic inner projection diagnostics.
+Default \code{FALSE}.
+}
+}
+
 \examples{
 # Set an option for a block of code, then restore the previous value
 op = options(dbreg.ap_tol = 1e-8)

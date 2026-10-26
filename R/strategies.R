@@ -29,7 +29,7 @@ execute_moments_strategy = function(inputs) {
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
   register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
-  
+
   frame = build_base_frame(inputs, xvars_sql, xvar_names)
   moments_sql = frame_moments_sql(frame, yvar, xvar_names, conn)
 
@@ -54,10 +54,10 @@ execute_moments_strategy = function(inputs) {
   rss = fit[["rss"]]
   tss = moment_tss(S, yvar)
   df_res = n_total - p
-  
+
   # Compute meat matrix if needed (HC1 or cluster)
   meat = fit_meat(fit, frame, yvar, inputs)
-  
+
   vcov_mat = compute_vcov(
     ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
@@ -93,10 +93,10 @@ execute_moments_strategy = function(inputs) {
 }
 
 #' Execute demean strategy (1+ fixed effects)
-#' 
-#' Double demeaning / within estimator. Gives identical coefficients to 
+#'
+#' Double demeaning / within estimator. Gives identical coefficients to
 #' fixed effects regression.
-#' 
+#'
 #' @keywords internal
 execute_demean_strategy = function(inputs) {
   env2env(
@@ -122,7 +122,7 @@ execute_demean_strategy = function(inputs) {
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
   register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
-  
+
   frame = build_demean_frame(inputs, xvars_sql, xvar_names)
   if (inherits(frame, "dbreg_query_plan")) return(frame)
   on.exit(frame[["cleanup"]](), add = TRUE)
@@ -155,17 +155,17 @@ execute_demean_strategy = function(inputs) {
   n_fe = length(fe)
   df_fe = linear_fe_df(inputs, n_fe_levels)
   df_res = n_total - p_kept - df_fe
-  
+
   # Compute meat matrix if needed (HC1 or cluster)
   meat = fit_meat(fit, frame, yvar, inputs)
-  n_params_cluster = p_kept + df_fe - if (ssc[["K.fixef"]] == "none") fe_intercept_df(n_fe_levels) else 0  # K for CR1 correction
+  n_params_cluster = p_kept + df_fe - if (ssc[["K.fixef"]] == "none") fe_intercept_df(n_fe_levels) else 0 # K for CR1 correction
   if (vcov_type_req == "cluster") {
     # For ssc = "nested", exclude nested FE levels from K
     if (ssc[["K.fixef"]] == "nonnested") {
       n_params_cluster = p_kept + df_fe - nested_fe_df(inputs)
     }
   }
-  
+
   vcov_mat = compute_vcov(
     ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
@@ -199,9 +199,9 @@ execute_demean_strategy = function(inputs) {
     compression_ratio_est = compression_ratio_est,
     df_residual = df_res,
     n_fe_levels = n_fe_levels,
-    ap_iterations = frame$ap_res$iterations,
-    ap_max_abs = frame$ap_res$max_abs,
-    ap_method = frame$ap_res$method
+    ap_iterations = frame[["ap_res"]][["iterations"]],
+    ap_max_abs = frame[["ap_res"]][["max_abs"]],
+    ap_method = frame[["ap_res"]][["method"]]
   )
 }
 
@@ -240,7 +240,7 @@ execute_mundlak_strategy = function(inputs) {
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
   register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
-  
+
   weights_expr_base = sql_weight_expr(weights)
   weights_expr_aug = if (is.null(weights)) NULL else sql_weight_expr("weights")
 
@@ -415,15 +415,19 @@ execute_compress_strategy = function(inputs) {
   composite_columns = unique(unlist(inputs[["composite_fes"]], use.names = FALSE))
   trends = as.character(unique(unlist(inputs[["fe_slopes"]], use.names = FALSE)))
   trend_aliases = if (length(trends)) safe_identifiers(paste0("dbreg_compress_trend", seq_along(trends), "__"),
-    taken = c(xvars, fe, yvar, weights, inputs[["cluster_var"]], composite_columns,
-      trends, inputs[["row_id_safe"]], inputs[["retained_key_safe"]])) else character()
+    taken = c(
+      xvars, fe, yvar, weights, inputs[["cluster_var"]], composite_columns,
+      trends, inputs[["row_id_safe"]], inputs[["retained_key_safe"]]
+    )
+  ) else character()
   trend_sources = stats::setNames(trends, trend_aliases)
   nuisance = unlist(lapply(seq_along(fe), function(i) {
     slopes = inputs[["fe_slopes"]][[i]]
     if (length(slopes)) paste(fe[i], trend_aliases[match(slopes, trends)], sep = ":") else character()
   }), use.names = FALSE)
   if (length(trends)) inputs[["name_map"]] = c(inputs[["name_map"]], stats::setNames(
-    coef_var_name(restore_names(trends, inputs[["source_map"]])), trend_aliases))
+    coef_var_name(restore_names(trends, inputs[["source_map"]])), trend_aliases
+  ))
   # catch for sampled (limited) queries
   if (grepl("LIMIT\\s+\\d+\\s*$", from_statement, ignore.case = TRUE)) {
     from_statement = glue("FROM (SELECT * {from_statement})")
@@ -433,7 +437,7 @@ execute_compress_strategy = function(inputs) {
   if (isTRUE(has_interactions) || length(inputs[["factor_refs"]])) {
     # Extract table name from FROM statement for sql_model_matrix
     table_ref = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
-    
+
     # Get SQL expansions for RHS terms (expand interactions only, keep main effects as-is)
     sql_design = sql_model_matrix(
       fml,
@@ -444,7 +448,7 @@ execute_compress_strategy = function(inputs) {
       intercept = intercept,
       factor_refs = inputs[["factor_refs"]]
     )
-    
+
     # Build SELECT expressions with aliases
     select_exprs = paste0(sql_design[["select_exprs"]], " AS ", sql_design[["aliases"]])
     xvars_sql = paste(select_exprs, collapse = ", ")
@@ -453,18 +457,21 @@ execute_compress_strategy = function(inputs) {
     # Both the compression and clustered score passes must read the expanded
     # columns. Aliases from a SELECT list do not exist in the original source.
     projection = frame_select(yvar, sql_design[["select_exprs"]], xvar_names,
-      id_cols = setdiff(fe, c(yvar, xvar_names)), extra = c(weights, inputs[["cluster_var"]], composite_columns, trends))
-    from_statement = paste0("FROM (SELECT ", paste(projection, collapse = ", "),
-      " ", from_statement, ") dbreg_compress_design")
+      id_cols = setdiff(fe, c(yvar, xvar_names)), extra = c(weights, inputs[["cluster_var"]], composite_columns, trends)
+    )
+    from_statement = paste0(
+      "FROM (SELECT ", paste(projection, collapse = ", "),
+      " ", from_statement, ") dbreg_compress_design"
+    )
     xvars_sql = paste(xvar_names, collapse = ", ")
   } else {
     xvars_sql = paste(xvars, collapse = ", ")
     xvar_names = xvars
   }
-  
+
   # FE columns (no expansion needed - used for grouping)
   fe_sql = if (length(fe)) paste(fe, collapse = ", ") else NULL
-  
+
   # Combined columns for SELECT and GROUP BY
   all_cols_sql = if (!is.null(fe_sql)) paste(xvars_sql, fe_sql, sep = ", ") else xvars_sql
   extra_components = setdiff(composite_columns, c(xvar_names, fe))
@@ -529,8 +536,10 @@ execute_compress_strategy = function(inputs) {
         exact_numeric_factor(compressed_dat[[f]])
     }
   }
-  numeric_i = vapply(Filter(function(spec) identical(spec[["source_type"]], "numeric"),
-    inputs[["i_specs"]]), `[[`, character(1), "first")
+  numeric_i = vapply(Filter(
+    function(spec) identical(spec[["source_type"]], "numeric"),
+    inputs[["i_specs"]]
+  ), `[[`, character(1), "first")
   for (nm in intersect(names(inputs[["factor_levels"]]), names(compressed_dat))) {
     if (!nm %in% fe && restore_names(nm, inputs[["source_map"]]) %in% numeric_i) next
     previous = compressed_dat[[nm]]
@@ -566,10 +575,14 @@ execute_compress_strategy = function(inputs) {
   trend_centers = vapply(matrix_data[trend_aliases], function(value) min(value) / 2 + max(value) / 2, numeric(1))
   for (alias in trend_aliases) matrix_data[[alias]] = matrix_data[[alias]] - trend_centers[[alias]]
   X = fitted_model_matrix(matrix_formula, matrix_data)
-  numeric_sql = if (length(trends)) stats::setNames(paste0("(", sql_cast_double(trends, conn), "-(",
-    dbglm_number(trend_centers), "))"), trend_aliases) else character()
-  score_expressions = if (vcov_type_req == "cluster") compressed_score_expressions(conn, matrix_formula,
-    matrix_data, X, c(compressed_classes, stats::setNames(rep("numeric", length(trends)), trend_aliases)), numeric_sql)
+  numeric_sql = if (length(trends)) stats::setNames(paste0(
+    "(", sql_cast_double(trends, conn), "-(",
+    dbglm_number(trend_centers), "))"
+  ), trend_aliases) else character()
+  score_expressions = if (vcov_type_req == "cluster") compressed_score_expressions(
+    conn, matrix_formula,
+    matrix_data, X, c(compressed_classes, stats::setNames(rep("numeric", length(trends)), trend_aliases)), numeric_sql
+  )
   slope_terms = match(design_vars, attr(terms(matrix_formula), "term.labels"))
   slope_names = standardize_coef_names(colnames(X)[attr(X, "assign") %in% slope_terms])
   if (ncol(X) == 0) {
@@ -581,7 +594,8 @@ execute_compress_strategy = function(inputs) {
   numeric_terms = which(vapply(c(design_vars, fe), function(name)
     is.numeric(compressed_dat[[name]]) && !is.factor(compressed_dat[[name]]), logical(1)))
   S = compressed_cross_moments(X, compressed_dat, yvar,
-    center_columns = which(attr(X, "assign") %in% numeric_terms))
+    center_columns = which(attr(X, "assign") %in% numeric_terms)
+  )
   ordinary = colnames(X)[attr(X, "assign") %in% slope_terms]
   absorbed = compressed_slope_rank(X, matrix_data, inputs, ordinary, trend_sources)
   fit = fit_ols(S, yvar, setdiff(colnames(X), absorbed), drop_collinear = TRUE, verbose = verbose)
@@ -598,7 +612,7 @@ execute_compress_strategy = function(inputs) {
   sum_wy = compressed_dat[["sum_wy"]]
   sum_wy_sq = compressed_dat[["sum_wy_sq"]]
   rss_g = sum_wy_sq - 2 * yhat * sum_wy + sum_w * (yhat^2)
-  rss_total = sum(rss_g)*weight_scale
+  rss_total = sum(rss_g) * weight_scale
   # Use the same declared FE-count policy as the within estimator. A dummy
   # matrix can have extra rank deficiencies on disconnected/nested graphs;
   # its numerical rank must not silently select a different SSC convention.
@@ -613,12 +627,12 @@ execute_compress_strategy = function(inputs) {
   sum_wy_total = sum(compressed_dat[["sum_wy"]])
   sum_wy_sq_total = sum(compressed_dat[["sum_wy_sq"]])
   sum_w_total = sum(compressed_dat[["sum_w"]])
-  tss = (sum_wy_sq_total - (sum_wy_total^2 / sum_w_total))*weight_scale
-  
+  tss = (sum_wy_sq_total - (sum_wy_total^2 / sum_w_total)) * weight_scale
+
   # Cluster cross-products stay in SQL, even for observation-sized groups.
   meat = NULL
   n_params_cluster = n_params_full - if (ssc[["K.fixef"]] == "none" && length(fe))
-    fe_intercept_df(vapply(compressed_dat[fe], nlevels, integer(1))) else 0  # K for CR1 correction
+    fe_intercept_df(vapply(compressed_dat[fe], nlevels, integer(1))) else 0 # K for CR1 correction
   if (vcov_type_req == "hc1" && !is.null(weights)) {
     sum_w2 = compressed_dat[["sum_w2"]]
     sum_w2y = compressed_dat[["sum_w2y"]]
@@ -627,16 +641,18 @@ execute_compress_strategy = function(inputs) {
     meat = crossprod(score_X, Diagonal(x = as.numeric(rss_g_w2)) %*% score_X)
   }
   if (vcov_type_req == "cluster") {
-    score_frame = list(cte_sql = paste0("WITH dbreg_compress_scores AS (SELECT * ", from_statement, ")"),
+    score_frame = list(
+      cte_sql = paste0("WITH dbreg_compress_scores AS (SELECT * ", from_statement, ")"),
       cte_name = "dbreg_compress_scores", weights_expr = sql_weight_expr(weights),
-      cols = c(setNames(sql_cast_double(yvar, conn), yvar), score_expressions))
+      cols = c(setNames(sql_cast_double(yvar, conn), yvar), score_expressions)
+    )
     meat = fit_meats(list(fit), score_frame, yvar, inputs)[[1L]]
     # For ssc = "nested", exclude nested FE levels from K
     if (ssc[["K.fixef"]] == "nonnested") {
       n_params_cluster = n_params_full - nested_fe_df(inputs, from_statement)
     }
   }
-  
+
   if (!is.null(meat)) attr(meat, "weight_scale") = weight_scale
   if (vcov_type_req == "hc1" && is.null(meat)) {
     meat = crossprod(score_X, Diagonal(x = as.numeric(rss_g)) %*% score_X)
@@ -667,8 +683,10 @@ execute_compress_strategy = function(inputs) {
   return(
     list(
       coeftable = coeftable,
-      compressed_design = list(formula = matrix_formula, trend_sources = trend_sources, trend_centers = trend_centers,
-        source_names = names(compressed_dat), columns = colnames(X)),
+      compressed_design = list(
+        formula = matrix_formula, trend_sources = trend_sources, trend_centers = trend_centers,
+        source_names = names(compressed_dat), columns = colnames(X)
+      ),
       data = restore_compressed_data(compressed_dat),
       vcov = vcov_mat,
       fml = fml,
@@ -691,13 +709,13 @@ execute_compress_strategy = function(inputs) {
 }
 
 #' Degrees of freedom of FE variables nested within cluster variable
-#' 
+#'
 #' For ssc = "nested", we exclude an FE's parameters from K if the FE is nested
 #' within the cluster variable (i.e., each FE value belongs to exactly one
 #' cluster). Matching fixest, each nested FE contributes G - 1 parameters (its
 #' levels less one for the absorbed intercept), so the result is
 #' sum(G_j - 1) over nested FEs.
-#' 
+#'
 #' @keywords internal
 nested_fe_df = function(inputs, from_statement = inputs[["from_statement"]]) {
   env2env(inputs, environment(), c("conn", "fe", "cluster_var"))

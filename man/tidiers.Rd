@@ -34,7 +34,9 @@ Default is `FALSE`.}
 \item{collin}{Include regressors removed for collinearity with `NA` values?}
 
 \item{vcov, cluster, ssc}{Optional covariance request, as in [summary.dbreg()].
-`vcov` may also be a numeric covariance matrix for the fitted coefficients.}
+`vcov` may also be a numeric covariance matrix for the fitted coefficients.
+With duplicate coefficient names, supplied matrix axes must be in fitted
+order; only uniquely named matrices can be reordered automatically.}
 
 \item{...}{Additional arguments to tidying method. Currently unused except to
 handle superseded arguments.}

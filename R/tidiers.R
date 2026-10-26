@@ -23,6 +23,8 @@ generics::tidy
 #' @param collin Include regressors removed for collinearity with `NA` values?
 #' @param vcov,cluster,ssc Optional covariance request, as in [summary.dbreg()].
 #'   `vcov` may also be a numeric covariance matrix for the fitted coefficients.
+#'   With duplicate coefficient names, supplied matrix axes must be in fitted
+#'   order; only uniquely named matrices can be reordered automatically.
 #' @param ... Additional arguments to tidying method. Currently unused except to
 #' handle superseded arguments.
 #' @examples
@@ -44,9 +46,12 @@ tidy.dbreg = function(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE,
       stop("`vcov` must be a finite symmetric covariance matrix for the fitted coefficients.", call. = FALSE)
     }
     if (is.null(dimnames(vcov))) dimnames(vcov) = list(names, names)
-    if (!setequal(rownames(vcov), names) || !setequal(colnames(vcov), names)) stop("Covariance names must match fitted coefficients.", call. = FALSE)
+    if (!identical(sort(rownames(vcov)), sort(names)) || !identical(sort(colnames(vcov)), sort(names))) stop("Covariance names must match fitted coefficients.", call. = FALSE)
     df = attr(vcov, "df.t")
-    vcov = vcov[names, names, drop = FALSE]
+    if (!identical(rownames(vcov), names) || !identical(colnames(vcov), names)) {
+      if (anyDuplicated(names)) stop("Duplicate coefficient names require covariance axes in fitted order.", call. = FALSE)
+      vcov = vcov[names, names, drop = FALSE]
+    }
     attr(vcov, "df.t") = if (is.null(df)) x[["df_t"]] else df
     x[["coeftable"]] = inference_coeftable(x, vcov)
   } else if (!is.null(vcov) || !is.null(cluster) || !is.null(ssc)) {
@@ -73,27 +78,34 @@ tidy.dbreg = function(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE,
     }
   }
   if (isTRUE(collin)) {
-    terms = names(coef(x, fe = fe, collin = TRUE))
+    coefficients = coef(x, fe = fe, collin = TRUE)
+    terms = names(coefficients)
     out = data.frame(
       term = terms,
-      estimate = NA_real_,
-      std.error = NA_real_,
-      statistic = NA_real_,
-      p.value = NA_real_,
+      estimate = rep(NA_real_, length(terms)),
+      std.error = rep(NA_real_, length(terms)),
+      statistic = rep(NA_real_, length(terms)),
+      p.value = rep(NA_real_, length(terms)),
       row.names = NULL
     )
-    matched = match(terms, rownames(ct))
+    estimated = which(!is.na(coefficients))
+    if (identical(terms[estimated], rownames(ct))) {
+      matched = rep(NA_integer_, length(terms))
+      matched[estimated] = seq_len(nrow(ct))
+    } else matched = match(terms, rownames(ct))
     present = !is.na(matched)
     out[present, colnames(ct)] = ct[matched[present], , drop = FALSE]
   } else {
     out = data.frame(term = rownames(ct), ct, row.names = NULL)
+    matched = seq_len(nrow(ct))
   }
 
   if (isTRUE(conf.int)) {
     ci = if (custom) inference_confint(x, vcov, NULL, conf.level) else confint(x, level = conf.level, fe = fe)
-    ci_match = match(out[["term"]], rownames(ci))
-    out[["conf.low"]] = ifelse(is.na(ci_match), NA_real_, ci[ci_match, 1])
-    out[["conf.high"]] = ifelse(is.na(ci_match), NA_real_, ci[ci_match, 2])
+    ci_positions = if (identical(rownames(ct), rownames(ci))) seq_len(nrow(ct)) else match(rownames(ct), rownames(ci))
+    ci_match = ci_positions[matched]
+    out[["conf.low"]] = unname(ci[ci_match, 1])
+    out[["conf.high"]] = unname(ci[ci_match, 2])
   }
 
   return(out)

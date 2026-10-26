@@ -534,9 +534,14 @@ predict_retained_sample = function(object, type = "link", sample = c("estimation
   ), class = "dbreg_prediction")
 }
 
-inference_coeftable = function(object, V, distribution = NULL) {
+inference_coefficients = function(object, V) {
   beta = stats::coef(object)
   if (!identical(names(beta), rownames(V))) beta = beta[rownames(V)]
+  beta
+}
+
+inference_coeftable = function(object, V, distribution = NULL) {
+  beta = inference_coefficients(object, V)
   se = sqrt(Matrix::diag(V))
   statistic = beta / se
   normal = if (is.null(distribution)) inherits(object, "dbglm") && object[["family"]][["family"]] %in% c("binomial", "poisson") else distribution == "normal"
@@ -592,14 +597,14 @@ print.summary.dbglm = print.summary.dbreg
 
 inference_confint = function(object, V, parm, level) {
   if (!is.numeric(level) || length(level) != 1L || !is.finite(level) || level <= 0 || level >= 1) stop("level must lie between zero and one.", call. = FALSE)
-  beta = stats::coef(object)[rownames(V)]
-  if (is.null(parm)) parm = names(beta)
-  if (is.numeric(parm)) parm = names(beta)[parm]
-  if (anyNA(parm) || any(!parm %in% names(beta))) stop("Unknown coefficient in parm.", call. = FALSE)
+  beta = inference_coefficients(object, V)
+  indices = if (is.null(parm)) seq_along(beta) else if (is.numeric(parm)) seq_along(beta)[parm] else match(parm, names(beta))
+  if (anyNA(indices)) stop("Unknown coefficient in parm.", call. = FALSE)
   normal = inherits(object, "dbglm") && object[["family"]][["family"]] %in% c("binomial", "poisson")
   probabilities = c((1 - level) / 2, (1 + level) / 2)
   critical = if (normal) stats::qnorm(probabilities) else stats::qt(probabilities, attr(V, "df.t"))
-  answer = outer(sqrt(diag(V))[parm], critical) + beta[parm]
+  answer = outer(sqrt(Matrix::diag(V))[indices], critical) + beta[indices]
+  rownames(answer) = names(beta)[indices]
   colnames(answer) = paste0(format(100 * probabilities), " %")
   answer
 }

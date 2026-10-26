@@ -790,13 +790,8 @@ build_model_spec = function(formula, conn, table, fe_vars = character(),
 }
 
 evaluate_model_spec = function(model_spec, newdata) {
-  aliases = model_spec[["columns"]][["alias"]]
-  if (all(aliases %in% names(newdata))) {
-    alias_data = model_matrix_data(~., newdata[, aliases, drop = FALSE])
-    matrix = Matrix::Matrix(as.matrix(alias_data), sparse = TRUE)
-    colnames(matrix) = aliases
-    return(matrix)
-  }
+  # Public newdata always contains source variables. Extra columns must never
+  # bypass the fitted formula merely by matching generated SQL aliases.
   missing_vars = setdiff(model_spec[["source_vars"]], names(newdata))
   if (length(missing_vars)) {
     stop(

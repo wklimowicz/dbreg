@@ -1,5 +1,15 @@
 # dbreg (development version)
 
+- FE binscatter keeps explicit level coefficients and covariance under automatic
+  strategy selection. Generated bin and spline names avoid source columns,
+  including after restoring public coefficient names.
+- GLM prediction reconstructs the fitted formula even when newdata contains
+  columns matching internal SQL aliases. OLS prediction intervals honor the
+  covariance's testing degrees of freedom while retaining residual degrees of
+  freedom for prediction-noise variance.
+- Native validation uses one checked suite inventory shared by tests, its runner
+  and CI; `--list-suites` validates it without connecting to a database.
+
 - Direct SQLite and PostgreSQL connections are no longer supported; their
   dialect branches, optional dependency and backend tests have been removed.
 

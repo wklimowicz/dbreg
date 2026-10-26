@@ -4,7 +4,16 @@
 \alias{safe_source}
 \title{Give model variables SQL-safe names at the source}
 \usage{
-safe_source(conn, from_statement, vars)
+safe_source(conn, from_statement, vars, reserved = character())
+}
+\arguments{
+\item{conn}{A DBI connection.}
+
+\item{from_statement}{SQL FROM clause for the source.}
+
+\item{vars}{Source variable names.}
+
+\item{reserved}{Additional identifiers reserved by the calling algorithm.}
 }
 \value{
 List with:

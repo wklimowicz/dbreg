@@ -37,10 +37,11 @@ jobs:
         run: |
           python - <<'PY'
           import json, os, pathlib, re
-          text = pathlib.Path('.github/scripts/run-databricks-tests.R').read_text()
-          block = re.search(r'suites = c\((.*?)\)\n', text, re.S).group(1)
-          suites = re.findall(r'"(test_[a-z_]+\.R)"', block)
+          directory = pathlib.Path('inst/tinytest')
+          suites = (directory/'native-suites.txt').read_text().splitlines()
           assert suites and len(suites) == len(set(suites))
+          assert all(re.fullmatch(r'test_[a-z_]+\.R', name) for name in suites)
+          assert all((directory/name).is_file() for name in suites)
           targets = ['smoke'] if os.environ['GITHUB_EVENT_NAME'] == 'push' else suites
           with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
               stream.write('targets=' + json.dumps(targets) + '\n')

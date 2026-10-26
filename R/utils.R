@@ -601,6 +601,10 @@ rename_expr_vars = function(e, map) {
 #' Wraps `from_statement` in a subquery that selects `vars`, quoting (via
 #' [glue::glue_sql()]) and aliasing any that are not safe identifiers.
 #' If every variable is already safe, the source is returned unchanged.
+#' @param conn A DBI connection.
+#' @param from_statement SQL FROM clause for the source.
+#' @param vars Source variable names.
+#' @param reserved Additional identifiers reserved by the calling algorithm.
 #'
 #' @return List with:
 #'   - `from_statement`: the (possibly wrapped) FROM clause, and `table`, the
@@ -611,11 +615,11 @@ rename_expr_vars = function(e, map) {
 #'     formulas for `to_safe()`) between the two. Identity if nothing was
 #'     renamed.
 #' @keywords internal
-safe_source = function(conn, from_statement, vars) {
+safe_source = function(conn, from_statement, vars, reserved = character()) {
   vars = unique(vars[!is.na(vars) & nzchar(vars)])
   # Cell summaries use these aliases independently of source variables.
   # Reserve them before strategy selection, including automatic compression.
-  reserved = c(
+  reserved = c(reserved,
     "n", "sum_w", "sum_wy", "sum_wy_sq", "sum_w2", "sum_w2y",
     "sum_w2y_sq", "sum_w_gc", "sum_wy_gc", "mean_Y", "wts",
     "dbreg_cell_center__", "dbreg_cell_scale__"

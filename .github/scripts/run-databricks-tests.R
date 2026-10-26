@@ -1,11 +1,40 @@
 # Called from the repository root by CI or `make test-databricks`.
 # Missing credentials/driver or an empty suite fails; it never counts as a pass.
 # Optional arguments: output directory, then known suite filenames or --group NAME.
+# --list-suites validates and lists the inventory without credentials or a driver.
 local({
   # A single top-level expression is parsed before any long-running test starts.
   # Source hashes below still reject edits, without incremental Rscript parsing.
   args = commandArgs(TRUE)
   out = if (length(args)) args[[1]] else file.path(tempdir(), "dbreg-databricks-validation")
+  suites = readLines("inst/tinytest/native-suites.txt")
+  if (!length(suites) || anyDuplicated(suites) || any(!grepl("^test_[a-z_]+[.]R$", suites)) ||
+      any(!file.exists(file.path("inst/tinytest", suites)))) {
+    stop("Invalid native suite inventory: every entry must name a unique existing test file.", call. = FALSE)
+  }
+  if (identical(args, "--list-suites")) {
+    writeLines(suites)
+    return(invisible(NULL))
+  }
+
+  groups = list(
+    `glm-core` = c("test_glm_databricks_live.R", "test_glm_databricks_sample.R", "test_glm_fractional_live.R", "test_gaussian_live.R"),
+    `glm-stress` = c("test_fe_edges_live.R", "test_glm_stress_live.R", "test_glm_separation_live.R", "test_glm_wide_live.R"),
+    prediction = suites[grepl("prediction", suites)])
+  groups[["linear-inference"]] = setdiff(suites, unlist(groups, use.names = FALSE))
+  stopifnot(!anyDuplicated(unlist(groups)), setequal(unlist(groups), suites))
+  groups[["smoke"]] = c("test_projection_transport_live.R", "test_glm_smoke_live.R", "test_ap_moments_live.R", "test_sql_weights_live.R")
+  if (length(args) > 1L) {
+    requested = args[-1L]
+    if (length(requested) == 2L && requested[[1L]] == "--group") {
+      if (!requested[[2L]] %in% names(groups)) stop("Unknown native suite group.", call. = FALSE)
+      requested = groups[[requested[[2L]]]]
+    }
+    if (anyDuplicated(requested) || any(!requested %in% suites)) {
+      stop("Specify unique known native suite filenames or --group NAME after the output directory.", call. = FALSE)
+    }
+    suites = requested
+  }
   required = c("DATABRICKS_HOST", "DATABRICKS_TOKEN", "DATABRICKS_SQL_PATH")
   missing = required[!nzchar(Sys.getenv(required))]
   if (length(missing)) stop("Missing Databricks configuration: ", paste(missing, collapse = ", "), call. = FALSE)
@@ -25,29 +54,6 @@ local({
     list.files("R", full.names = TRUE), list.files("inst/tinytest", full.names = TRUE))
   hashes = tools::md5sum(sources)
   write.csv(data.frame(file = names(hashes), md5 = unname(hashes)), file.path(out, "source-md5.csv"), row.names = FALSE)
-  suites = c("test_glm_smoke_live.R", "test_projection_transport_live.R", "test_glm_databricks_live.R", "test_glm_databricks_sample.R", "test_fe_edges_live.R",
-    "test_ap_moments_live.R", "test_glm_stress_live.R", "test_glm_separation_live.R", "test_glm_wide_live.R", "test_linear_design_live.R",
-    "test_glm_fractional_live.R", "test_sample_identity_live.R", "test_prediction_state_live.R", "test_prediction_snapshot_live.R",
-    "test_linear_prediction_live.R", "test_database_prediction_live.R", "test_database_two_fe_live.R", "test_sql_prediction_live.R", "test_sql_prediction_fe_only_live.R",
-    "test_sql_prediction_keys_live.R", "test_sql_prediction_tails_live.R", "test_retained_inference_live.R", "test_inference_numerics_live.R", "test_linear_offset_live.R", "test_gaussian_live.R", "test_compat_api_live.R", "test_formula_i_live.R", "test_sql_weights_live.R", "test_review_numerics_live.R")
-  groups = list(
-    `glm-core` = c("test_glm_databricks_live.R", "test_glm_databricks_sample.R", "test_glm_fractional_live.R", "test_gaussian_live.R"),
-    `glm-stress` = c("test_fe_edges_live.R", "test_glm_stress_live.R", "test_glm_separation_live.R", "test_glm_wide_live.R"),
-    prediction = suites[grepl("prediction", suites)])
-  groups[["linear-inference"]] = setdiff(suites, unlist(groups, use.names = FALSE))
-  stopifnot(!anyDuplicated(unlist(groups)), setequal(unlist(groups), suites))
-  groups[["smoke"]] = c("test_projection_transport_live.R", "test_glm_smoke_live.R", "test_ap_moments_live.R", "test_sql_weights_live.R")
-  if (length(args) > 1L) {
-    requested = args[-1L]
-    if (length(requested) == 2L && requested[[1L]] == "--group") {
-      if (!requested[[2L]] %in% names(groups)) stop("Unknown native suite group.", call. = FALSE)
-      requested = groups[[requested[[2L]]]]
-    }
-    if (anyDuplicated(requested) || any(!requested %in% suites)) {
-      stop("Specify unique known native suite filenames or --group NAME after the output directory.", call. = FALSE)
-    }
-    suites = requested
-  }
   records = list()
   core_sources = c("DESCRIPTION", "NAMESPACE", list.files("R", full.names = TRUE))
   loaded_core = tools::md5sum(core_sources)

@@ -63,7 +63,8 @@
 #'   Default is 500. Only used when `cb = TRUE`.
 #' @param strategy Acceleration strategy passed to \code{\link{dbreg}}.
 #'   `"auto"` (the default) selects a strategy from the bin design's cardinality;
-#'   `"compress"` explicitly requests cell aggregation.
+#'   `"compress"` explicitly requests cell aggregation. With fixed effects,
+#'   `"auto"` uses compression to retain level coefficients and their covariance.
 #'   Ignored when smoothness `s > 0`, since spline basis construction requires
 #'   row-level data (i.e., no pre-aggregation).
 #' @param plot Logical. If `TRUE` (default), a plot is produced as a side effect.
@@ -420,7 +421,14 @@ dbbinsreg = function(
   on.exit(release_db_setup(conn, conn_managed, registered_table), add = TRUE)
 
   # Give model variables SQL-safe names (see safe_source()); mapped back at the end
-  src = safe_source(conn, paste("FROM", table_name), c(y_name, x_name, controls, fe, cluster_var))
+  source_vars = unique(c(y_name, x_name, controls, fe, cluster_var))
+  # Reserve algorithm-generated names in both the SQL bin and spline paths.
+  # Only matching source names need reserving, independent of bin count/degree.
+  reserved = source_vars[grepl(
+    "^(bin[0-9]*|u[0-9]*(_[0-9]+)?|x[0-9]+_spline|knot[0-9]+_pow[0-9]+|x_left|x_right|x_mid|x_mean|h)$",
+    source_vars, ignore.case = TRUE
+  )]
+  src = safe_source(conn, paste("FROM", table_name), source_vars, reserved = reserved)
   table_name = src[["table"]]
   name_map = src[["map"]]
   to_safe = src[["to_safe"]]
@@ -586,7 +594,7 @@ dbbinsreg = function(
       "conn", "table_name", "sampled_table_name", "y_name", "x_name", "degree",
       "smooth", "controls", "fe", "cluster_var", "partition_method", "breaks",
       "ci", "cb", "nsims", "vcov", "alpha", "strategy", "sample_fit",
-      "n_rows_orig", "verbose", "linegrid", "points_on", "line_on", "binspos",
+      "n_rows_orig", "verbose", "linegrid", "points_on", "line_on", "binspos", "source_vars",
       "plot"
     )
   )
@@ -628,7 +636,22 @@ dbbinsreg = function(
     result[["opt"]][["y_var"]] = restore_names(result[["opt"]][["y_var"]], name_map)
     result[["opt"]][["formula"]] = rename_expr_vars(result[["opt"]][["formula"]], name_map)
     # A single fit, or separate points/line fits
-    restore_fit = function(fit) restore_result_names(fit, list(name_map = name_map, source_map = name_map))
+    restore_fit = function(fit) {
+      coefficient_names = rownames(fit[["coeftable"]])
+      fit = restore_result_names(fit, list(name_map = name_map, source_map = name_map))
+      fit[["fe_labels"]] = restore_names(fit[["fe_labels"]], name_map)
+      for (field in c("factor_levels", "factor_classes")) {
+        if (length(fit[[field]])) names(fit[[field]]) = restore_names(names(fit[[field]]), name_map)
+      }
+      design = fit[["compressed_design"]]
+      if (!is.null(design)) {
+        names(design[["source_names"]]) = restore_names(names(design[["source_names"]]), name_map)
+        design[["columns"]] = restore_names(design[["columns"]],
+          stats::setNames(rownames(fit[["coeftable"]]), coefficient_names))
+        fit[["compressed_design"]] = design
+      }
+      fit
+    }
     model = result[["model"]]
     if (!is.null(model[["coeftable"]])) {
       result[["model"]] = restore_fit(model)
@@ -987,15 +1010,25 @@ execute_unconstrained_binsreg = function(inputs) {
   geo = geo[geo[["n"]] >= degree + 1L & (degree == 0L | geo[["x_right"]] > geo[["x_left"]]), , drop = FALSE]
   if (!nrow(geo)) stop("No bins have enough distinct observations for the requested degree.", call. = FALSE)
   present_bins = geo[["bin"]]
+  # Keep generated coefficient names distinct from original source names too,
+  # so restoring display names cannot create duplicate model coefficients.
+  labels = unlist(lapply(present_bins, function(bin) c(
+    paste0("bin", bin), if (degree > 0L) paste0(ifelse(seq_len(degree) == 1L, "u", paste0("u", seq_len(degree))), "_", bin)
+  )), use.names = FALSE)
+  aliases = stats::setNames(safe_identifiers(labels,
+    taken = unique(c(inputs[["source_vars"]], inputs[["y_name"]], x, inputs[["controls"]], inputs[["fe"]], inputs[["cluster_var"]])),
+    fold_case = folds_identifier_case(conn)
+  ), labels)
+  inputs[["basis_aliases"]] = aliases
   fields = "dbreg_bins.*"
   basis = character()
   for (i in seq_len(nrow(geo))) {
     bin = geo[["bin"]][[i]]
-    name = paste0("bin", bin)
+    name = aliases[[paste0("bin", bin)]]
     fields = c(fields, sprintf("CASE WHEN bin=%d THEN 1.0 ELSE 0.0 END AS %s", bin, name))
     basis = c(basis, name)
     if (degree > 0L) for (power in seq_len(degree)) {
-      name = paste0(if (power == 1L) "u" else paste0("u", power), "_", bin)
+      name = aliases[[paste0(if (power == 1L) "u" else paste0("u", power), "_", bin)]]
       u = paste0(
         "((", sql_cast_double(x, conn), "-(", dbglm_number(geo[["x_left"]][[i]]), "))/",
         dbglm_number(geo[["x_right"]][[i]] - geo[["x_left"]][[i]]), ")"
@@ -1014,7 +1047,7 @@ execute_unconstrained_binsreg = function(inputs) {
   fe = inputs[["fe"]]
   # The full bin partition spans a constant. Represent it explicitly so the
   # shared estimator can center the outcome, including after a large shift.
-  reference_bin = paste0("bin", present_bins[[1L]])
+  reference_bin = aliases[[paste0("bin", present_bins[[1L]])]]
   fml_rhs = paste(c("1", setdiff(basis, reference_bin)), collapse = " + ")
 
   # Add controls if present
@@ -1039,7 +1072,9 @@ execute_unconstrained_binsreg = function(inputs) {
     fml = fml,
     table = relation,
     conn = inputs[["conn"]],
-    strategy = inputs[["strategy"]],
+    # Level plots and intervals require explicit FE coefficients/covariance.
+    # The demean strategy only provides within-slope inference.
+    strategy = if (length(fe)) "compress" else inputs[["strategy"]],
     vcov = if (isTRUE(inputs[["ci"]]) || isTRUE(inputs[["cb"]])) inputs[["vcov"]] else "iid",
     verbose = inputs[["verbose"]]
   )
@@ -1232,6 +1267,15 @@ execute_constrained_binsreg = function(inputs) {
     }
   }
 
+  labels = basis_names
+  basis_names = stats::setNames(safe_identifiers(labels,
+    taken = unique(c(inputs[["source_vars"]], y_name, x_name, controls, fe, inputs[["cluster_var"]])),
+    fold_case = folds_identifier_case(conn)
+  ), labels)
+  for (i in seq_along(labels)) basis_exprs[[i]] = sub(
+    paste0(" AS ", labels[[i]], "$"), paste0(" AS ", basis_names[[i]]), basis_exprs[[i]]
+  )
+
   # Create new table with basis columns (replace binned table)
   base_spline_name = sprintf(
     "__dbbinsreg_%s_spline",
@@ -1317,6 +1361,7 @@ extract_knots = function(geo) {
 #' @return Data frame with bin-level fitted values
 #' @keywords internal
 evaluate_spline_at_bins = function(fit, geo, knots, degree, smooth, basis_names, inputs) {
+  basis_name = function(name) unname(basis_names[[name]])
   B = nrow(geo)
 
   # Extract coefficients
@@ -1336,7 +1381,7 @@ evaluate_spline_at_bins = function(fit, geo, knots, degree, smooth, basis_names,
 
     # Global polynomial part: x^1, x^2, ..., x^degree
     for (d in seq_len(degree)) {
-      col_name = paste0("x", d, "_spline")
+      col_name = basis_name(paste0("x", d, "_spline"))
       if (col_name %in% basis_names) {
         bvec[col_name] = x_val^d
       }
@@ -1345,7 +1390,7 @@ evaluate_spline_at_bins = function(fit, geo, knots, degree, smooth, basis_names,
     # Knot features
     for (j in seq_along(knots)) {
       for (r in smooth:degree) {
-        col_name = sprintf("knot%d_pow%d", j, r)
+        col_name = basis_name(sprintf("knot%d_pow%d", j, r))
         if (col_name %in% basis_names) {
           if (r == 0) {
             # Step function: 1 if x > knot, 0 otherwise
@@ -1408,6 +1453,7 @@ evaluate_spline_at_bins = function(fit, geo, knots, degree, smooth, basis_names,
 #'
 #' @keywords internal
 construct_output = function(inputs, fit, geo, V_beta = NULL) {
+  basis_name = function(name) unname(inputs[["basis_aliases"]][[name]])
   degree = inputs[["degree"]]
   B = nrow(geo)
 
@@ -1442,7 +1488,7 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
   if (degree == 0) {
     # Degree 0: bin means (constant within bin)
     eval_fn = function(x_val, bin) {
-      bin_col = paste0("bin", bin)
+      bin_col = basis_name(paste0("bin", bin))
       if (!has_intercept) {
         if (bin_col %in% coef_names) coef_vals[bin_col] else NA_real_
       } else {
@@ -1456,7 +1502,7 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
 
     se_fn = if (!is.null(V_beta)) {
       function(x_val, bin) {
-        bin_col = paste0("bin", bin)
+        bin_col = basis_name(paste0("bin", bin))
         if (!has_intercept) {
           if (bin_col %in% coef_names) get_se(bin_col, 1) else NA_real_
         } else {
@@ -1476,7 +1522,7 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
     # Degree >= 1: piecewise polynomial using normalized basis (binsreg compatible)
     # u = (x - x_left) / h where h is bin width, giving u in [0, 1]
     eval_fn = function(x_val, bin) {
-      bin_col = paste0("bin", bin)
+      bin_col = basis_name(paste0("bin", bin))
       bin_idx = which(geo[["bin"]] == bin)
       if (length(bin_idx) == 0) return(NA_real_)
 
@@ -1497,7 +1543,7 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
       }
 
       # Linear term
-      b1_name = sprintf("u_%d", bin)
+      b1_name = basis_name(sprintf("u_%d", bin))
       b1 = if (b1_name %in% coef_names) coef_vals[b1_name] else 0
 
       # Start with intercept + linear term
@@ -1507,7 +1553,7 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
       # Note: In R, 2:1 produces c(2,1) not empty, so we need explicit check
       if (degree >= 2) {
         for (d in 2:degree) {
-          bd_name = sprintf("u%d_%d", d, bin)
+          bd_name = basis_name(sprintf("u%d_%d", d, bin))
           bd = if (bd_name %in% coef_names) coef_vals[bd_name] else 0
           result = result + bd * u^d
         }
@@ -1518,7 +1564,7 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
 
     se_fn = if (!is.null(V_beta)) {
       function(x_val, bin) {
-        bin_col = paste0("bin", bin)
+        bin_col = basis_name(paste0("bin", bin))
         bin_idx = which(geo[["bin"]] == bin)
         if (length(bin_idx) == 0) return(NA_real_)
 
@@ -1542,7 +1588,7 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
         }
 
         # Linear term
-        b1_name = sprintf("u_%d", bin)
+        b1_name = basis_name(sprintf("u_%d", bin))
         b1_idx = if (b1_name %in% coef_names) b1_name else NULL
 
         idx = c(b0_idx, b1_idx)
@@ -1552,7 +1598,7 @@ construct_output = function(inputs, fit, geo, V_beta = NULL) {
         # Note: In R, 2:1 produces c(2,1) not empty, so we need explicit check
         if (degree >= 2) {
           for (d in 2:degree) {
-            bd_name = sprintf("u%d_%d", d, bin)
+            bd_name = basis_name(sprintf("u%d_%d", d, bin))
             bd_idx = if (bd_name %in% coef_names) bd_name else NULL
             if (!is.null(bd_idx)) {
               idx = c(idx, bd_idx)

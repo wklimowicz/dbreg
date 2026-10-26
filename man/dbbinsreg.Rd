@@ -123,7 +123,8 @@ Default is 500. Only used when \code{cb = TRUE}.}
 
 \item{strategy}{Acceleration strategy passed to \code{\link{dbreg}}.
 \code{"auto"} (the default) selects a strategy from the bin design's cardinality;
-\code{"compress"} explicitly requests cell aggregation.
+\code{"compress"} explicitly requests cell aggregation. With fixed effects,
+\code{"auto"} uses compression to retain level coefficients and their covariance.
 Ignored when smoothness \code{s > 0}, since spline basis construction requires
 row-level data (i.e., no pre-aggregation).}
 

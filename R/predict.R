@@ -319,7 +319,8 @@ predict.dbreg = function(
 
   if (interval != "none") {
     vcovm = vcov(object, fe = TRUE)
-    dof = object[["df_residual"]]
+    dof = attr(vcovm, "df.t")
+    if (is.null(dof)) dof = object[["df_residual"]]
     if (interval == "confidence") {
       ses = sqrt(Matrix::rowSums((mm %*% vcovm) * mm))
     } else if (interval == "prediction") {
@@ -328,7 +329,7 @@ predict.dbreg = function(
       if (is.null(rss)) {
         stop("Prediction intervals require RSS, which is not stored in this model.")
       }
-      sig2 = rss / dof
+      sig2 = rss / object[["df_residual"]]
       ses = sqrt(Matrix::rowSums((mm %*% vcovm) * mm) + sig2)
     }
     a = (1 - level) / 2

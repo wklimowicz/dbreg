@@ -2241,7 +2241,7 @@ sql_prediction_source = function(object, context, conn, from_statement, row_id, 
   numeric = raw_required[classes[raw_required] %in% c("numeric", "integer", "integer64")]
   if (length(numeric)) {
     values = paste0("r.", raw_aliases[numeric])
-    valid = c(valid, paste0("isfinite(", values, ")"))
+    valid = c(valid, sql_is_finite(conn, values))
   }
   list(
     frame = frame, x = x, varying = varying_aliases, offset = offset_alias,
@@ -2329,7 +2329,7 @@ sql_prediction_equation = function(object, context, source, dictionaries, conn, 
     paste0("WHEN NOT (", paste(known, collapse = " AND "), ") THEN CAST(NULL AS DOUBLE)"),
     if (length(factor_valid)) paste0("WHEN NOT (", paste(factor_valid, collapse = " AND "), ") THEN ", error("newdata contains unseen factor levels.")),
     paste0("WHEN NOT (", estimable, ") THEN CAST(NULL AS DOUBLE)"),
-    if (context[["kind"]] != "none") paste0("WHEN NOT isfinite(", eta, ") THEN CAST(NULL AS DOUBLE)")
+    if (context[["kind"]] != "none") paste0("WHEN NOT ", sql_is_finite(conn, eta), " THEN CAST(NULL AS DOUBLE)")
   )
   output = c(
     paste0("r.", source[["key_aliases"]], " AS ", q(row_id)),

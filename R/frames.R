@@ -450,7 +450,7 @@ offset_source_frame = function(conn, from, y, offset) {
   )
   list(
     from_statement = from, alias = alias, outcome = y,
-    finite = backend_sql(conn, paste0("isfinite(", q(y), ") AND isfinite(", q(offset), ")"))
+    finite = paste(sql_is_finite(conn, q(c(y, offset)), backend), collapse = " AND ")
   )
 }
 

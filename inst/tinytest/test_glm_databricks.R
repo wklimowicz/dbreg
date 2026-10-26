@@ -4,7 +4,11 @@ source(system.file('tinytest/helper_glm_reference.R',package='dbreg'),local=TRUE
 source(system.file('tinytest/helper_glm_databricks.R',package='dbreg'),local=TRUE)
 native=dbConnect(duckdb::duckdb(config=list(temp_directory='',threads='2')))
 remote=dbglm_test_databricks_connection(native)
-r=dbreg:::backend_get_query(remote,"SELECT isfinite(1.0) AS f,isfinite('Infinity'::DOUBLE) AS i,isfinite('NaN'::DOUBLE) AS n,FSUM(x) AS s FROM (VALUES(1.0),(2.0)) t(x)")
+r = dbreg:::backend_get_query(remote, paste0(
+  "SELECT ", paste(dbreg:::sql_is_finite(remote, c("1.0", "'Infinity'::DOUBLE", "'NaN'::DOUBLE")),
+    "AS", c("f", "i", "n"), collapse = ","),
+  ",FSUM(x) AS s FROM (VALUES(1.0),(2.0)) t(x)"
+))
 expect_identical(as.logical(r[1,1:3]),c(TRUE,FALSE,FALSE))
 expect_equal(r$s,3)
 # Quoted identifiers and SQL string literals survive dialect translation.

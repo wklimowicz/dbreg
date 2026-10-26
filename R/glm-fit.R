@@ -47,13 +47,15 @@ dbglm_solve = function(H, b = NULL) {
 }
 
 dbglm_evaluate = function(conn, table, x, beta, link, cell = FALSE) {
+  backend_info = detect_backend(conn)
+  finite = sql_is_finite(conn, c("w", "eta"), backend_info)
   cte = dbglm_working_sql(table, x, beta, link, cell = cell)
   terms = dbglm_moment_terms(x, "w")
   terms = c(
     terms, sprintf("SUM(w*(%s)*z) AS b_%d", x, seq_along(x)),
-    sprintf("%s AS s_%d", vapply(sprintf("(%s)*score", x), function(e) sql_stable_sum(conn, e), character(1)), seq_along(x)),
+    sprintf("%s AS s_%d", vapply(sprintf("(%s)*score", x), function(e) sql_stable_sum(conn, e, backend_info), character(1)), seq_along(x)),
     dbglm_deviance_term(conn), "MIN(mu) AS mu_min", "MAX(mu) AS mu_max",
-    "SUM(CASE WHEN NOT isfinite(w) OR w <= 0 OR NOT isfinite(eta) THEN 1 ELSE 0 END) AS bad"
+    paste0("SUM(CASE WHEN NOT ", finite[[1L]], " OR w <= 0 OR NOT ", finite[[2L]], " THEN 1 ELSE 0 END) AS bad")
   )
   row = backend_get_query(conn, paste0(cte, "SELECT ", paste(terms, collapse = ", "), " FROM working"))
   H = dbglm_read_information(row, length(x))
@@ -416,14 +418,16 @@ dbglm_fe_working = function(conn, table, link, create, target = NULL, cell = FAL
 }
 
 dbglm_fe_evaluate = function(conn, working, x, fe, collect_fe_moments = FALSE, moment_rows = NULL, fe_sizes = NULL, limits = projection_limits()) {
+  backend_info = detect_backend(conn)
+  finite = sql_is_finite(conn, c("w", "eta"), backend_info)
   cols = c(x, "z")
   terms = c(
     dbglm_deviance_term(conn), "MIN(mu) AS mu_min", "MAX(mu) AS mu_max",
-    "SUM(CASE WHEN NOT isfinite(w) OR w<=0 OR NOT isfinite(eta) THEN 1 ELSE 0 END) AS bad",
+    paste0("SUM(CASE WHEN NOT ", finite[[1L]], " OR w<=0 OR NOT ", finite[[2L]], " THEN 1 ELSE 0 END) AS bad"),
     dbglm_moment_terms(cols, "w")
   )
   if (length(x)) {
-    x_score = vapply(paste0(x, "*score"), function(e) sql_stable_sum(conn, e), character(1))
+    x_score = vapply(paste0(x, "*score"), function(e) sql_stable_sum(conn, e, backend_info), character(1))
     terms = c(
       terms, sprintf("%s AS raw_s%d", x_score, seq_along(x)),
       sprintf("ABS(%s)/SQRT(SUM(w*%s*%s)) AS s%d", x_score, x, x, seq_along(x))

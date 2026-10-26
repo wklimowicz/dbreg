@@ -319,7 +319,7 @@ process_dbglm_inputs = function(inputs) {
   }
   eligible = paste0(quote_id(variables), " IS NOT NULL")
   numeric_vars = variables[vapply(schema[variables], is.numeric, logical(1))]
-  eligible = c(eligible, paste0("isfinite(", quote_id(numeric_vars), ")"))
+  eligible = c(eligible, sql_is_finite(conn, quote_id(numeric_vars), backend_info))
   if (!length(numeric_vars)) eligible = paste0(quote_id(variables), " IS NOT NULL")
   if (!is.null(subset)) eligible = c(eligible, sql_subset_predicate(conn, subset, schema))
   if (!is.null(weights)) eligible = c(eligible, paste(quote_id(weights), "> 0"))
@@ -431,7 +431,7 @@ process_dbglm_inputs = function(inputs) {
   if (is.null(sample_table)) drop(retained)
   base_terms = c(
     if (family[["family"]] == "gaussian") "SUM(LN(__dbglm_a)) AS log_weights",
-    if (length(x)) paste0("SUM(CASE WHEN ", paste(paste0("NOT isfinite(", x, ")"), collapse = " OR "), " THEN 1 ELSE 0 END) AS nonfinite"),
+    if (length(x)) paste0("SUM(CASE WHEN ", paste(paste0("NOT ", sql_is_finite(conn, x, backend_info)), collapse = " OR "), " THEN 1 ELSE 0 END) AS nonfinite"),
     if (length(fe)) sprintf("COUNT(DISTINCT %s) AS fe_size_%d", fe, seq_along(fe)),
     if (length(fe) && length(x)) sprintf("AVG(%s) AS center_%d", x, seq_along(x)),
     dbglm_moment_terms(x, "__dbglm_a"),

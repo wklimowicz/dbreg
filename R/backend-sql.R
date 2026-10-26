@@ -1,5 +1,6 @@
 # Translate only generated SQL tokens, preserving quoted source identifiers and
-# literals. DuckDB retains its compensated aggregates; Spark uses double SUM.
+# literals. Finite predicates are emitted at their owning builders. This
+# temporary adapter still owns aggregate, exclusion and text-type token families.
 backend_sql = function(conn, sql) {
   if (!identical(detect_backend(conn)[["name"]], "spark")) return(sql)
   # Consume quoted runs in chunks, without backtracking over each character.
@@ -13,34 +14,30 @@ backend_sql = function(conn, sql) {
   tokens[tokens == "FSUM"] = "SUM"
   tokens[tokens == "EXCLUDE"] = "EXCEPT"
   tokens[tokens == "VARCHAR"] = "STRING"
-  repeat {
-    positions = which(tokens == "isfinite")
-    if (!length(positions)) break
-    start = positions[1]
-    open = start + 1L
-    while (grepl("^[[:space:]]+$", tokens[open])) open = open + 1L
-    stopifnot(tokens[open] == "(")
-    depth = 1L
-    end = open
-    while (depth > 0L) {
-      end = end + 1L
-      if (tokens[end] == "(") depth = depth + 1L
-      if (tokens[end] == ")") depth = depth - 1L
-    }
-    arg = paste0(tokens[seq.int(open + 1L, end - 1L)], collapse = "")
-    value = paste0("(NOT isnan(CAST((", arg, ") AS DOUBLE)) AND ABS(CAST((", arg, ") AS DOUBLE)) <= 1.7976931348623157e308)")
-    tokens = c(if (start > 1L) tokens[seq_len(start - 1L)], value, if (end < length(tokens)) tokens[seq.int(end + 1L, length(tokens))])
-  }
   paste0(tokens, collapse = "")
+}
+
+# Emit the complete finite predicate where its owning expression is built.
+# NULL stays unknown; NaN/infinities are false on DuckDB and Spark.
+sql_is_finite = function(conn, expr, backend_info = detect_backend(conn)) {
+  if (!length(expr)) return(character())
+  backend = backend_info[["name"]]
+  if (identical(backend, "duckdb")) return(paste0("isfinite(", expr, ")"))
+  if (identical(backend, "spark")) return(paste0(
+    "(NOT isnan(CAST((", expr, ") AS DOUBLE)) AND ABS(CAST((", expr,
+    ") AS DOUBLE)) <= 1.7976931348623157e308)"
+  ))
+  stop("Finite SQL predicates support DuckDB and Spark only.", call. = FALSE)
 }
 
 # Spark sums doubles in a nondeterministic order; at millions of rows that
 # noise exceeds the line-search deviance tolerance and the score tolerance
 # (sum(x*score) cancels heavily). Fixed-point DECIMAL addition is exact, so
 # these sums no longer depend on summation order.
-sql_stable_sum = function(conn, expr) {
-  if (!identical(detect_backend(conn)[["name"]], "spark")) return(sprintf("FSUM(%s)", expr))
-  ok = sprintf("isfinite(%1$s) AND ABS(%1$s) < 1e10", paste0("(", expr, ")"))
+sql_stable_sum = function(conn, expr, backend_info = detect_backend(conn)) {
+  if (!identical(backend_info[["name"]], "spark")) return(sprintf("FSUM(%s)", expr))
+  value = paste0("(", expr, ")")
+  ok = paste0(sql_is_finite(conn, value, backend_info), " AND ABS(", value, ") < 1e10")
   # DECIMAL(38,18) stabilizes distributed cancellation but rounds very small
   # scores to zero. When every term is small, ordinary double aggregation
   # preserves their relative scale and avoids that absolute quantization floor.

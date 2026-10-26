@@ -1186,7 +1186,7 @@ dbreg_moment_projections = function(inputs, x_sql, x_names, max_iter, tol) {
 dbreg_projection_certificate = function(conn, table, fe, columns, nobs) {
   means = sprintf("ABS(SUM(w*%s)/SUM(w)) AS r%d", columns, seq_along(columns))
   values = c("w", columns)
-  invalid = paste(c("w <= 0", sprintf("%s IS NULL OR NOT isfinite(%s)", values, values)), collapse = " OR ")
+  invalid = paste(c("w <= 0", paste0(values, " IS NULL OR NOT ", sql_is_finite(conn, values))), collapse = " OR ")
   sql = paste0(
     "SELECT ", paste(c(
       sprintf("MAX(r%d) AS r%d", seq_along(columns), seq_along(columns)),

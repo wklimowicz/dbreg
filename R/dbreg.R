@@ -742,9 +742,10 @@ validate_weights = function(weights, data, conn, from_statement) {
       stop("Weights must be non-negative.")
     }
   } else {
-    backend = detect_backend(conn)[["name"]]
+    backend_info = detect_backend(conn)
+    backend = backend_info[["name"]]
     nonfinite = if (backend %in% c("duckdb", "spark"))
-      glue(" OR (NOT isfinite({weights}) AND NOT isnan({weights}))") else ""
+      paste0(" OR (NOT ", sql_is_finite(conn, weights, backend_info), " AND NOT isnan(", weights, "))") else ""
     neg_sql = sql_limit(
       glue("SELECT CASE WHEN {weights} < 0 THEN 1 ELSE 2 END AS invalid FROM (SELECT * {from_statement}) t WHERE {weights} < 0{nonfinite}"),
       1,

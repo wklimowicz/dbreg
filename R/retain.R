@@ -432,7 +432,7 @@ sql_distinct_tuple_count = function(conn, columns) {
 # Only this final augmented relation is retained, including excluded positions.
 retain_score_sample = function(
   conn, original, resources, score_query, score_key, scores,
-  eta, residual, mu = NULL, row_id = NULL, fe_components = list(), weights = NULL
+  eta, residual, mu = NULL, row_id = NULL, fe_components = list(), weights = NULL, materialize = TRUE
 ) {
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
   private = safe_identifiers(
@@ -456,12 +456,18 @@ retain_score_sample = function(
     if (!is.null(mu)) paste(mu, "AS", q(mu_column)), if (length(scores)) paste(scores, "AS", q(score_columns))
   )
   name = basename(tempfile("dbreg_fitted_sample_"))
-  resources[["tables"]] = c(resources[["tables"]], name)
+  kind = if (materialize) "tables" else "views"
+  resources[[kind]] = c(resources[[kind]], name)
   sql = paste0(
     "SELECT ", paste(select, collapse = ","), " FROM ", q(original[["table"]]), " r LEFT JOIN (",
     score_query, ") s ON r.", q(original[["key"]]), "=s.", q(score_key)
   )
-  DBI::dbExecute(conn, sql_sample_table(conn, name, backend_sql(conn, sql), c(original[["columns"]], original[["key"]], private)))
+  statement = if (materialize) sql_sample_table(
+    conn, name, backend_sql(conn, sql),
+    c(original[["columns"]], original[["key"]], private)
+  ) else
+    paste("CREATE TEMP VIEW", q(name), "AS", backend_sql(conn, sql))
+  DBI::dbExecute(conn, statement)
   w = if (is.null(weights)) "1.0" else paste0("CAST(", q(weights), " AS DOUBLE)")
   summary = c(
     "COUNT(*) AS n_original", paste0("SUM(CASE WHEN ", q(estimated_column), " THEN 1 ELSE 0 END) AS n_fit"),
@@ -483,7 +489,10 @@ retain_score_sample = function(
     rss_unweighted = as.numeric(row[["rss_unweighted"]]), fe_components = fe_components, fe_sizes = fe_sizes,
     weights = weights,
     column_classes = classes,
-    resources = list(storage = "database", tables = name, version = 1L)
+    resources = list(
+      storage = "database", tables = if (materialize) name else character(),
+      views = if (!materialize) name else character(), version = 1L
+    )
   )
 }
 
@@ -824,9 +833,6 @@ retain_linear_score_frame = function(fit, frame, y, inputs) {
 
 finalize_linear_inference = function(result, inputs) {
   if (!retain_sample(inputs[["retain"]])) return(result)
-  if (is.null(inputs[["inference_state"]]) && identical(result[["strategy"]], "compress")) {
-    reconstruct_compressed_score_frame(result, inputs)
-  }
   state = inputs[["inference_state"]]
   if (is.null(state)) stop("This strategy has not retained its inference frame.", call. = FALSE)
   if (state[["nobs"]] != result[["nobs_orig"]]) stop("Retained score rows differ from the fitted sample.", call. = FALSE)
@@ -848,48 +854,6 @@ finalize_linear_inference = function(result, inputs) {
   result
 }
 
-# Compression keeps the original slopes fixed. Reuse the shared within frame
-# to reconstruct original-row scores; no cell expansion is fetched into R.
-reconstruct_compressed_score_frame = function(result, inputs) {
-  conn = inputs[["conn"]]
-  design = sql_model_matrix(inputs[["fml"]], conn,
-    sub("^FROM\\s+", "", inputs[["from_statement"]], ignore.case = TRUE),
-    fe_vars = inputs[["fe"]], intercept = inputs[["intercept"]], factor_refs = inputs[["factor_refs"]]
-  )
-  register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]], design[["col_names"]],
-    design[["aliases"]],
-    factor_classes = design[["factor_classes"]]
-  )
-  map = inputs[["name_map"]]
-  variable = names(map) %in% names(inputs[["source_map"]])
-  map[variable] = coef_var_name(map[variable])
-  public = standardize_coef_names(restore_names(design[["aliases"]], map))
-  beta = coef.dbreg(result)
-  has_intercept = "(Intercept)" %in% names(beta)
-  selected = match(setdiff(names(beta), "(Intercept)"), public)
-  if (anyNA(selected)) stop("Could not align compressed fitted scores.", call. = FALSE)
-  x_sql = design[["select_exprs"]][selected]
-  x = design[["aliases"]][selected]
-  frame = if (length(inputs[["fe"]])) build_demean_frame(inputs, x_sql, x) else build_base_frame(inputs, x_sql, x)
-  on.exit(frame[["cleanup"]](), add = TRUE)
-  row = backend_get_query(conn, frame_moments_sql(frame, inputs[["yvar"]], x, conn))
-  S = cross_moments(row, x, inputs[["yvar"]], intercept = has_intercept)
-  names = c(if (has_intercept) "(Intercept)", x)
-  fixed = matrix(unname(beta), ncol = 1L, dimnames = list(names, NULL))
-  H = S[names, names, drop = FALSE]
-  fit = list(
-    coef = fixed, x = names,
-    bread = if (length(names)) {
-      A = moment_coordinates(S, names)
-      A %*% solve_with_fallback(H, matrix(0, length(names), 1L))[["XtX_inv"]] %*% t(A) / attr(S, "weight_scale")
-    } else matrix(numeric(), 0L, 0L),
-    weight_scale = attr(S, "weight_scale"), centers = attr(S, "centers"),
-    sandwich_bread = if (length(names)) moment_coordinates(S, names) %*% solve_with_fallback(H, matrix(0, length(names), 1L))[["XtX_inv"]] / attr(S, "weight_scale") else matrix(numeric(), 0L, 0L),
-    rss = attr(result[["vcov"]], "rss")
-  )
-  retain_linear_score_frame(fit, frame, inputs[["yvar"]], inputs)
-}
-
 attach_inference_state = function(result, inference) {
   state = result[["fitted_state"]]
   if (is.null(state)) state = list(
@@ -899,7 +863,8 @@ attach_inference_state = function(result, inference) {
   state[["inference"]] = inference
   state[["resources"]] = list(
     storage = "database", version = 1L,
-    tables = unique(c(state[["resources"]][["tables"]], inference[["resources"]][["tables"]]))
+    tables = unique(c(state[["resources"]][["tables"]], inference[["resources"]][["tables"]])),
+    views = unique(c(state[["resources"]][["views"]], inference[["resources"]][["views"]]))
   )
   result[["fitted_state"]] = state
   result
@@ -1203,4 +1168,91 @@ finalize_linear_sample = function(result, inputs) {
     )
   }
   result
+}
+
+# Reuse the fitted cell design and inverse information. A compact lookup gives
+# each original row its fitted mean and coefficient-space score multiplier;
+# no second WLS or observation-level FE projection is needed.
+retain_compressed_score_sample = function(
+  fit, score_X, yhat, cells,
+  groups, from_statement, slope_names, inputs
+) {
+  conn = inputs[["conn"]]
+  resources = inputs[["sample_resources"]]
+  q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
+  selected = if (length(inputs[["fe"]])) which(standardize_coef_names(fit[["x"]]) %in% slope_names) else seq_along(fit[["x"]])
+  names = fit[["x"]][selected]
+  scale = fit[["weight_scale"]]
+  projection = fit[["sandwich_bread"]][selected, , drop = FALSE] * scale
+  multipliers = as.matrix(score_X %*% t(projection))
+  private = safe_identifiers(c("dbreg_cell_fit__", if (length(selected)) paste0("dbreg_cell_score", seq_along(selected), "__")),
+    taken = groups, fold_case = folds_identifier_case(conn)
+  )
+  lookup = as.data.frame(lapply(cells[groups], function(value) {
+    if (!is.factor(value)) return(value)
+    raw = attr(value, "dbreg_key_values")
+    if (is.null(raw)) as.character(value) else raw[as.integer(value)]
+  }), check.names = FALSE)
+  lookup[[private[[1L]]]] = yhat
+  for (i in seq_along(selected)) lookup[[private[[i + 1L]]]] = multipliers[, i]
+  types = if (length(groups)) {
+    row = backend_get_query(conn, paste(
+      "SELECT", paste0("typeof(", q(groups), ") AS t", seq_along(groups), collapse = ","),
+      from_statement, "LIMIT 1"
+    ))
+    vapply(row, function(value) as.character(value[[1L]]), character(1))
+  } else character()
+  table = prediction_upload_frame(
+    conn, lookup, resources,
+    c(types, rep("DOUBLE", length(private)))
+  )
+  join = if (length(groups)) paste0(
+    " JOIN ", table, " c ON ",
+    paste0("f.", q(groups), "=c.", q(groups), collapse = " AND ")
+  ) else paste(" CROSS JOIN", table, "c")
+  y = inputs[["yvar"]]
+  residual = paste0(
+    "(", sql_cast_double(paste0("f.", q(y)), conn), "-(",
+    dbglm_number(fit[["centers"]][[y]]), ")-c.", q(private[[1L]]), ")"
+  )
+  weight = if (is.null(inputs[["weights"]])) "1.0" else sql_cast_double(paste0("f.", q(inputs[["weights"]])), conn)
+  scores = if (length(selected)) paste0(
+    "(", weight, ")/(", dbglm_number(scale), ")*", residual,
+    "*c.", q(private[-1L])
+  ) else character()
+  score_names = if (length(selected)) paste0("dbreg_fit_score", seq_along(selected)) else character()
+  query = paste0(
+    "SELECT f.", q(inputs[["retained_key_safe"]]), " AS dbreg_fit_key__,",
+    residual, " AS dbreg_fit_residual__",
+    if (length(scores)) paste0(",", paste(scores, "AS", score_names, collapse = ",")),
+    " FROM (SELECT * ", from_statement, ") f", join
+  )
+  original = inputs[["retained_source"]]
+  public_y = restore_names(y, inputs[["source_map"]])
+  components = lapply(inputs[["prediction_fe_components"]], function(columns) restore_names(unique(columns), inputs[["source_map"]]))
+  materialize = inputs[["retain"]] == "all"
+  state = retain_score_sample(conn, original, resources, query, "dbreg_fit_key__",
+    if (length(scores)) paste0("s.", score_names) else character(),
+    paste0("CAST(r.", q(public_y), " AS DOUBLE)-s.dbreg_fit_residual__"), "s.dbreg_fit_residual__",
+    row_id = inputs[["row_id"]], fe_components = components,
+    weights = restore_names(inputs[["weights"]], inputs[["source_map"]]), materialize = materialize
+  )
+  if (!is.finite(state[["rss"]]) || abs(state[["rss"]] - fit[["rss"]]) > 1e-6 * max(1, abs(fit[["rss"]]))) {
+    stop("Retained compressed scores do not reproduce the fitted RSS.", call. = FALSE)
+  }
+  if (!materialize) {
+    # The filtered source can refer to an owned singleton-pruning relation.
+    # Keep every current dependency until the lazy view is explicitly closed.
+    state[["resources"]][["tables"]] = resources[["tables"]]
+    state[["resources"]][["views"]] = resources[["views"]]
+  }
+  state[["bread"]] = unname(fit[["bread"]][selected, selected, drop = FALSE]) * scale
+  state[["score_projection"]] = diag(length(selected))
+  state[["coefficient_names"]] = names
+  state[["kind"]] = "ols"
+  state[["weight_scale"]] = scale
+  state[["storage"]] = if (materialize) "rows" else "cells"
+  state[["n_cells"]] = nrow(cells)
+  inputs[["inference_state"]] = state
+  invisible(NULL)
 }

@@ -1440,7 +1440,7 @@ build_database_prediction_state = function(
 finalize_retained_resources = function(result, resources) {
   retained = result[["fitted_state"]][["resources"]]
   if (identical(retained[["storage"]], "database")) {
-    result[["resource_state"]] = retain_fit_resources(resources, retained[["tables"]])
+    result[["resource_state"]] = retain_fit_resources(resources, retained[["tables"]], retained[["views"]])
   }
   result
 }

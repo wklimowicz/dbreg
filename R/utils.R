@@ -613,7 +613,14 @@ rename_expr_vars = function(e, map) {
 #' @keywords internal
 safe_source = function(conn, from_statement, vars) {
   vars = unique(vars[!is.na(vars) & nzchar(vars)])
-  safe = safe_identifiers(vars, fold_case = folds_identifier_case(conn))
+  # Cell summaries use these aliases independently of source variables.
+  # Reserve them before strategy selection, including automatic compression.
+  reserved = c(
+    "n", "sum_w", "sum_wy", "sum_wy_sq", "sum_w2", "sum_w2y",
+    "sum_w2y_sq", "sum_w_gc", "sum_wy_gc", "mean_Y", "wts",
+    "dbreg_cell_center__", "dbreg_cell_scale__"
+  )
+  safe = safe_identifiers(vars, taken = reserved, fold_case = folds_identifier_case(conn))
   renamed = safe != vars
   map = setNames(vars[renamed], safe[renamed])
   if (any(renamed)) {

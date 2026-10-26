@@ -147,9 +147,12 @@
 #'   collected into R for SQL inputs. R inputs retain their original positions;
 #'   SQL inputs use `row_id`, or snapshot-local generated keys when it is absent.
 #'   Full state needs its live owning session and is released by [close()].
-#'   `"inference"` saves the same row/score state without recovering learned FE
-#'   prediction dictionaries. Default fitted-sample prediction and inference are
-#'   available; learned-effect newdata prediction needs `"prediction"` or `"all"`.
+#'   `"inference"` supports fitted-sample prediction and covariance without
+#'   recovering learned-effect dictionaries. Compressed fits retain a compact
+#'   cell lookup and immutable source; scores are evaluated through a SQL view
+#'   when requested. Both inference modes reuse the fitted cell projection.
+#'   `"all"` materializes row scores for repeated queries. Learned-effect newdata
+#'   prediction needs `"prediction"` or `"all"`.
 #' @param fe_tol Positive per-fit tolerance for the fixed-effect projection.
 #' @param fe_max_iter Positive maximum number of fixed-effect projection iterations.
 #' @param diagnostics Run an additional input scan for per-variable missingness

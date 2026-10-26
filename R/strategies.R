@@ -457,7 +457,7 @@ execute_compress_strategy = function(inputs) {
     # Both the compression and clustered score passes must read the expanded
     # columns. Aliases from a SELECT list do not exist in the original source.
     projection = frame_select(yvar, sql_design[["select_exprs"]], xvar_names,
-      id_cols = setdiff(fe, c(yvar, xvar_names)), extra = c(weights, inputs[["cluster_var"]], composite_columns, trends)
+      id_cols = setdiff(fe, c(yvar, xvar_names)), extra = c(weights, inputs[["cluster_var"]], composite_columns, trends, inputs[["retained_key_safe"]])
     )
     from_statement = paste0(
       "FROM (SELECT ", paste(projection, collapse = ", "),
@@ -674,6 +674,13 @@ execute_compress_strategy = function(inputs) {
   )
   attr(vcov_mat, "rss") = rss_total
   attr(vcov_mat, "tss") = tss
+
+  if (retain_sample(inputs[["retain"]])) {
+    retain_compressed_score_sample(
+      fit, score_X, yhat, compressed_dat,
+      group_cols, from_statement, slope_names, inputs
+    )
+  }
 
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
 

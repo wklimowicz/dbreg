@@ -191,9 +191,12 @@ This adds row-sized backend storage and SQL work; no panel is implicitly
 collected into R for SQL inputs. R inputs retain their original positions;
 SQL inputs use \code{row_id}, or snapshot-local generated keys when it is absent.
 Full state needs its live owning session and is released by \code{\link[=close]{close()}}.
-\code{"inference"} saves the same row/score state without recovering learned FE
-prediction dictionaries. Default fitted-sample prediction and inference are
-available; learned-effect newdata prediction needs \code{"prediction"} or \code{"all"}.}
+\code{"inference"} supports fitted-sample prediction and covariance without
+recovering learned-effect dictionaries. Compressed fits retain a compact
+cell lookup and immutable source; scores are evaluated through a SQL view
+when requested. Both inference modes reuse the fitted cell projection.
+\code{"all"} materializes row scores for repeated queries. Learned-effect newdata
+prediction needs \code{"prediction"} or \code{"all"}.}
 
 \item{offset}{Optional numeric column name or one-sided formula such as \code{~o},
 added to the linear predictor with

@@ -193,9 +193,7 @@ get_column_info = function(conn, table, vars, level_vars = character(), factor_r
   # Fetch zero rows to get the schema, then separate queries for factor levels
   # (sql_limit() handles dialects without LIMIT, e.g. SQL Server's TOP)
   backend = detect_backend(conn)[["name"]]
-  # SQLite has no static type for computed expressions; a zero-row CASE or
-  # polynomial projection is reported as logical. Inspect one bounded row.
-  schema_query = sql_limit(glue("SELECT {paste(vars, collapse = ', ')} {from_sql}"), if (backend == "sqlite") 1 else 0, backend)
+  schema_query = sql_limit(glue("SELECT {paste(vars, collapse = ', ')} {from_sql}"), 0, backend)
   schema = dbGetQuery(conn, schema_query)
 
   types = list()
@@ -204,10 +202,6 @@ get_column_info = function(conn, table, vars, level_vars = character(), factor_r
 
   for (v in vars) {
     col_class = class(schema[[v]])[1]
-    if (backend == "sqlite" && col_class == "logical") {
-      value = dbGetQuery(conn, sql_limit(glue("SELECT {v} FROM (SELECT {v} {from_sql}) dbreg_type_sample WHERE {v} IS NOT NULL"), 1, backend))[[1L]]
-      if (length(value)) col_class = class(value)[[1L]]
-    }
     classes[[v]] = col_class
     if (v %in% level_vars && inherits(schema[[v]], "POSIXt")) {
       stop("Date-time variables cannot be i() factors: ", v, ". Convert to a date or character first.", call. = FALSE)

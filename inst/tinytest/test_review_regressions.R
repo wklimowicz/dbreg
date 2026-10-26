@@ -87,19 +87,6 @@ local({
   clustered = dbreg(y ~ x+z, data = unique, vcov = ~g, strategy = "moments")
   expect_equal(as.numeric(vcov(clustered)), as.numeric(vcov(robust)), tolerance = 1e-9)
 
-  # SQL binscatter agrees across actual database backends, with negative x and controls.
-  if (requireNamespace("RSQLite", quietly = TRUE)) {
-    message("Review invariants: binscatter backends")
-    sqlite = DBI::dbConnect(RSQLite::SQLite(), ":memory:")
-    on.exit(DBI::dbDisconnect(sqlite), add = TRUE)
-    DBI::dbWriteTable(sqlite, "review_bins", d)
-    DBI::dbWriteTable(conn, "review_bins", d)
-    for (degree in 0:2) {
-      a = dbbinsreg(y ~ x+z, conn = conn, table = "review_bins", points = c(degree, 0), nbins = 5, vcov = "hc1", plot = FALSE)
-      b = dbbinsreg(y ~ x+z, conn = sqlite, table = "review_bins", points = c(degree, 0), nbins = 5, vcov = "hc1", plot = FALSE)
-      expect_equal(a[["points"]], b[["points"]], tolerance = 1e-7)
-    }
-  }
   for (strategy in c("auto", "compress")) {
     base = dbbinsreg(y ~ x, data = d, nbins = 5, strategy = strategy, vcov = "hc1", plot = FALSE)
     translated = d

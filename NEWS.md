@@ -1,5 +1,8 @@
 # dbreg (development version)
 
+- Direct SQLite and PostgreSQL connections are no longer supported; their
+  dialect branches, optional dependency and backend tests have been removed.
+
 - `dbglm()` supports automatic or explicit exact cell compression before IRLS,
   alongside original-row moments and SQL AP strategies. Compression preserves
   fractional-weight likelihoods, original observation counts, IID/HC1/cluster
@@ -44,8 +47,7 @@
   roundoff bound before rank detection, preventing spurious identified columns.
 - Cluster-score cross-products stay in SQL for ordinary and compressed OLS/IV.
   Unconstrained binscatter builds its basis in SQL and collects only bin geometry;
-  sampled-table cleanup is installed immediately. SQLite computed-column types
-  are inferred from bounded samples rather than an untyped zero-row result.
+  sampled-table cleanup is installed immediately.
 - Binscatter automatic selection no longer forces compression. Plot intervals
   inherit the fitted testing degrees of freedom, and simultaneous bands use the
   covariance of the plotted contrasts with column-wise standardization. Bands

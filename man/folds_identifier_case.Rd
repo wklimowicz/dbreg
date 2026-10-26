@@ -7,8 +7,8 @@
 folds_identifier_case(conn)
 }
 \description{
-Postgres folds unquoted identifiers to lower case, and Athena/Trino stores
-and returns them in lower case. On these backends, safe identifiers must be
+Athena/Trino stores and returns unquoted identifiers in lower case.
+On these backends, safe identifiers must be
 lower case (both to reference columns and to read results back by name).
 }
 \keyword{internal}

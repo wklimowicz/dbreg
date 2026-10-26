@@ -396,7 +396,7 @@ if (requireNamespace("fixest", quietly = TRUE)) {
 ## DBI connection ----
 
 # For persistent databases or more control, use the `conn` + `table` args.
-# Again, we use DuckDB below but any other DBI-supported backend should work
+# Again, we use DuckDB below; other backends must be supported by dbreg
 # too (e.g., odbc, bigrquery, noctua (AWS Athena),  etc.) See:
 # https://r-dbi.org/backends/
 

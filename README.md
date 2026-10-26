@@ -27,7 +27,7 @@ on their computing needs and setup.
 
 The **dbreg** R package is inspired by, and has similar aims to, the
 [duckreg](https://github.com/py-econometrics/duckreg) Python package.
-This implementation is backend agnostic and also offers some idiomatic,
+This implementation supports several analytical database backends and offers idiomatic,
 R-focused features like a formula interface and "pretty" print methods. But our
 long-term goal is that two packages should be aligned in terms of core feature
 parity.
@@ -202,15 +202,14 @@ dbreg(
 While querying on-the-fly with our default DuckDB backend is both
 convenient and extremely performant, you can also run regressions
 against existing tables in a persistent database connection. This could
-be DuckDB, but it could also be *any* other [supported
-backend](https://r-dbi.org/backends/). All you need to do is specify the
-appropriate `conn` and `table` arguments.
+be DuckDB or another backend supported by dbreg. Specify the appropriate
+`conn` and `table` arguments.
 
 ``` r
 # load the DBI package to connect to a persistent database
 library(DBI)
 
-# create connection to persistent DuckDB database (could be any supported backend)
+# create connection to persistent DuckDB database (could be another supported backend)
 con = dbConnect(duckdb::duckdb(), dbdir = "nyc.db")
 
 # create a 'taxi' table in our new nyc.db database from our parquet dataset

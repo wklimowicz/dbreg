@@ -536,12 +536,12 @@ sql_reserved = c(
 
 #' Does the backend fold the case of identifiers?
 #'
-#' Postgres folds unquoted identifiers to lower case, and Athena/Trino stores
-#' and returns them in lower case. On these backends, safe identifiers must be
+#' Athena/Trino stores and returns unquoted identifiers in lower case.
+#' On these backends, safe identifiers must be
 #' lower case (both to reference columns and to read results back by name).
 #' @keywords internal
 folds_identifier_case = function(conn) {
-  detect_backend(conn)[["name"]] %in% c("postgres", "athena")
+  identical(detect_backend(conn)[["name"]], "athena")
 }
 
 #' Is `x` usable as an unquoted SQL identifier?
@@ -626,7 +626,7 @@ safe_source = function(conn, from_statement, vars) {
   if (any(renamed)) {
     sel = vars
     # Quote the original names for this backend; keep the safe aliases unquoted
-    # (quoting would make them case-sensitive on e.g. Postgres)
+    # (case-folding backends need consistent aliases)
     sel[renamed] = glue_sql("{`vars[renamed]`} AS {DBI::SQL(safe[renamed])}", .con = conn)
     from_statement = paste0("FROM (SELECT ", paste(sel, collapse = ", "), " ", from_statement, ") AS dbreg_src")
   }
@@ -954,6 +954,10 @@ backend_info_from_metadata = function(
   connection_flat = flatten_metadata(connection_string)
   metadata = tolower(paste(c(info_flat, connection_flat, connection_class), collapse = " "))
   dbms = tolower(paste(info[["dbms.name"]], collapse = " "))
+  if (grepl("sqlite|postgres", dbms) ||
+    any(grepl("^(SQLite|PostgreSQL|Pq)Connection$", connection_class, ignore.case = TRUE))) {
+    stop("SQLite and PostgreSQL connections are not supported by dbreg. Use DuckDB for local analytics.", call. = FALSE)
+  }
   is_databricks = grepl("databricks", metadata)
 
   native_query = NA
@@ -987,10 +991,6 @@ backend_info_from_metadata = function(
     "duckdb"
   } else if (grepl("sql server|azure sql|microsoft sql server", dbms)) {
     "sqlserver"
-  } else if (grepl("postgres", dbms)) {
-    "postgres"
-  } else if (grepl("sqlite", dbms) || "SQLiteConnection" %in% connection_class) {
-    "sqlite"
   } else if (grepl("mysql|mariadb", dbms)) {
     "mysql"
   } else if (is_databricks || grepl("spark", dbms) || grepl("spark", metadata)) {
@@ -1083,7 +1083,6 @@ validate_databricks_ap_backend = function(backend_info) {
 #' @keywords internal
 sql_cast_double = function(sql, conn) {
   type = switch(detect_backend(conn)[["name"]],
-    postgres = "DOUBLE PRECISION",
     sqlserver = "FLOAT",
     bigquery = "FLOAT64",
     "DOUBLE"
@@ -1151,8 +1150,6 @@ sql_random = function(backend) {
   switch(backend,
     "duckdb" = "RANDOM()",
     "sqlserver" = "NEWID()",
-    "postgres" = "RANDOM()",
-    "sqlite" = "RANDOM()",
     "mysql" = "RAND()",
     "RANDOM()" # default fallback
   )
@@ -1182,15 +1179,11 @@ sql_sample = function(select_clause, table_name, where_clause, n, backend) {
     # Athena/Presto/Trino: TABLESAMPLE BERNOULLI only supports percentages
     # Fall back to ORDER BY RANDOM() for exact row counts
     glue("SELECT {select_clause} FROM {table_name} {where_sql} ORDER BY RANDOM() LIMIT {n}")
-  } else if (backend == "postgres") {
-    # PostgreSQL: TABLESAMPLE BERNOULLI only supports percentages
-    random_expr = sql_random(backend)
-    glue("SELECT {select_clause} FROM {table_name} {where_sql} ORDER BY {random_expr} LIMIT {n}")
   } else if (backend == "sqlserver") {
     # SQL Server: TABLESAMPLE is block-level, not row-level; use TOP with NEWID()
     glue("SELECT TOP {n} {select_clause} FROM {table_name} {where_sql} ORDER BY NEWID()")
   } else {
-    # SQLite, MySQL, others: ORDER BY RANDOM() LIMIT n
+    # Other supported backends use their random-order fallback
     random_expr = sql_random(backend)
     glue("SELECT {select_clause} FROM {table_name} {where_sql} ORDER BY {random_expr} LIMIT {n}")
   }

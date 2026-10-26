@@ -2,7 +2,7 @@
 
 ## Package Overview
 
-**dbreg** is an R package for fast regressions on database backends, designed for datasets too large for R's memory. Uses DuckDB as the default backend with support for other DBI-compatible databases. Zero non-essential dependencies in Imports.
+**dbreg** is an R package for fast regressions on database backends, designed for datasets too large for R's memory. Uses DuckDB as the default backend with support for selected DBI backends. Zero non-essential dependencies in Imports.
 
 - Main function: `dbreg()` — regression with automatic strategy selection
 - IV regression: `dbivreg()` — 2SLS via the same strategies (`moments`, `demean`, `compress` without FE)
@@ -132,7 +132,7 @@ Note: AP has a convergence floor around ~1e-8 on larger datasets due to floating
 Backend detection via `detect_backend()` in `R/utils.R`. Supported dialects:
 - DuckDB (default, with reservoir sampling)
 - SQL Server (COUNT_BIG, TOP N, #temp tables, NEWID)
-- PostgreSQL, SQLite, MySQL/MariaDB
+- MySQL/MariaDB
 - Spark, Athena/Presto/Trino
 
 ## Testing

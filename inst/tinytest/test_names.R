@@ -58,7 +58,7 @@ expect_true(
   info = "dbbinsreg: names restored in separate points/line fits"
 )
 
-# Identifier rules on case-folding backends (Postgres, Athena/Trino)
+# Identifier rules on case-folding backends (Athena/Trino)
 expect_equal(
   dbreg:::is_safe_identifier(c("temp", "Temp", "sepal_length"), fold_case = TRUE),
   c(TRUE, FALSE, TRUE),

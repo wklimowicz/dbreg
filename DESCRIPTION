@@ -68,7 +68,6 @@ Suggests:
   knitr,
   odbc,
   quarto,
-  RSQLite,
   sparklyr (>= 1.9.1),
   tinytest
 Enhances:

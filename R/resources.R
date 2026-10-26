@@ -82,7 +82,9 @@ dbglm_coefficient_frame = function(info, coefficients) {
   coefficients = as.matrix(coefficients)
   frame = data.frame(op = rep(seq_along(info), vapply(info, function(group) length(group[["id"]]), integer(1))))
   names(frame) = "__glm_op"
-  frame[["__glm_group"]] = unlist(lapply(info, function(group) as.numeric(group[["id"]])), use.names = FALSE)
+  ids = lapply(info, function(group) group[["id"]])
+  frame[["__glm_group"]] = if (any(vapply(ids, is.character, logical(1)))) unlist(lapply(ids, as.character), use.names = FALSE) else
+    unlist(lapply(ids, as.numeric), use.names = FALSE)
   frame[paste0("c", seq_len(ncol(coefficients)))] = as.data.frame(coefficients)
   frame
 }

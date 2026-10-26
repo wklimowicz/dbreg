@@ -129,6 +129,7 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
   col_info[["power_aliases"]] = if (length(powers)) setNames(safe_identifiers(
     paste0("dbreg_power_", seq_along(powers), "__"), taken = taken, fold_case = fold_case), powers) else character()
 
+  fe_terms = vapply(fe_vars, function(name) paste(deparse(as.name(name), backtick = TRUE), collapse = ""), character(1))
   result = list(select_exprs = character(), col_names = character(), aliases = character())
   
   # Without an intercept, the first factor main effect (incl. a plain i(f))
@@ -151,7 +152,7 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
     } else {
       expanded = expand_term(
         term, col_info, expand, sep,
-        all_terms = unique(c(term_labels, fe_vars)),
+        all_terms = unique(c(term_labels, fe_terms)),
         fe_vars = fe_vars,
         keep_all_levels = identical(term, full_factor)
       )

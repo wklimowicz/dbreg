@@ -585,7 +585,7 @@ process_dbreg_inputs = function(inputs) {
   source_map = name_map
   inputs[["row_id_safe"]] = src[["to_safe"]](inputs[["row_id"]])
   inputs[["retained_key_safe"]] = src[["to_safe"]](inputs[["retained_source"]][["key"]])
-  fml_parsed = parse_regression_formula(src[["to_safe"]](fml), allow_empty = TRUE, allow_extended = TRUE)
+  if (length(name_map)) fml_parsed = parse_regression_formula(src[["to_safe"]](fml), allow_empty = TRUE, allow_extended = TRUE)
   inputs[["prediction_fe_components"]] = fml_parsed[["fe_components"]]
   source_xvars = fml_parsed[["xvars"]]
   source_fes = unique(unlist(fml_parsed[["fe_components"]]))
@@ -759,10 +759,16 @@ filter_estimation_sample = function(from_statement, vars, weights = NULL, drop_m
     if (isTRUE(drop_missings)) paste0(vars, " IS NOT NULL"),
     if (!is.null(weights)) paste0(weights, " > 0")
   )
-  if (!is.null(conn) && detect_backend(conn)[["name"]] %in% c("duckdb", "spark")) {
-    missing = if (isTRUE(drop_missings)) vars else character()
-    missing = unique(c(missing, weights))
-    schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from_statement), 0, detect_backend(conn)[["name"]]))
+  backend = if (!is.null(conn)) detect_backend(conn)[["name"]] else NULL
+  missing = unique(c(if (isTRUE(drop_missings)) vars, weights))
+  if (identical(backend, "duckdb") && length(missing)) {
+    # typeof() is constant for each DuckDB column, so this folds to a numeric
+    # NaN test or TRUE without a separate schema round trip. Text "NaN" stays
+    # a valid category; nonnumeric columns are never cast by the selected arm.
+    where_clauses = c(where_clauses, paste0("(CASE WHEN typeof(", missing,
+      ") IN ('DOUBLE','FLOAT') THEN NOT isnan(TRY_CAST(", missing, " AS DOUBLE)) ELSE TRUE END)"))
+  } else if (identical(backend, "spark") && length(missing)) {
+    schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from_statement), 0, backend))
     numeric = missing[vapply(missing, function(name) is.numeric(schema[[name]]) && !inherits(schema[[name]], "integer64"), logical(1))]
     if (length(numeric)) where_clauses = c(where_clauses, paste0("NOT isnan(CAST(", numeric, " AS DOUBLE))"))
   }

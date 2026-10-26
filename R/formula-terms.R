@@ -67,6 +67,14 @@ fitted_model_matrix = function(formula, data) {
     stats::contr.treatment(lev)
   })
   if (!length(contrasts)) contrasts = NULL
+  # Tiny compressed cell designs are faster as ordinary matrices. Bound an
+  # upper estimate including factor interactions before allowing dense storage.
+  labels = attr(stats::terms(formula, data = data), "term.labels")
+  width = (length(labels) + 1L) *
+    prod(vapply(contrasts, nrow, integer(1)))
+  if (!any(grepl("(", labels, fixed = TRUE)) && nrow(data) * width <= 1e6) {
+    return(stats::model.matrix(formula, data = data, contrasts.arg = contrasts))
+  }
   tryCatch(Matrix::sparse.model.matrix(formula, data = data, contrasts.arg = contrasts),
     error = function(e) stats::model.matrix(formula, data = data, contrasts.arg = contrasts))
 }

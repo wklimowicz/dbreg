@@ -1,5 +1,14 @@
 # dbreg (development version)
 
+- DuckDB linear fixed-effect fits compute within moments from compact group
+  information using FWL, without writing observation-sized demeaning tables.
+  Robust covariance reads projected rows through an inline join to compact FE
+  coefficients. Near-absorbed columns use a read-only precision check. Requested
+  inference retention still saves the original sample for later covariance changes.
+- Unweighted DuckDB moments and compressed cells use stable covariance aggregates
+  in a single source pass. Demeaned frames reuse known counts and original scales;
+  tiny compressed designs use bounded ordinary model matrices.
+
 - Fixed-effect systems now keep cross blocks sparse and use component-aware
   Cholesky for sparse two-way Schur systems, reusing the symbolic factorization
   across IRLS updates. Small systems retain dense factorization. Component null

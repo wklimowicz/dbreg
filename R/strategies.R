@@ -462,8 +462,6 @@ execute_compress_strategy = function(inputs) {
     xvar_names = xvars
   }
   
-  cell = compression_moment_source(conn, from_statement, yvar, weights, intercept)
-  weights_expr = cell[["weights"]]
   # FE columns (no expansion needed - used for grouping)
   fe_sql = if (length(fe)) paste(fe, collapse = ", ") else NULL
   
@@ -473,21 +471,26 @@ execute_compress_strategy = function(inputs) {
   if (length(extra_components)) all_cols_sql = paste(all_cols_sql, paste(extra_components, collapse = ", "), sep = ", ")
   group_cols = unique(c(xvar_names, fe, extra_components, trends))
   group_cols_sql = paste(group_cols, collapse = ", ")
-  moment_terms = build_weighted_moment_terms(
-    y_sql = cell[["y"]],
-    weights_expr = weights_expr,
-    prefix_terms = c("COUNT(*) AS n", cell[["prefix"]]),
-    include_w_sq = TRUE
-  )
-  
-  query_string = paste0(
-    "WITH cte AS (\n    SELECT\n        ",
-    paste(c(group_cols, moment_terms), collapse = ",\n        "),
-    "\n    ",
-    cell[["from"]],
-    if (length(group_cols)) paste0("\n    GROUP BY ", group_cols_sql) else "",
-    "\n    )\n    SELECT\n    *,\n    sum_wy / sum_w AS mean_Y,\n    sqrt(sum_w) AS wts\n    FROM cte"
-  )
+  query_string = compressed_cell_moments_sql(conn, from_statement, yvar, group_cols, weights, intercept)
+  if (is.null(query_string)) {
+    cell = compression_moment_source(conn, from_statement, yvar, weights, intercept)
+    weights_expr = cell[["weights"]]
+    moment_terms = build_weighted_moment_terms(
+      y_sql = cell[["y"]],
+      weights_expr = weights_expr,
+      prefix_terms = c("COUNT(*) AS n", cell[["prefix"]]),
+      include_w_sq = TRUE
+    )
+
+    query_string = paste0(
+      "WITH cte AS (\n    SELECT\n        ",
+      paste(c(group_cols, moment_terms), collapse = ",\n        "),
+      "\n    ",
+      cell[["from"]],
+      if (length(group_cols)) paste0("\n    GROUP BY ", group_cols_sql) else "",
+      "\n    )\n    SELECT\n    *,\n    sum_wy / sum_w AS mean_Y,\n    sqrt(sum_w) AS wts\n    FROM cte"
+    )
+  }
 
   if (sql_only) {
     return(query_string)

@@ -39,7 +39,7 @@ projection_abort = function(reason, message, details = list()) {
 projection_attempt = function(method, expr) {
   tryCatch({
     result = force(expr)
-    details = if (is.null(result)) list() else result[intersect(names(result), c("transfer_cells", "estimated_bytes", "iterations", "max_abs"))]
+    details = if (is.null(result)) list() else result[intersect(names(result), c("transfer_cells", "estimated_bytes", "iterations", "max_abs", "observation_tables"))]
     list(method = method, status = if (is.null(result)) "declined" else "completed",
       reason = if (is.null(result)) "not_applicable" else NULL, details = details, result = result)
   }, dbreg_projection_error = function(e) list(method = method, status = "declined",

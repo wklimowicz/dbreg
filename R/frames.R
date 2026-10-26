@@ -54,6 +54,37 @@ restore_compressed_data = function(dat) {
   dat
 }
 
+# Unweighted cells need one N-row aggregation. Center the cell means in a
+# second, small aggregation; within-cell covariance preserves outcome variation.
+compressed_cell_moments_sql = function(conn, from, y, groups, weights = NULL,
+                                       intercept = TRUE, fit_columns = TRUE) {
+  if (!is.null(weights) || !identical(detect_backend(conn)[["name"]], "duckdb")) return(NULL)
+  private = safe_identifiers(c("dbreg_cell_mean__", "dbreg_cell_within__", "dbreg_cell_anchor__"),
+    taken = c(groups, y), fold_case = folds_identifier_case(conn))
+  mean = private[[1L]]
+  within = private[[2L]]
+  anchor = private[[3L]]
+  value = sql_cast_double(y, conn)
+  cells = paste0("dbreg_cells AS (SELECT ", paste(c(groups, "COUNT(*) AS n",
+    paste0("FAVG(", value, ") AS ", mean),
+    paste0("COVAR_POP(", value, ",", value, ")*COUNT(*) AS ", within)), collapse = ","), " ", from,
+    if (length(groups)) paste(" GROUP BY", paste(groups, collapse = ",")), ")")
+  location = if (intercept) paste0(
+    "dbreg_cell_anchor AS (SELECT MIN(", mean, ")/2.0+MAX(", mean, ")/2.0 AS ", anchor, " FROM dbreg_cells),",
+    "dbreg_cell_location AS (SELECT MAX(", anchor, ")+SUM(n*(", mean, "-", anchor,
+    "))/SUM(n) AS dbreg_cell_center__ FROM dbreg_cells CROSS JOIN dbreg_cell_anchor)") else
+      "dbreg_cell_location AS (SELECT MAX(0.0) AS dbreg_cell_center__ FROM dbreg_cells)"
+  centered = paste0("(", mean, "-dbreg_cell_center__)")
+  wy = paste0("n*", centered)
+  yy = paste0("(", within, "+n*", centered, "*", centered, ")")
+  fields = c(groups, "n", "n AS sum_w", paste(wy, "AS sum_wy"), paste(yy, "AS sum_wy_sq"),
+    "n AS sum_w2", paste(wy, "AS sum_w2y"), paste(yy, "AS sum_w2y_sq"),
+    "dbreg_cell_center__", "1.0 AS dbreg_cell_scale__",
+    if (fit_columns) c(paste(centered, "AS mean_Y"), "SQRT(n) AS wts"))
+  paste0("WITH ", cells, ",", location, " SELECT ", paste(fields, collapse = ","),
+    " FROM dbreg_cells CROSS JOIN dbreg_cell_location")
+}
+
 # Translate the cell design's actual contrasts into SQL. This also handles
 # numeric FE labels and exact integer dictionaries without string round-trips.
 compressed_score_expressions = function(conn, formula, dat, X, classes, numeric_sql = character()) {
@@ -181,17 +212,21 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
   }
 
   cleanup = function() invisible(NULL)
+  rank_columns = rank_values = NULL
+  rank_names = safe_identifiers(paste0("dbreg_frame_original_", seq_along(vars)),
+    taken = c(vars, fe, weights, cluster_var, inputs[["retained_key_safe"]]), fold_case = folds_identifier_case(conn))
   if (use_ap) {
     ap_res = dbreg_alternating_projections(inputs, x_sql, x_names)
-    ap_tables = unique(c(ap_res[["table"]], ap_res[["base_table"]], ap_res[["all_tables"]]))
+    ap_tables = unique(c(if (!isTRUE(ap_res[["inline"]])) ap_res[["table"]], ap_res[["base_table"]], ap_res[["all_tables"]]))
     cleanup = function() {
       backend = detect_backend(conn)[["name"]]
       for (tbl in ap_tables) {
         drop_table_if_exists(conn, tbl, backend)
       }
     }
-    cte_sql = paste0("WITH demeaned AS (SELECT * FROM ", ap_res[["table"]], ")")
-    weights_expr = "__w"
+    cte_sql = if (!is.null(ap_res[["table"]])) paste0("WITH demeaned AS (SELECT * FROM ", ap_res[["table"]], ")") else NULL
+    weights_expr = if (is.null(weights)) NULL else if (is.null(ap_res[["weight_column"]])) "__w" else ap_res[["weight_column"]]
+    rank_values = ap_res[["original_scale"]]
   } else {
     # Analytic demeaning: subtract group means for each FE (and add back the
     # overall mean for two-way panels)
@@ -200,7 +235,8 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
       sprintf(
         "%s AS (SELECT %s FROM base%s)",
         alias,
-        paste(c(group, cols), collapse = ", "),
+        paste(c(group, cols, if (alias %in% c("group_means", "unit_means"))
+          paste0("MAX(ABS(", vapply(vars, sql_cast_double, character(1), conn = conn), ")) AS ", rank_names)), collapse = ", "),
         if (is.null(group)) "" else paste0(" GROUP BY ", group)
       )
     }
@@ -221,7 +257,9 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
         "CROSS JOIN overall o"
       )
     }
+    rank_columns = setNames(rank_names, vars)
     passthrough = c(
+      paste0(if (length(fe) == 1L) "gm." else "um.", rank_names, " AS ", rank_names),
       if (!is.null(weights)) sprintf("b.%s AS weights", weights),
       if (!is.null(cluster_var) && !cluster_var %in% fe) sprintf("b.%s AS %s", cluster_var, cluster_var),
       if (length(inputs[["retained_key_safe"]])) sprintf("b.%s AS %s", inputs[["retained_key_safe"]], inputs[["retained_key_safe"]])
@@ -239,18 +277,35 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
   list(
     cte_sql = cte_sql,
     cte_name = "demeaned",
-    cols = setNames(paste0(vars, "_tilde"), vars),
+    cols = if (use_ap && !is.null(ap_res[["cols"]])) ap_res[["cols"]] else setNames(paste0(vars, "_tilde"), vars),
     weights_expr = weights_expr,
     intercept = FALSE,
     cast = TRUE,
     prefix_terms = c(
-      sql_count(conn, "n_total"),
-      vapply(seq_along(fe), function(k) sql_count(conn, sprintf("n_fe%d", k), fe[k], distinct = TRUE), character(1))
+      if (use_ap && !is.null(ap_res[["nobs"]])) paste(dbglm_number(ap_res[["nobs"]]), "AS n_total") else sql_count(conn, "n_total"),
+      vapply(seq_along(fe), function(k) {
+        if (use_ap && !is.null(ap_res[["n_fe_levels"]])) paste(dbglm_number(ap_res[["n_fe_levels"]][[k]]), "AS", sprintf("n_fe%d", k)) else
+          sql_count(conn, sprintf("n_fe%d", k), fe[k], distinct = TRUE)
+      }, character(1))
     ),
     cleanup = cleanup,
     ap_res = if (use_ap) ap_res else NULL,
+    rank_columns = rank_columns, rank_values = rank_values,
+    moments = if (use_ap) ap_res[["moments"]] else NULL,
     rank_source = paste0("(SELECT ", paste(frame_select(yvar, x_sql, x_names), collapse = ","), " ", from_statement, ") dbreg_rank_source")
   )
+}
+
+# Stable unweighted centered moments in one aggregation pass. Built-in
+# covariance accumulators avoid subtracting raw squares at large locations.
+build_centered_moment_terms = function(y, x, prefix = character()) {
+  product = function(a, b, name) paste0("COVAR_POP(", a, ",", b, ")*COUNT(*) AS ", name)
+  terms = c(prefix, "COUNT(*) AS sum_w", "MAX(0.0) AS sum_wy", product(y, y, "sum_wy_sq"))
+  for (i in seq_along(x)) {
+    terms = c(terms, paste0("MAX(0.0) AS sum_w", i), product(x[[i]], y, paste0("sum_w", i, "_y")))
+    for (j in seq_len(i)) terms = c(terms, product(x[[j]], x[[i]], paste0("sum_w", j, "_", i)))
+  }
+  terms
 }
 
 #' Moments query over an estimation frame
@@ -263,9 +318,26 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
 #' @param conn Database connection (for the cast type).
 #' @keywords internal
 frame_moments_sql = function(frame, y, x, conn) {
+  if (!is.null(frame[["moments"]])) {
+    row = frame[["moments"]]
+    return(paste("SELECT", paste(paste(dbglm_number(as.numeric(row[1L, ])), "AS",
+      as.character(DBI::dbQuoteIdentifier(conn, names(row)))), collapse = ",")))
+  }
   col = function(v) {
     sql = unname(frame[["cols"]][v])
     if (frame[["cast"]]) sql_cast_double(sql, conn) else sql
+  }
+  # The common unweighted OLS path needs neither a location scan nor a
+  # location CROSS JOIN when the backend has stable covariance aggregates.
+  w = frame[["weights_expr"]]
+  backend = detect_backend(conn)[["name"]]
+  variables = c(x, y)
+  if (is.null(w) && isTRUE(frame[["intercept"]]) && is.null(frame[["rank_source"]]) &&
+      identical(backend, "duckdb")) {
+    terms = build_centered_moment_terms(col(y), vapply(x, col, character(1)), frame[["prefix_terms"]])
+    location = c(paste0(if (backend == "duckdb") "FAVG(" else "AVG(", vapply(variables, col, character(1)), ") AS dbreg_moment_center_", seq_along(variables)),
+      "MAX(1.0) AS dbreg_moment_weight_scale")
+    return(paste0(frame[["cte_sql"]], " SELECT ", paste(c(terms, location), collapse = ","), " FROM ", frame[["cte_name"]]))
   }
   # Center before multiplying: reconstructing a variance from raw squares loses
   # all useful digits when a variable has a large location and small variation.
@@ -284,9 +356,21 @@ frame_moments_sql = function(frame, y, x, conn) {
   stats = paste0(",\ndbreg_moment_location AS (SELECT ", paste(c(paste(center_terms, "AS", centers),
     paste(scale, "AS", weight_field)), collapse = ","), " FROM ", frame[["cte_name"]], ")")
   centered = setNames(paste0("(", vapply(variables, col, character(1)), "-", centers, ")"), variables)
+  location_join = " CROSS JOIN dbreg_moment_location"
+  location_terms = paste0("MAX(", c(centers, weight_field), ") AS ", c(center_fields, "dbreg_moment_weight_scale"))
+  if (!isTRUE(frame[["intercept"]]) && is.null(w)) {
+    stats = ""
+    centered = setNames(vapply(variables, col, character(1)), variables)
+    location_join = ""
+    location_terms = c(paste0("MAX(0.0) AS ", center_fields), "MAX(1.0) AS dbreg_moment_weight_scale")
+  }
   rank_terms = character()
   rank_join = ""
-  if (!is.null(frame[["rank_source"]])) {
+  if (!is.null(frame[["rank_values"]])) {
+    rank_terms = paste0("MAX(", dbglm_number(unname(frame[["rank_values"]][variables])), ") AS ", rank_fields)
+  } else if (!is.null(frame[["rank_columns"]])) {
+    rank_terms = paste0("MAX(", unname(frame[["rank_columns"]][variables]), ") AS ", rank_fields)
+  } else if (!is.null(frame[["rank_source"]])) {
     # Projection noise must not be normalized into an identified column. Bound
     # that noise in each variable's original units, rather than using the scale
     # of an unrelated regressor as an absolute rank threshold.
@@ -305,7 +389,7 @@ frame_moments_sql = function(frame, y, x, conn) {
   )
   paste0(
     frame[["cte_sql"]], stats, ",\nmoments AS (\n  SELECT\n    ",
-    paste(c(terms, rank_terms, paste0("MAX(", c(centers, weight_field), ") AS ", c(center_fields, "dbreg_moment_weight_scale"))), collapse = ",\n    "),
-    "\n  FROM ", frame[["cte_name"]], " CROSS JOIN dbreg_moment_location", rank_join, "\n)\nSELECT * FROM moments"
+    paste(c(terms, rank_terms, location_terms), collapse = ",\n    "),
+    "\n  FROM ", frame[["cte_name"]], location_join, rank_join, "\n)\nSELECT * FROM moments"
   )
 }

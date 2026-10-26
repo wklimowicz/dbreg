@@ -239,8 +239,8 @@ fe_solver = function(sys, cache, retain_null = FALSE) {
 # (__set = i) and pairwise FE information (__set = K + pair index). Pairs need
 # only the weight sum, so each is a narrow GROUP BY over one shared source;
 # GROUPING SETS would evaluate every aggregate for every set.
-fe_moments_sql = function(conn, source, fe, value_terms, global_terms = character(), limit = NULL, compact = FALSE) {
-  if (identical(detect_backend(conn)[["name"]], "spark")) {
+fe_moments_sql = function(conn, source, fe, value_terms, global_terms = character(), limit = NULL, compact = FALSE, text_keys = FALSE) {
+  if (!text_keys && identical(detect_backend(conn)[["name"]], "spark")) {
     sql = dbglm_databricks_moments_sql(source, fe, value_terms, global_terms, limit)
     if (!is.null(sql)) return(if (compact) pack_fe_moments_sql(conn, sql, length(fe), value_terms, global_terms, globals_packed = TRUE) else sql)
   }
@@ -248,7 +248,8 @@ fe_moments_sql = function(conn, source, fe, value_terms, global_terms = characte
   pairs = utils::combn(K, 2L, simplify = FALSE)
   alias = function(terms) sub(".* AS ([A-Za-z_0-9]+)$", "\\1", terms)
   null = function(terms) if (length(terms)) paste0("CAST(NULL AS DOUBLE) AS ", alias(terms)) else character()
-  id = function(f) if (is.null(f)) "CAST(NULL AS BIGINT)" else paste0("CAST(", f, " AS BIGINT)")
+  id_type = if (text_keys) "VARCHAR" else "BIGINT"
+  id = function(f) if (is.null(f)) paste0("CAST(NULL AS ", id_type, ")") else paste0("CAST(", f, " AS ", id_type, ")")
   branch = function(set, i, j, columns, group) paste0("SELECT ", set, " AS __set,", id(i), " AS __i,", id(j), " AS __j,",
     paste(columns, collapse = ","), " FROM __dbglm_src", if (length(group)) paste(" GROUP BY", paste(group, collapse = ",")))
   branches = c(
@@ -335,7 +336,7 @@ unpack_fe_moments = function(res, K, n_cols, n_extra) {
       b = if (n_cols) compact[["values"]][positions, seq_len(n_cols), drop = FALSE] else matrix(numeric(), length(rows), 0L)
       ex = if (n_extra) compact[["values"]][positions, n_cols + seq_len(n_extra), drop = FALSE] else matrix(numeric(), length(rows), 0L)
     }
-    if (anyNA(res[["__i"]][rows]) || any(!is.finite(h)) || any(h <= 0) || any(!is.finite(b)) || any(!is.finite(ex))) return(NULL)
+    if (anyNA(res[["__i"]][rows]) || anyDuplicated(res[["__i"]][rows]) || any(!is.finite(h)) || any(h <= 0) || any(!is.finite(b)) || any(!is.finite(ex))) return(NULL)
     info[[i]] = list(id = res[["__i"]][rows], h = h, b = unname(b), ex = unname(ex))
   }
   combos = utils::combn(K, 2L, simplify = FALSE)
@@ -368,7 +369,7 @@ fe_value_terms = function(conn, columns, extra_sums = character()) {
 query_fe_moments = function(conn, table, fe, columns, extra_sums = character(),
                                    max_edges = getOption("dbreg.duckdb_ap_max_edges", 1e6),
                                    max_entries = getOption("dbreg.duckdb_ap_max_entries", 2e6),
-                                   max_cells = NULL, fe_sizes = NULL) {
+                                   max_cells = NULL, fe_sizes = NULL, global_terms = character(), text_keys = FALSE) {
   validate_moment_limits(max_edges, max_entries)
   width = length(columns) + length(extra_sums)
   if (!is.null(max_cells)) {
@@ -376,16 +377,18 @@ query_fe_moments = function(conn, table, fe, columns, extra_sums = character(),
     # Reserve the actual marginal payload when sizes are already known, or
     # conservatively reserve the allowed FE-by-design bound otherwise.
     payload = if (is.null(fe_sizes)) max_entries * width / max(1L, length(columns)) else sum(fe_sizes)*width
-    max_edges = min(max_edges, floor((max_cells - payload) / 5L) - 1L)
+    max_edges = min(max_edges, floor((max_cells - payload - length(global_terms)) / 5L) - 1L)
     if (max_edges < 1L) return(NULL)
   }
-  sql = fe_moments_sql(conn, table, fe, fe_value_terms(conn, columns, extra_sums), limit = max_edges + 1, compact = TRUE)
+  sql = fe_moments_sql(conn, table, fe, fe_value_terms(conn, columns, extra_sums), global_terms = global_terms,
+    limit = max_edges + 1, compact = TRUE, text_keys = text_keys)
   res = read_fe_moments(conn, sql, max_rows = max_edges)
   if (is.null(res) || !nrow(res)) return(NULL)
   unpacked = unpack_fe_moments(res, length(fe), length(columns), length(extra_sums))
   if (is.null(unpacked)) return(NULL)
   if (unpacked[["n"]] * max(1L, length(columns)) > max_entries) return(NULL)
-  unpacked[["transfer_cells"]] = nrow(res)*5 + unpacked[["n"]]*width
+  unpacked[["globals"]] = attr(res, "dbglm_globals", exact = TRUE)
+  unpacked[["transfer_cells"]] = nrow(res)*5 + unpacked[["n"]]*width + length(global_terms)
   unpacked
 }
 
@@ -503,7 +506,12 @@ project_fe_moments = function(conn, table, columns, identifiers, ops, scales, ta
   lookup = dictionary[["source"]]
   lookup_sub = dictionary[["tables"]]
   ctes = dbglm_coefficient_ctes(lookup, length(ops), "proj")
-  joins = vapply(seq_along(ops), function(i) paste0(" LEFT JOIN proj_g", i, " ON s.", ops[[i]][["f"]], "=proj_g", i, ".__glm_group"), character(1))
+  text_keys = is.character(frame[["__glm_group"]])
+  joins = vapply(seq_along(ops), function(i) {
+    key = paste0("s.", ops[[i]][["f"]])
+    if (text_keys) key = paste0("CAST(", key, " AS VARCHAR)")
+    paste0(" LEFT JOIN proj_g", i, " ON ", key, "=proj_g", i, ".__glm_group")
+  }, character(1))
   broadcast = if (is_dbx) paste0("/*+ BROADCAST(", paste0("proj_g", seq_along(ops), collapse = ","), ") */ ") else ""
   if (inline_intermediate) {
     tilde_exprs = vapply(seq_len(n_cols), function(j) {

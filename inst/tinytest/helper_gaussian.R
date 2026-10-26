@@ -78,7 +78,7 @@ dbreg_test_gaussian = function(conn) {
   expect_equal(coef(fit), coef(ref), tolerance = 1e-8)
   expect_equal(nobs(fit), nobs(ref))
   expect_equal(fit[["nobs_pruned"]], 1)
-  output = dbreg::obs(fit)
+  output = stats::case.names(fit)
   values = as.data.frame(output)
   expect_equal(sort(values[["id"]]), fixest::obs(ref))
   close(output)

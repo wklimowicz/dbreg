@@ -6,7 +6,7 @@ dbreg_test_sql_prediction_fe_only = function(conn) {
   table = dbglm_validation_upload(conn, d)
   on.exit(dbglm_validation_drop(conn, table))
   for (formula in list(y ~ 1 | g + h, y ~ 1 | g + h + j)) {
-    fit = dbreg::feols(formula, conn = conn, table = table, fixef.rm = "none")
+    fit = dbreg::dbreg(formula, retain = "all", conn = conn, table = table, fixef_rm = "none")
     reference = fixest::feols(formula, d, fixef.rm = "none")
     expect_equal(predict(fit, d), predict(reference, d), tolerance = 1e-7)
     output = predict(fit, newdata = d[1:17, ], conn = conn, row_id = "id")

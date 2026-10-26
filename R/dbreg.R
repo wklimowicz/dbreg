@@ -142,7 +142,7 @@
 #'   `1e-10`; varying slopes require portable state.
 #'   `"all"` additionally saves an immutable original sample with fitted
 #'   predictors, residuals and scores in the database. It enables default/sample
-#'   prediction, [obs()], [residuals()] and post-fit covariance through [summary()].
+#'   prediction, [stats::case.names()], [residuals()] and post-fit covariance through [summary()].
 #'   This adds row-sized backend storage and SQL work; no panel is implicitly
 #'   collected into R for SQL inputs. R inputs retain their original positions;
 #'   SQL inputs use `row_id`, or snapshot-local generated keys when it is absent.
@@ -1301,6 +1301,6 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   result[["df_t"]] = attr(result[["vcov"]], "df.t")
   # i() columns (display names), for predict()
   result[["i_columns"]] = inputs[["i_columns"]]
-  class(result) = c(class, class(result))
+  class(result) = unique(class)
   result
 }

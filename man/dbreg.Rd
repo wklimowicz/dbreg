@@ -186,7 +186,7 @@ Two-FE recovery uses \code{fe_max_iter} and a tolerance at least as strict as
 \code{1e-10}; varying slopes require portable state.
 \code{"all"} additionally saves an immutable original sample with fitted
 predictors, residuals and scores in the database. It enables default/sample
-prediction, \code{\link[=obs]{obs()}}, \code{\link[=residuals]{residuals()}} and post-fit covariance through \code{\link[=summary]{summary()}}.
+prediction, \code{\link[stats:case.names]{stats::case.names()}}, \code{\link[=residuals]{residuals()}} and post-fit covariance through \code{\link[=summary]{summary()}}.
 This adds row-sized backend storage and SQL work; no panel is implicitly
 collected into R for SQL inputs. R inputs retain their original positions;
 SQL inputs use \code{row_id}, or snapshot-local generated keys when it is absent.

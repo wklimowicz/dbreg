@@ -1,4 +1,4 @@
-# Reference calls must stay independent when dbreg masks fixest exports.
+# Reference calls stay qualified and independent of the native API.
 local({
   reference_symbols = c("feols", "feglm", "ssc", "coeftable", "se", "pvalue", "tstat", "degrees_freedom", "obs")
   unqualified = function(file) {
@@ -19,6 +19,6 @@ local({
   glm = fixest::feglm(b ~ x, data, family = stats::binomial(), notes = FALSE)
   expect_true(inherits(ols, "fixest") && !inherits(ols, "dbreg"))
   expect_true(inherits(glm, "fixest") && !inherits(glm, "dbreg"))
-  expect_true(!identical(fixest::feols, dbreg::feols))
-  expect_true(!identical(fixest::feglm, dbreg::feglm))
+  expect_false("feols" %in% getNamespaceExports("dbreg"))
+  expect_false("feglm" %in% getNamespaceExports("dbreg"))
 })

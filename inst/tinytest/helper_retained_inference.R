@@ -52,7 +52,7 @@ dbreg_test_retained_inference = function(conn) {
     expect_equal(state[["nobs"]], nobs(reference), info = label)
     expect_equal(state[["nobs_input"]], n, info = label)
     expect_true(as.numeric(object.size(fit)) < 512*1024, info = label)
-    ids = close_outputs(dbreg::obs(fit))[["id"]]
+    ids = close_outputs(stats::case.names(fit))[["id"]]
     expect_equal(ids, fixest::obs(reference), info = label)
     prediction = if (glm) predict(fit, type = "link") else predict(fit)
     actual = close_outputs(prediction)

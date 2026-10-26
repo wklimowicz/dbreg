@@ -1,19 +1,9 @@
 # Every assertion compares observable values/coding with fixest or analytical
 # dummy regressions; both engines run the same formula/prediction fixture.
-dbreg_reference_i = function() {
-  # fixest .xpd() constructs some formulas in .GlobalEnv. Isolate its oracle
-  # from dbreg's attached i(), and restore any caller binding after the suite.
-  had = exists("i",envir=.GlobalEnv,inherits=FALSE)
-  previous = if(had) get("i",envir=.GlobalEnv,inherits=FALSE)
-  assign("i",fixest::i,envir=.GlobalEnv)
-  function() {
-    if(had) assign("i",previous,envir=.GlobalEnv) else rm(list="i",envir=.GlobalEnv)
-  }
-}
-
 dbreg_test_formula_i = function(conn) {
-  restore_i = dbreg_reference_i()
-  on.exit(restore_i(),add=TRUE)
+  predict_fit = function(object, ...) {
+    if (inherits(object,"dbglm")) predict(object,...,type="response") else predict(object,...)
+  }
   resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
   on.exit(dbreg:::release_fit_resources(resources),add=TRUE)
@@ -43,17 +33,20 @@ dbreg_test_formula_i = function(conn) {
     fml = case[["fml"]]
     glm = !is.null(case[["family"]])
     message("[i() formula] ",paste(deparse(fml),collapse=""))
-    args = list(fml=fml,conn=conn,table=table,weights=~w,offset=~o,row_id="id",notes=FALSE,
+    args = list(fml=fml,conn=conn,table=table,weights=~w,offset=~o,row_id="id",retain="all",ssc=fixest::ssc(),fixef_rm="none",
       vcov=if(glm) ~g else ~g+h)
     refargs = list(fml=fml,data=d,weights=~w,offset=~o,notes=FALSE,vcov=args[["vcov"]])
     if(glm) args[["family"]] = refargs[["family"]] = case[["family"]]
-    fit = do.call(if(glm) dbreg::feglm else dbreg::feols,args)
+    requested_vcov = args[["vcov"]]
+    args[["vcov"]] = if(inherits(requested_vcov,"formula")) stats::reformulate(tail(all.vars(requested_vcov),1L)) else requested_vcov
+    fit = do.call(if(glm) dbreg::dbglm else dbreg::dbreg,args)
+    fit = summary(fit,vcov=requested_vcov)
     models[[length(models)+1L]] = fit
     ref = do.call(if(glm) dbglm_reference_feglm else fixest::feols,refargs)
     expect_equal(coef(fit),coef(ref),tolerance=1e-6)
     expect_equal(as.numeric(vcov(fit)),as.numeric(vcov(ref)),tolerance=1e-6)
     expect_equal(as.numeric(logLik(fit)),as.numeric(logLik(ref)),tolerance=1e-6)
-    expect_equal(predict(fit,d),predict(ref,d),tolerance=1e-6)
+    expect_equal(predict_fit(fit,d),predict(ref,d),tolerance=1e-6)
     expect_identical(names(coef(fit)),names(coef(ref)))
     if (identical(case,cases[[3L]])) {
       mixed = d[10:12,]
@@ -61,22 +54,22 @@ dbreg_test_formula_i = function(conn) {
       mixed[["g"]][1] = 999L
       mixed[["x"]][2] = NA_real_
       expected = c(NA_real_,NA_real_,unname(predict(ref,mixed[3,,drop=FALSE])))
-      expect_equal(predict(fit,mixed),expected,tolerance=1e-6)
-      output = predict(fit,mixed,conn=conn,row_id="id")
+      expect_equal(predict_fit(fit,mixed),expected,tolerance=1e-6)
+      output = predict_fit(fit,mixed,conn=conn,row_id="id")
       outputs[[length(outputs)+1L]] = output
       value = as.data.frame(output)
       expect_equal(value[[output[["prediction_column"]]]][match(mixed[["id"]],value[["id"]])],expected,tolerance=1e-6)
       close(output)
     }
     for (frame in c(FALSE,TRUE)) {
-      output = if(frame) predict(fit,d,conn=conn,row_id="id") else predict(fit,conn=conn,table=table,row_id="id")
+      output = if(frame) predict_fit(fit,d,conn=conn,row_id="id") else predict_fit(fit,conn=conn,table=table,row_id="id")
       outputs[[length(outputs)+1L]] = output
       value = as.data.frame(output)
       value = value[[output[["prediction_column"]]]][match(d[["id"]],value[["id"]])]
       expect_equal(value,predict(ref,d),tolerance=1e-6)
       close(output)
     }
-    output = predict(fit)
+    output = predict_fit(fit)
     outputs[[length(outputs)+1L]] = output
     value = as.data.frame(output)
     ids = fixest::obs(ref)
@@ -99,15 +92,15 @@ dbreg_test_formula_i = function(conn) {
       query = paste("SELECT id,x,y,CAST(key AS BIGINT) AS key FROM",raw)
       DBI::dbExecute(conn,dbreg:::sql_sample_table(conn,typed,query,c("id","x","y","key")))
     }
-    fit = dbreg::feols(y~x+i(key),conn=conn,table=typed,row_id="id",notes=FALSE)
+    fit = dbreg::dbreg(y~x+i(key),conn=conn,table=typed,row_id="id",retain="all")
     models[[length(models)+1L]] = fit
     ref = lm(y~x+index,key_data)
     truth = as.numeric(predict(ref,key_data))
-    expect_equal(predict(fit,key_data),truth,tolerance=1e-8)
+    expect_equal(predict_fit(fit,key_data),truth,tolerance=1e-8)
     expect_equal(unname(coef(fit)),unname(coef(ref)),tolerance=1e-8)
-    expect_equal(length(fit[["model_spec"]][["i_specs"]][[1]][["keys"]]),3L)
+    expect_equal(length(fit[["i_specs"]][[1]][["keys"]]),3L)
     for (frame in c(FALSE,TRUE)) {
-      output = if(frame) predict(fit,key_data,conn=conn,row_id="id") else predict(fit,conn=conn,table=typed,row_id="id")
+      output = if(frame) predict_fit(fit,key_data,conn=conn,row_id="id") else predict_fit(fit,conn=conn,table=typed,row_id="id")
       outputs[[length(outputs)+1L]] = output
       value = as.data.frame(output)
       expect_equal(value[[output[["prediction_column"]]]][match(key_data[["id"]],value[["id"]])],truth,tolerance=1e-8)
@@ -116,17 +109,17 @@ dbreg_test_formula_i = function(conn) {
     if(kind=="integer") {
       lossy = key_data
       lossy[["key"]] = as.numeric(lossy[["key"]])
-      expect_error(predict(fit,lossy),"must be exact")
-      expect_error(predict(fit,lossy,conn=conn,row_id="id"),"must be exact")
+      expect_error(predict_fit(fit,lossy),"must be exact")
+      expect_error(predict_fit(fit,lossy,conn=conn,row_id="id"),"must be exact")
       malformed = key_data
       malformed[["key"]][1] = "not-an-integer"
-      expect_error(predict(fit,malformed),"unseen i")
-      expect_error(predict(fit,malformed,conn=conn,row_id="id"),"unseen")
+      expect_error(predict_fit(fit,malformed),"unseen i")
+      expect_error(predict_fit(fit,malformed,conn=conn,row_id="id"),"unseen")
       incomplete = key_data[1,,drop=FALSE]
       incomplete[["key"]] = as.numeric(incomplete[["key"]])
       incomplete[["x"]] = NA_real_
-      expect_true(is.na(predict(fit,incomplete)))
-      output = predict(fit,incomplete,conn=conn,row_id="id")
+      expect_true(is.na(predict_fit(fit,incomplete)))
+      output = predict_fit(fit,incomplete,conn=conn,row_id="id")
       outputs[[length(outputs)+1L]] = output
       value = as.data.frame(output)
       expect_true(is.na(value[[output[["prediction_column"]]]]))
@@ -136,8 +129,8 @@ dbreg_test_formula_i = function(conn) {
       missing[["key"]][1:2] = c(NA_real_,Inf)
       expected = truth
       expected[1:2] = NA_real_
-      expect_equal(predict(fit,missing),expected,tolerance=1e-8)
-      output = predict(fit,missing,conn=conn,row_id="id")
+      expect_equal(predict_fit(fit,missing),expected,tolerance=1e-8)
+      output = predict_fit(fit,missing,conn=conn,row_id="id")
       outputs[[length(outputs)+1L]] = output
       value = as.data.frame(output)
       expect_equal(value[[output[["prediction_column"]]]][match(missing[["id"]],value[["id"]])],expected,tolerance=1e-8)

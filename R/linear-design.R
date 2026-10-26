@@ -233,7 +233,7 @@ expand_newdata_i = function(fml, data, i_columns, i_specs = list()) {
       if (!is.na(by)) value = value * data[[by]]
       data[[i_columns[["name"]][k]]] = value
     }
-    if (NROW(i_columns)) labels = c(labels, paste0("`", i_columns[["name"]], "`"))
+    if (NROW(i_columns)) labels = c(labels, vapply(i_columns[["name"]], function(name) paste(deparse(as.name(name), backtick = TRUE), collapse = ""), character(1)))
   }
   list(data = data, terms = labels)
 }
@@ -259,7 +259,7 @@ build_newdata_design = function(fml, data, factor_levels = list(), i_columns = N
     colnames(design) = gsub(term, prepared[["names"]][[term]], colnames(design), fixed = TRUE)
   }
   if (NROW(i_columns)) {
-    quoted = paste0("`", i_columns[["name"]], "`")
+    quoted = vapply(i_columns[["name"]], function(name) paste(deparse(as.name(name), backtick = TRUE), collapse = ""), character(1))
     matched = match(colnames(design), quoted)
     present = !is.na(matched)
     colnames(design)[present] = i_columns[["name"]][matched[present]]

@@ -50,28 +50,30 @@ idea of what still needs to be completed. Until then, please help us by
 kicking the tyres and creating GitHub issues for both bug reports and
 feature requests.
 
-## Fixest-style entry points
+## Formula syntax and ecosystem methods
 
-`dbreg::feols()` and `dbreg::feglm()` replace supported fixest regression calls
-on DuckDB and native Databricks. They accept data as the second argument,
-column/formula weights and offsets, restricted subsets, additive/composite fixed
-effects, `g[x]` slopes, supported `i()` terms, and post-fit covariance requests.
-Use explicit entry-point namespaces when both packages are attached; attach
-fixest last if also fitting reference fixest models containing `i()`.
+`dbreg()` fits OLS/LPM and `dbglm()` fits Gaussian identity (the default),
+Poisson log, and binomial logit/probit/cloglog models. Both accept column/formula
+weights and offsets, restricted subsets, additive/composite fixed effects,
+`g[x]` slopes and additive `i()` terms. `i()` is parsed inside formulas; dbreg
+exports no replacement for fixest's formula helper or estimator functions.
 
 ```r
-fit = dbreg::feols(y ~ x + i(group, z, ref = "control") | firm + period,
-                  conn = conn, table = "observations", weights = ~w, row_id = "id")
-dbreg::coeftable(fit, cluster = ~firm + period)
+fit = dbreg::dbreg(y ~ x + i(group, z, ref = "control") | firm + period,
+                  conn = conn, table = "observations", weights = ~w,
+                  row_id = "id", retain = "all")
+fixest::coeftable(fit, cluster = ~firm + period)
 predict(fit, newdata) # Outcomes and fitting weights are not required.
 close(fit)
 ```
 
-Adapters retain fitted rows and learned effects by default, with a real database
-storage/runtime cost. `lean = TRUE` releases sample-dependent state after fitting.
-Native `dbreg()`/`dbglm()` keep their compact defaults. See the
-[introduction](vignettes/intro.qmd) for the support/difference table and lifetime
-examples, and `?feols`/`?i` for the API. An executable example is installed at
+The default `retain = "none"` keeps compact results. Opt into
+`retain = "prediction"` for learned-effect prediction or `retain = "all"` for
+sample operations and later covariance requests. Delayed S3 methods support
+fixest coefficient summaries and fixed effects, broom augmentation, and
+modelsummary covariance requests. See the [introduction](vignettes/intro.qmd)
+for supported behavior and resource lifetime, and `?sql_model_matrix` for formula
+coding. An executable example is installed at
 `system.file("examples/fixest-compatibility.R", package = "dbreg")`.
 
 ## Quickstart

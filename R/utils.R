@@ -687,6 +687,7 @@ register_factor_display = function(inputs, factor_levels = list(), level_aliases
   new = setNames(display, internal)[internal != display]
   new = new[!duplicated(names(new)) & !names(new) %in% names(map)]
   if (NROW(i_columns)) {
+    i_columns = i_columns[!duplicated(i_columns[["alias"]]), , drop = FALSE]
     raw = function(v) ifelse(is.na(v), NA_character_, ifelse(v %in% names(map), map[v], v))
     i_display = data.frame(
       name = paste0(raw(i_columns[["var"]]), "::", i_columns[["level"]], ifelse(is.na(i_columns[["by"]]), "", paste0(":", raw(i_columns[["by"]])))),
@@ -694,6 +695,7 @@ register_factor_display = function(inputs, factor_levels = list(), level_aliases
       level = i_columns[["level"]],
       by = raw(i_columns[["by"]])
     )
+    if (anyDuplicated(i_display[["name"]])) stop("Design terms produce duplicate public coefficient names.", call. = FALSE)
     new = new[!names(new) %in% i_columns[["alias"]]]
     new = c(new, setNames(i_display[["name"]], i_columns[["alias"]]))
     i_display = rbind(inputs[["i_columns"]], i_display)

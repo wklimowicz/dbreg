@@ -481,44 +481,6 @@ expand_i_term = function(spec, col_info, k, keep_all_levels = FALSE) {
 # Restricted i() declarations compile to ordinary SQL design columns. The same
 # saved level dictionary drives R and SQL prediction; newdata discovers no levels.
 
-#' Factor indicators and numeric group slopes
-#'
-#' Use additive `i(group)` or `i(group, numeric_column)` terms in [feols()],
-#' [feglm()] and [dbglm()] formulas. Indicators omit the first fitted level
-#' when the model has an intercept or absorbed effects. Group slopes keep all
-#' levels unless `ref` or `keep` is supplied. Formula controls are evaluated in the formula environment;
-#' categorical second variables, binning and interactions around `i()` are
-#' unsupported. Fitted dictionaries are bounded by
-#' `options(dbreg.i_max_columns = 1000)` and reused for prediction.
-#'
-#' @param factor_var Categorical vector, or a source column in a formula.
-#' @param var Optional numeric/logical vector or column for group slopes.
-#' @param ref Levels to omit; `TRUE` omits the first level. `NULL` keeps all.
-#' @param keep Levels to retain. Character selectors use case-insensitive
-#'   partial matching; a leading `@` selects levels by regular expression, and `@!` selects its complement.
-#' @param ... Unsupported controls produce an error.
-#' @return Outside a regression formula, a numeric indicator/group-slope matrix
-#'   with all levels by default. Formula expansion happens in SQL.
-#' @md
-#' @export
-i = function(factor_var,var,ref=NULL,keep=NULL,...) {
-  check_unused_args(list(...))
-  first = factor_var
-  if (!is.atomic(first) || is.matrix(first) || !length(first)) stop("factor_var must be a nonempty vector.",call.=FALSE)
-  second = if(!missing(var)) var else NULL
-  if (!is.null(second) && length(second)!=length(first)) {
-    if (missing(ref) && length(second) %in% 1:2) { ref = second; second = NULL } else stop("var must have the same length as factor_var.",call.=FALSE)
-  }
-  type = if(inherits(first,"integer64") || is.integer(first)) "integer" else if(inherits(first,"Date")) "date" else
-    if(is.numeric(first)) "numeric" else if(is.logical(first)) "logical" else "character"
-  values = if(is.factor(first)) levels(first)[levels(first) %in% as.character(first)] else sort(unique(first[!is.na(first)]))
-  declaration = list(first="group",second=if(!is.null(second)) "var",ref=ref,keep=keep,explicit=TRUE,term="i()")
-  spec = make_i_spec(declaration,values,type,if(!is.null(second)) class(second)[[1L]],intercept=FALSE)
-  result = evaluate_i_spec(spec,first,second)
-  colnames(result) = spec[["labels"]][spec[["selected"]]]
-  result
-}
-
 contains_i_term = function(expr) {
   if (!is.call(expr)) return(FALSE)
   !is.null(parse_sql_i_term(expr)) || any(vapply(as.list(expr)[-1L],contains_i_term,logical(1)))

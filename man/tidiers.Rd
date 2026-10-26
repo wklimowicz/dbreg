@@ -6,7 +6,17 @@
 \alias{glance.dbreg}
 \title{Tidiers for `dbreg` objects}
 \usage{
-\method{tidy}{dbreg}(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE, collin = FALSE, ...)
+\method{tidy}{dbreg}(
+  x,
+  conf.int = FALSE,
+  conf.level = 0.95,
+  fe = FALSE,
+  collin = FALSE,
+  vcov = NULL,
+  cluster = NULL,
+  ssc = NULL,
+  ...
+)
 
 \method{glance}{dbreg}(x, ...)
 }
@@ -22,6 +32,9 @@ Default is `FALSE`.}
 \item{fe}{Should the fixed effects be tidied too? Default is `FALSE`.}
 
 \item{collin}{Include regressors removed for collinearity with `NA` values?}
+
+\item{vcov, cluster, ssc}{Optional covariance request, as in [summary.dbreg()].
+`vcov` may also be a numeric covariance matrix for the fitted coefficients.}
 
 \item{...}{Additional arguments to tidying method. Currently unused except to
 handle superseded arguments.}

@@ -1,4 +1,4 @@
-# Fixest compatibility (development branch)
+# dbreg (development version)
 
 - Linear moments now center variables before forming products, normalize weights,
   and scale rank/solve calculations. Robust score passes retain centered
@@ -43,8 +43,7 @@
   optional DuckDB JSON extension. Prediction state and recovery transfer have
   separate bounds. Automatic two-way sparse fallback on DuckDB is memory planned.
 - Projection outcomes and covariance repair expose diagnostics. Cleanup forgets
-  successful drops and keeps failed drops retryable. Lean adapters prune unused
-  source columns before transient inference retention.
+  successful drops and keeps failed drops retryable. Retained samples preserve immutable row identity.
 - Local Spark 4.2.0 has a small real-SQL syntax/algorithm tier, separate from
   native Databricks ODBC validation and performance benchmarks.
 
@@ -55,27 +54,33 @@
 - Added supported additive `i()` indicators/numeric group slopes with fitted
   references and literal `ref`/`keep` controls. Bounded typed dictionaries drive
   R/SQL prediction, preserving large integer and adjacent-double categories.
-  Malformed/unseen keys and ambiguous public names fail explicitly. OLS designs
-  using the shared Gaussian projector report OLS; native strategy defaults stay
-  unchanged, and compatibility adapters reject the native Mundlak alternative.
+  Malformed/unseen keys and ambiguous public names fail explicitly. Linear models retain native OLS classes, goodness-of-fit statistics and
+  moments/compress/demean strategies, including intercept-only, factor and
+  varying-slope formulas.
 - Added a support/difference table and executable R/SQL lifecycle examples.
 
 - Shared SQL Boolean literals now use `TRUE`/`FALSE`, avoiding native ODBC
-  numeric quoting in subset/cluster predicates. Exported SSC policies use the
-  reference `ssc_type` class for direct fixest interoperability.
+  numeric quoting in subset/cluster predicates. Native estimators share string/list SSC policies with retained inference.
 
-- Added fixest-shaped `feols()`/`feglm()` adapters with data as the second
-  argument, vector/column inputs, supported subsets, singleton policies, response
-  prediction defaults and fit-time two-way OLS inference. Native defaults remain
-  compact; adapter defaults retain sample/prediction state, and `lean=TRUE` releases it.
-- Added coefficient-table/SE/p-value/test-statistic/SSC/df helpers and conditional
-  fixest extraction methods. Adapter likelihood and AIC/BIC use reference conventions.
+- Removed the fixest-shaped estimator facade and colliding helper exports.
+  `dbreg()`/`dbglm()` keep `retain="none"` defaults. Delayed S3 methods support
+  fixest coefficient summaries, fixed effects and coefficient plots, generics
+  augmentation, and insight/modelsummary covariance requests. No fixest global
+  helper is changed. Use `case.names()` for sample IDs.
+- `tidy()` accepts supported covariance requests or a supplied matrix, including
+  the matrix passed by modelsummary, with matching standard errors and intervals.
+- `dbglm()` defaults to Gaussian identity and accepts family strings, functions
+  and family objects. Formula weights/offsets/subsets and lazy-table `data=` work
+  through shared input handling; IV also accepts offsets and subsets.
+- Caller-owned GC cleanup queues retired relations for synchronous cleanup;
+  private retained DuckDB sessions use one thread. `close()` releases owned state.
+
 - `retain="inference"` saves fitted rows/scores without recovering learned FE
   dictionaries. It supports saved-sample operations and post-fit inference.
 
 - `dbglm(family=gaussian())` reuses the shared FE/varying-slope projectors with
   one certified WLS update. Gaussian dispersion, t inference and likelihood
-  follow `fixest::feglm()`. Existing OLS and binomial-cloglog defaults are unchanged.
+  follow `fixest::feglm()`. OLS models continue to use `dbreg()`; binomial fits specify their family.
 - Post-fit OLS IID covariance with `ssc=list(K.adj=FALSE)` now uses the reference
   `N-1` denominator. The default adjusted covariance is unchanged.
 
@@ -84,7 +89,7 @@
   prediction add offsets once; compact offset models require explicit newdata.
 
 - Explicit `retain="all"` saves an immutable database sample and projected scores
-  for default/original-sample prediction, fitted values, residuals and `dbreg::obs()`.
+  for default/original-sample prediction, fitted values, residuals and `stats::case.names()`.
   SQL inputs return keyed relations; R inputs preserve original positions.
 - `vcov()`, `summary()` and `confint()` can recompute IID, HC1, one-/two-way OLS
   and one-way GLM covariance on the retained sample, with supported SSC controls.

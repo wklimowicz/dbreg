@@ -15,7 +15,7 @@ materialize_retained_rows = function(object, query, value_column = NULL) {
 
 #' Retained database regression rows
 #'
-#' `obs()` returns original R positions for R input, or a keyed database relation
+#' `case.names()` returns original R positions for R input, or a keyed database relation
 #' for SQL input. `case.names()` uses the same observation identities. These
 #' operations require fitting with `retain="all"` and its live owning session.
 #' @param x,object A fitted database regression.
@@ -24,8 +24,8 @@ materialize_retained_rows = function(object, query, value_column = NULL) {
 #'   is explicit with `as.data.frame()`; `head()` previews and `close()` releases
 #'   the result. Caller connections remain open.
 #' @importFrom stats case.names fitted residuals
-#' @export
-obs = function(x, ...) {
+#' @name retained-observations
+retained_observations = function(x, ...) {
   check_unused_args(list(...))
   state = retained_inference(x)
   conn = fitted_resource_connection(x[["resource_state"]])
@@ -38,25 +38,25 @@ obs = function(x, ...) {
   materialize_retained_rows(x, paste("SELECT", paste(q(state[["row_id"]]), collapse = ","), from))
 }
 
-#' @rdname obs
+#' @rdname retained-observations
 #' @export
-case.names.dbreg = function(object, ...) obs(object, ...)
+case.names.dbreg = function(object, ...) retained_observations(object, ...)
 
-#' @rdname obs
+#' @rdname retained-observations
 #' @export
 as.data.frame.dbreg_rows = function(x, ...) as.data.frame.dbreg_prediction(x, ...)
 
-#' @rdname obs
+#' @rdname retained-observations
 #' @param n Number of rows to preview.
 #' @export
 head.dbreg_rows = function(x, n = 6L, ...) head.dbreg_prediction(x, n, ...)
 
-#' @rdname obs
+#' @rdname retained-observations
 #' @param con A `dbreg_rows` result.
 #' @export
 close.dbreg_rows = function(con, ...) close.dbreg_prediction(con, ...)
 
-#' @rdname obs
+#' @rdname retained-observations
 #' @export
 print.dbreg_rows = function(x, ...) {
   check_unused_args(list(...))

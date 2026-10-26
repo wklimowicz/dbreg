@@ -1,4 +1,7 @@
-dbreg_test_compat_api = function(conn) {
+dbreg_test_native_api = function(conn) {
+  predict_fit = function(object, ...) {
+    if (inherits(object,"dbglm")) predict(object,...,type="response") else predict(object,...)
+  }
   resources = dbreg:::fit_resources()
   resources[["conn"]] = conn
   on.exit(dbreg:::release_fit_resources(resources), add = TRUE)
@@ -42,9 +45,9 @@ dbreg_test_compat_api = function(conn) {
     list(estimator="feglm",fml=y~x+z|g,family="gaussian",vcov="iid"),
     list(estimator="feols",fml=y~x+z,vcov=~cl,no_subset=TRUE))
   for (case in cases) {
-    message("[Compatibility API] ",case[["estimator"]]," ",paste(deparse(case[["fml"]]),collapse=""))
+    message("[Native API] ",case[["estimator"]]," ",paste(deparse(case[["fml"]]),collapse=""))
     args = list(fml=case[["fml"]],conn=conn,table=table,weights=~w,offset=~o,
-      subset=~keep & u>0,vcov=case[["vcov"]],row_id="id",notes=FALSE)
+      subset=~keep & u>0,vcov=case[["vcov"]],row_id="id",retain="all",ssc=fixest::ssc(),fixef_rm="singletons")
     refargs = list(fml=case[["fml"]],data=d,weights=~w,offset=~o,subset=~keep & u>0,
       vcov=case[["vcov"]],notes=FALSE)
     if (isTRUE(case[["no_subset"]])) args[["subset"]] = refargs[["subset"]] = NULL
@@ -53,32 +56,35 @@ dbreg_test_compat_api = function(conn) {
       refargs[["glm.tol"]] = 1e-12
       refargs[["fixef.tol"]] = 1e-10
     }
-    fit = do.call(if(case[["estimator"]]=="feols") dbreg::feols else dbreg::feglm,args)
+    requested_vcov = args[["vcov"]]
+    args[["vcov"]] = if(inherits(requested_vcov,"formula")) stats::reformulate(tail(all.vars(requested_vcov),1L)) else if(identical(requested_vcov,"hetero")) "hc1" else requested_vcov
+    fit = do.call(if(case[["estimator"]]=="feols") dbreg::dbreg else dbreg::dbglm,args)
+    fit = summary(fit,vcov=requested_vcov)
     models[[length(models)+1L]] = fit
     ref = do.call(if(case[["estimator"]]=="feols") fixest::feols else dbglm_reference_feglm,refargs)
     expect_equal(coef(fit),coef(ref),tolerance=1e-6)
     expect_equal(as.numeric(vcov(fit)),as.numeric(vcov(ref)),tolerance=1e-6)
-    expect_equal(as.numeric(dbreg::coeftable(fit)),as.numeric(as.matrix(fixest::coeftable(ref))),tolerance=1e-5)
+    expect_equal(as.numeric(fixest::coeftable(fit)),as.numeric(as.matrix(fixest::coeftable(ref))),tolerance=1e-5)
     expect_equal(as.numeric(fixest::se(fit)),as.numeric(fixest::se(ref)),tolerance=1e-6)
     expect_equal(as.numeric(fixest::pvalue(fit)),as.numeric(fixest::pvalue(ref)),tolerance=1e-5)
     expect_identical(names(fixest::se(fit)),names(coef(ref)))
     expect_equal(as.numeric(logLik(fit)),as.numeric(logLik(ref)),tolerance=1e-6)
-    expect_equal(AIC(fit),AIC(ref),tolerance=1e-6)
-    expect_equal(BIC(fit),BIC(ref),tolerance=1e-6)
+    expect_equal(AIC(fit),-2*as.numeric(logLik(fit))+2*attr(logLik(fit),"df"),tolerance=1e-6)
+    expect_equal(BIC(fit),-2*as.numeric(logLik(fit))+log(nobs(fit))*attr(logLik(fit),"df"),tolerance=1e-6)
     expect_equal(df.residual(fit),df.residual(ref))
-    expect_equal(dbreg::degrees_freedom(fit,"k"),fixest::degrees_freedom(ref,"k"))
-    expect_equal(dbreg::degrees_freedom(fit,"t"),fixest::degrees_freedom(ref,"t"))
+    expect_equal(attr(vcov(fit),"df.K"),fixest::degrees_freedom(ref,"k"))
+    expect_equal(fit[["df_t"]],fixest::degrees_freedom(ref,"t"))
     ids = fixest::obs(ref)
-    output = dbreg::obs(fit)
+    output = stats::case.names(fit)
     values = as.data.frame(output)
     expect_equal(sort(values[["id"]]),ids)
     close(output)
-    output = predict(fit)
+    output = predict_fit(fit)
     values = as.data.frame(output)
     expect_equal(values[[output[["prediction_column"]]]][match(ids,values[["id"]])],predict(ref),tolerance=1e-6)
     close(output)
-    expect_equal(predict(fit,d),predict(ref,d),tolerance=1e-6)
-    expect_equal(coef(fit,keep="x",order="x"),coef(ref,keep="x",order="x"),tolerance=1e-6)
+    expect_equal(predict_fit(fit,d),predict(ref,d),tolerance=1e-6)
+    expect_equal(fixest::coeftable(fit,keep="x",order="x")[,1L],fixest::coeftable(ref,keep="x",order="x")[,1L],tolerance=1e-6)
     close(fit)
     expect_equal(as.numeric(logLik(fit)),as.numeric(logLik(ref)),tolerance=1e-6)
     expect_identical(dbglm_validation_tables(conn),baseline)
@@ -98,8 +104,8 @@ dbreg_test_compat_api = function(conn) {
   models[[length(models)+1L]] = fit
   ref = fixest::feols(y~x+z|g+h,d,weights=~w,offset=~o,subset=~keep & u>0,notes=FALSE)
   expect_identical(fit[["fitted_state"]][["prediction"]],NULL)
-  expect_equal(as.numeric(vcov(fit,vcov=~g+h,ssc=dbreg::ssc())),as.numeric(vcov(ref,vcov=~g+h)),tolerance=1e-6)
-  output = predict(fit)
+  expect_equal(as.numeric(vcov(fit,vcov=~g+h,ssc=fixest::ssc())),as.numeric(vcov(ref,vcov=~g+h)),tolerance=1e-6)
+  output = predict_fit(fit)
   values = as.data.frame(output)
   expect_equal(values[[output[["prediction_column"]]]][match(fixest::obs(ref),values[["id"]])],predict(ref),tolerance=1e-6)
   close(output)

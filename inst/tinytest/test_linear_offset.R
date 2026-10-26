@@ -12,7 +12,7 @@ local({
   fit = dbreg(y ~ x | g, data = d, offset = "o", retain = "all", diagnostics = TRUE)
   ref = fixest::feols(y ~ x | g, data = d[is.finite(d[["o"]]), ], offset = ~o, fixef.rm = "none", notes = FALSE)
   expect_equal(coef(fit), coef(ref), tolerance = 1e-8)
-  expect_identical(dbreg::obs(fit), 4:80)
+  expect_identical(stats::case.names(fit), 4:80)
   expect_identical(length(predict(fit, sample = "original")), 80L)
   expect_identical(which(is.na(predict(fit, sample = "original"))), 1:3)
   expected = predict(ref, d)

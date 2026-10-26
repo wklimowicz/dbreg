@@ -11,43 +11,40 @@ vignette: >
 `dbreg()` runs regressions through SQL sufficient statistics and retains compact
 results by default. See the README and `?dbreg` for acceleration strategies.
 
-## Supported fixest-style calls
+## Native estimators and fixest formula syntax
 
-Use `dbreg::feols()` for OLS/LPM and `dbreg::feglm()` for Gaussian identity,
-Poisson log, or binomial logit/probit/cloglog models. These adapters accept data as
-the second argument, or database `conn`/`table`/`path` arguments. The supported
-backend pair is DuckDB and native Databricks. Other native `dbreg()` backends
-remain available through their existing APIs.
+Use `dbreg()` for OLS/LPM and `dbglm()` for Gaussian identity (the default),
+Poisson log, or binomial logit/probit/cloglog models. Supply R frames or lazy
+tables with `data =`, or database `conn`/`table`/`path` arguments.
 
 ```r
-fit = dbreg::feols(y ~ x + i(group, z, ref = "control") | firm + period,
-                  conn = conn, table = "observations", weights = ~w, row_id = "id")
-dbreg::coeftable(fit, cluster = ~firm + period)
+fit = dbreg::dbreg(y ~ x + i(group, z, ref = "control") | firm + period,
+                  conn = conn, table = "observations", weights = ~w,
+                  row_id = "id", retain = "all")
+fixest::coeftable(fit, cluster = ~firm + period)
 predict(fit, newdata) # Regressors/FE keys only: no outcome or fitting weights.
 ```
 
-Adapters default to retaining the original fitted rows and prediction state.
-That enables fitted/original-sample predictions, residuals, observation IDs and
-later supported covariance requests. It requires row-sized database storage and
-more work than compact native fitting. `lean = TRUE` releases that state after
-fitting and computing the requested covariance; sample-dependent methods and
-learned-FE prediction then become unavailable. `close(fit)` explicitly releases
-fit-owned database state. Cached coefficients, covariance and likelihood survive.
+Every estimator defaults to `retain = "none"`. `retain = "prediction"` saves
+learned effects; `retain = "inference"` saves rows/scores for sample operations
+and later covariance requests; `retain = "all"` saves both. Saving rows requires
+row-sized database storage. `close(fit)` releases owned database state; cached
+coefficients, covariance and likelihood survive.
 
 ### Support and differences
 
 | Request | Supported behavior and boundary |
 |---|---|
 | Formula | Column main effects, ordinary interactions, `I(x^2)`/`I(x^3)`, additive/composite FEs, group intercepts/slopes `g[x]`. Slope-only `g[[x]]` is unsupported. |
-| `i()` | Additive indicators or numeric/logical group slopes, literal `ref`/`keep`, bounded fitted dictionaries. Categorical second variables, binning and surrounding interactions are unsupported. |
-| Weights/offsets | Columns, one-column formulas, and original-length/scalar R vectors. SQL inputs require columns; transformed formulas such as `~log(w)` are unsupported. |
-| Subsets | Restricted predicates or logical columns; R inputs also accept aligned logical vectors and ordered unique positions/exclusions. Arbitrary R function evaluation and reordered/duplicate positions are unsupported. |
-| Covariance | IID, HC1, one-/two-way OLS and one-way GLM clustering; supported SSC policies. Later cluster columns must be in the retained original source. New external key mappings and arbitrary covariance functions are unsupported. |
+| `i()` | Additive indicators or numeric/logical group slopes, evaluated/frozen `ref`/`keep` selectors, bounded fitted dictionaries. Categorical second variables, binning and surrounding interactions are unsupported. |
+| Weights/offsets | Columns or one-column formulas; transformed formulas such as `~log(w)` are unsupported. |
+| Subsets | Restricted predicate formulas or logical columns. Arbitrary R function evaluation and positional R vectors are unsupported. |
+| Covariance | IID, HC1, and one-way clustering at fit time; retained OLS also supports two-way clustering. String/list SSC policies are shared. Later cluster columns must be in the retained original source. New external key mappings and arbitrary covariance functions are unsupported. |
 | Extraction | `coef`, `vcov`, `summary`, `confint`, `logLik`, `AIC`, `BIC`, `nobs`, residuals, fitted values, `tidy`/`glance`, and the documented coefficient-table helpers. Internal fixest slots and unrelated fixest consumers are unsupported. |
-| IDs | `dbreg::obs()` and `dbreg::degrees_freedom()` provide sample/df extraction. The corresponding `fixest::` functions are not S3 generics and cannot dispatch to dbreg objects. |
+| IDs | `stats::case.names()` extracts sample IDs; `df.residual()` reports residual df. The corresponding `fixest::` functions are not S3 generics and cannot dispatch to dbreg objects. |
 | Prediction | Existing native OLS population intervals remain available; shared Gaussian designs and learned-FE prediction uncertainty are unsupported. R vectors preserve row order/missing positions. SQL output is a keyed relation with explicit collection. Unknown factor levels error; unknown/nonestimable absorbed-effect combinations yield missing predictions. |
 | Persistence | Small learned dictionaries are portable for newdata prediction, including after release. Database dictionaries, retained rows and output handles need their live owning session and cannot be reopened by deserializing a DBI handle. |
-| Large designs | One-/two-FE learned dictionaries can remain in SQL. Larger FE/varying-slope prediction systems have an explicit portable-state budget; use lean/native compact fitting when prediction recovery is unnecessary. Dense slope covariance still needs quadratic space. |
+| Large designs | One-/two-FE learned dictionaries can remain in SQL. Larger FE/varying-slope prediction systems have an explicit portable-state budget; use compact fitting when prediction recovery is unnecessary. Dense slope covariance still needs quadratic space. |
 
 The `i()` reference and fitted coding are reused for every prediction batch.
 Use `i(ref = ...)` for its references; native `factor_refs` controls ordinary
@@ -63,13 +60,13 @@ later indicator terms use a reference. SQL string categories
 use R collation on the bounded fitted dictionary; native DuckDB enums keep their
 level order.
 
-Adapters keep their own `dbreg_fixest` class and inherit the native model class.
-Qualify entry points when both packages are attached. To also fit reference
-fixest models containing `i()`, attach fixest last: its formula reconstruction
-can resolve helpers from the attached search path. Conditional methods support
-fixest's extraction generics, but a dbreg model does not emulate fixest internals.
-Prediction defaults to the response scale in the adapters; native `dbglm()` keeps
-its link-scale default. IV and multi-model fixest adapters are outside this subset.
+Delayed S3 methods support `fixest::coeftable()`, `se()`, `tstat()`, `pvalue()`
+and `fixef()` on native models. `generics::augment()` explicitly collects saved
+sample rows with `.fitted` and `.resid`. `tidy()` and modelsummary accept supported
+covariance requests; a supplied covariance matrix is also accepted by `tidy()`.
+Both packages can be attached in either order. No fixest globals are changed.
+Native `dbglm()` prediction defaults to the link scale; use `type = "response"`
+for means or probabilities. Models do not emulate fixest's internal structure.
 
 ## Repeated external weights
 
@@ -79,8 +76,9 @@ The package has no outer-algorithm or EM state.
 
 ```r
 for (weights in externally_computed_weights) {
-  fit = dbreg::feglm(b ~ x + z | firm, data,
-                    family = binomial("cloglog"), weights = weights, lean = TRUE)
+  data[["current_weight"]] = weights
+  fit = dbreg::dbglm(b ~ x + z | firm, data = data,
+                    family = binomial("cloglog"), weights = ~current_weight)
   estimates = coef(fit)
   close(fit)
 }

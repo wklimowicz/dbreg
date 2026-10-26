@@ -56,7 +56,7 @@ dbreg_test_inference_numerics = function(conn) {
   expect_identical(dbglm_validation_tables(conn), inventory)
   valid = create(paste0("SELECT *,CAST(id AS DOUBLE) AS floating_key,'NaN' AS text_key FROM ", table))
   fit = dbreg(y ~ x, conn = conn, table = valid, row_id = c("floating_key", "text_key"), strategy = "moments", retain = "all")
-  output = dbreg::obs(fit)
+  output = stats::case.names(fit)
   actual = as.data.frame(output)
   expect_equal(sort(actual[["floating_key"]]), as.numeric(seq_len(n)))
   expect_true(all(actual[["text_key"]] == "NaN"))

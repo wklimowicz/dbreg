@@ -168,13 +168,23 @@ glance.dbglm = function(x, ...) {
 #' @rdname dbglm-methods
 #' @export
 print.dbglm = function(x, ...) {
-  if (isTRUE(x[["linear_model"]])) {
-    cat("Database OLS, ", x[["nobs_orig"]], " observations\n", sep = "")
-  } else {
-    cat("Database ", x[["family"]][["family"]], " GLM (", x[["family"]][["link"]], "), ", x[["nobs_orig"]],
-      " observations; ", x[["iterations"]], " IRLS iterations\n", sep = "")
-  }
+  family = x[["family"]]
+  cat("GLM estimation, family = ", family[["family"]], "(", family[["link"]],
+    "), Dep. Var.: ", x[["yvar"]], "\n", sep = "")
+  cat("Observations:", prettyNum(x[["nobs_orig"]], big.mark = ","), "\n")
+  if (length(x[["n_fe_levels"]])) cat("Fixed-effects:",
+    paste(paste0(names(x[["n_fe_levels"]]), ": ", prettyNum(x[["n_fe_levels"]], big.mark = ",")), collapse = "; "), "\n")
+  cat("Standard Errors:", format_vcov_label(x[["vcov_type"]], x[["n_clusters"]]), "\n")
   if (isFALSE(x[["finite_mle"]])) cat("Boundary probability approximation; no finite MLE established; inference unavailable.\n")
-  print(x[["coeftable"]])
+  table = as.matrix(x[["coeftable"]])
+  normal = family[["family"]] %in% c("binomial", "poisson")
+  colnames(table) = c("Estimate", "Std. Error", if (normal) "z value" else "t value", if (normal) "Pr(>|z|)" else "Pr(>|t|)")
+  print_coeftable(table)
+  cat("Log-Likelihood:", format(x[["loglik"]], digits = 6),
+    "  Deviance:", format(x[["deviance"]], digits = 6), "  BIC:", format(stats::BIC(x), digits = 6), "\n")
+  if (!is.null(x[["null_loglik"]]) && is.finite(x[["null_loglik"]]) && x[["null_loglik"]] != 0) {
+    cat("Pseudo R2:", format(1 - x[["loglik"]] / x[["null_loglik"]], digits = 6), "\n")
+  }
+  cat("IRLS iterations:", x[["iterations"]], "\n")
   invisible(x)
 }

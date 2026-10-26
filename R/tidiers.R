@@ -21,6 +21,8 @@ generics::tidy
 #' @param conf.level Confidence level for intervals. Default is 0.95.
 #' @param fe Should the fixed effects be tidied too? Default is `FALSE`.
 #' @param collin Include regressors removed for collinearity with `NA` values?
+#' @param vcov,cluster,ssc Optional covariance request, as in [summary.dbreg()].
+#'   `vcov` may also be a numeric covariance matrix for the fitted coefficients.
 #' @param ... Additional arguments to tidying method. Currently unused except to
 #' handle superseded arguments.
 #' @examples
@@ -32,7 +34,24 @@ generics::tidy
 #' @rdname tidiers
 #' @export
 tidy.dbreg = function(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE,
-                       collin = FALSE, ...) {
+                       collin = FALSE, vcov = NULL, cluster = NULL, ssc = NULL, ...) {
+  custom = is.matrix(vcov)
+  if (custom) {
+    if (!is.null(cluster) || !is.null(ssc) || isTRUE(fe)) stop("A supplied covariance matrix cannot be combined with cluster, ssc, or fe=TRUE.", call. = FALSE)
+    names = names(stats::coef(x))
+    if (!is.numeric(vcov) || !identical(dim(vcov), c(length(names), length(names))) ||
+        any(!is.finite(vcov)) || !isSymmetric(vcov) || any(diag(vcov) < 0)) {
+      stop("`vcov` must be a finite symmetric covariance matrix for the fitted coefficients.", call. = FALSE)
+    }
+    if (is.null(dimnames(vcov))) dimnames(vcov) = list(names, names)
+    if (!setequal(rownames(vcov), names) || !setequal(colnames(vcov), names)) stop("Covariance names must match fitted coefficients.", call. = FALSE)
+    df = attr(vcov, "df.t")
+    vcov = vcov[names, names, drop = FALSE]
+    attr(vcov, "df.t") = if (is.null(df)) x[["df_t"]] else df
+    x[["coeftable"]] = inference_coeftable(x, vcov)
+  } else if (!is.null(vcov) || !is.null(cluster) || !is.null(ssc)) {
+    x = summary.dbreg(x, vcov = vcov, cluster = cluster, ssc = ssc)
+  }
   # superseded args handled through ...
   dots = list(...)
   if (length(dots)) {
@@ -71,7 +90,7 @@ tidy.dbreg = function(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE,
   }
   
   if (isTRUE(conf.int)) {
-    ci = confint(x, level = conf.level, fe = fe)
+    ci = if (custom) inference_confint(x, vcov, NULL, conf.level) else confint(x, level = conf.level, fe = fe)
     ci_match = match(out[["term"]], rownames(ci))
     out[["conf.low"]] = ifelse(is.na(ci_match), NA_real_, ci[ci_match, 1])
     out[["conf.high"]] = ifelse(is.na(ci_match), NA_real_, ci[ci_match, 2])

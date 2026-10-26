@@ -58,6 +58,9 @@ Imports:
   tinyplot,
   utils
 Suggests:
+  broom,
+  insight,
+  modelsummary,
   dplyr,
   binsreg,
   bit64,

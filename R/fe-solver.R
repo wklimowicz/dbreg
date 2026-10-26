@@ -459,11 +459,12 @@ unpack_fe_moments = function(res, K, n_cols, n_extra) {
   )
 }
 
-fe_value_terms = function(conn, columns, extra_sums = character()) {
+fe_value_terms = function(conn, columns, extra_sums = character(), backend_info = detect_backend(conn)) {
+  sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   c(
-    "FSUM(w) AS __h",
-    if (length(columns)) sprintf("FSUM(w*(%s)) AS __b%d", columns, seq_along(columns)),
-    if (length(extra_sums)) sprintf("%s AS __ex%d", vapply(extra_sums, function(e) sql_stable_sum(conn, e), character(1)), seq_along(extra_sums))
+    paste(sum_sql("w"), "AS __h"),
+    if (length(columns)) paste(sum_sql(sprintf("w*(%s)", columns)), "AS", paste0("__b", seq_along(columns))),
+    if (length(extra_sums)) sprintf("%s AS __ex%d", vapply(extra_sums, function(e) sql_stable_sum(conn, e, backend_info), character(1)), seq_along(extra_sums))
   )
 }
 
@@ -507,6 +508,8 @@ validate_moment_limits = function(max_edges, max_entries) {
 project_fe_moments = function(conn, table, columns, identifiers, ops, scales, target, control, create, drop, cache,
                               materialize = TRUE, extra_sums = character(), need_table = TRUE,
                               precomputed = NULL, key = "__dbglm_key") {
+  backend_info = detect_backend(conn)
+  sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   all_intercepts = all(vapply(ops, function(op) identical(op[["v"]], "1.0"), logical(1)))
   n_cols = length(columns)
   n_extra = length(extra_sums)
@@ -535,9 +538,9 @@ project_fe_moments = function(conn, table, columns, identifiers, ops, scales, ta
     budget = list2env(list(rows = 0, cells = 0), parent = emptyenv())
     info = lapply(ops, function(op) projection_fetch(
       conn, paste0(
-        "SELECT ", op[["f"]], " AS id,FSUM(w*(", op[["v"]], ")*(", op[["v"]], ")) AS h",
-        if (n_cols) paste0(",", paste(sprintf("FSUM(w*(%s)*%s) AS b%d", op[["v"]], columns, seq_len(n_cols)), collapse = ",")),
-        if (n_extra) paste0(",", paste(sprintf("FSUM((%s)*%s) AS ex%d", op[["v"]], extra_sums, seq_len(n_extra)), collapse = ",")),
+        "SELECT ", op[["f"]], " AS id,", sum_sql(paste0("w*(", op[["v"]], ")*(", op[["v"]], ")")), " AS h",
+        if (n_cols) paste0(",", paste(paste(sum_sql(sprintf("w*(%s)*%s", op[["v"]], columns)), "AS", paste0("b", seq_len(n_cols))), collapse = ",")),
+        if (n_extra) paste0(",", paste(paste(sum_sql(sprintf("(%s)*%s", op[["v"]], extra_sums)), "AS", paste0("ex", seq_len(n_extra))), collapse = ",")),
         " FROM ", table, " GROUP BY ", op[["f"]], " ORDER BY ", op[["f"]]
       ),
       budget, 2L + n_cols + n_extra, limits
@@ -547,7 +550,7 @@ project_fe_moments = function(conn, table, columns, identifiers, ops, scales, ta
       oi = ops[[i]]
       oj = ops[[j]]
       edge = projection_fetch(conn, paste0(
-        "SELECT ", oi[["f"]], " AS i,", oj[["f"]], " AS j,FSUM(w*(", oi[["v"]], ")*(", oj[["v"]], ")) AS h FROM ",
+        "SELECT ", oi[["f"]], " AS i,", oj[["f"]], " AS j,", sum_sql(paste0("w*(", oi[["v"]], ")*(", oj[["v"]], ")")), " AS h FROM ",
         table, " GROUP BY ", oi[["f"]], ",", oj[["f"]]
       ), budget, 3L, limits)
       pairs[[length(pairs) + 1L]] = list(
@@ -616,7 +619,7 @@ project_fe_moments = function(conn, table, columns, identifiers, ops, scales, ta
     ))
   }
   frame = dbglm_coefficient_frame(info, coefficients)
-  is_dbx = isTRUE(detect_backend(conn)[["is_databricks"]])
+  is_dbx = isTRUE(backend_info[["is_databricks"]])
   inline_intermediate = !materialize && !isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))
   dictionary = dbglm_coefficient_lookup(conn, frame, create, inline = inline_intermediate)
   lookup = dictionary[["source"]]
@@ -741,6 +744,7 @@ dbreg_duckdb_cg_projections = function(
   }
   stopifnot(length(fe) == 2L)
   backend_info = detect_backend(conn)
+  sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   vars = c(yvar, xvar_names)
   limits = projection_limits()
   width = length(vars) + length(extra_sums)
@@ -785,7 +789,7 @@ dbreg_duckdb_cg_projections = function(
     any(!is.finite(scales)) || any(scales <= 0))) {
     stop("Projection scales must be positive and match the projected columns.", call. = FALSE)
   }
-  aggregate = if (equation_metric) "FSUM" else "SUM"
+  aggregate_sql = if (equation_metric) sum_sql else function(expr) paste0("SUM(", expr, ")")
   ids = setdiff(unique(c(fe, cluster_var)), vars)
   if ("__w" %in% c(ids, vars)) {
     stop("Model column conflicts with the internal AP column __w.", call. = FALSE)
@@ -825,12 +829,12 @@ dbreg_duckdb_cg_projections = function(
   keys = c("dbreg_cg_key_1", "dbreg_cg_key_2")
   key_sql = sprintf("CAST(%s AS VARCHAR)", fe)
   sum_terms = c(
-    sprintf("%s((%s) * (%s)) AS s%d", aggregate, w, vars_sql, seq_along(vars)),
-    if (length(extra_sums)) sprintf("%s(%s) AS ex%d", aggregate, extra_sums, seq_along(extra_sums))
+    paste(aggregate_sql(sprintf("(%s) * (%s)", w, vars_sql)), "AS", paste0("s", seq_along(vars))),
+    if (length(extra_sums)) paste(aggregate_sql(extra_sums), "AS", paste0("ex", seq_along(extra_sums)))
   )
   edges_sql = paste0(
     "SELECT ", paste(sprintf("%s AS %s", key_sql, keys), collapse = ", "),
-    ", ", aggregate, "(", w, ") AS ew, ",
+    ", ", aggregate_sql(w), " AS ew, ",
     paste(sum_terms, collapse = ", "), " ", from_statement,
     " GROUP BY ", paste(fe, collapse = ", "),
     " LIMIT ", sprintf("%.0f", max_edges + 1)
@@ -1038,7 +1042,7 @@ dbreg_duckdb_cg_projections = function(
   if (!isTRUE(backend_info[["is_databricks"]]) || isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) {
     checks = vapply(fe, function(f) {
       terms = if (equation_metric) sprintf(
-        "FSUM(__w * %s_tilde) / SQRT(FSUM(__w)) / %.17g AS m%d", vars, scales, seq_along(vars)
+        "%s / SQRT(%s) / %.17g AS m%d", sum_sql(sprintf("__w * %s_tilde", vars)), sum_sql("__w"), scales, seq_along(vars)
       ) else sprintf("SUM(__w * %s_tilde) / SUM(__w) AS m%d", vars, seq_along(vars))
       paste0(
         "SELECT MAX(GREATEST(", paste(sprintf("ABS(m%d)", seq_along(vars)), collapse = ", "),
@@ -1409,11 +1413,12 @@ dbreg_fwl_moments = function(inputs, x_sql, x_names, max_iter, tol) {
 
 # Raw and projected moment queries use the same stable scalar aggregations.
 fwl_information_terms = function(conn, columns) {
-  terms = c("COUNT(*) AS fwl_n", paste(sql_stable_sum(conn, "w"), "AS fwl_sw"))
+  backend_info = detect_backend(conn)
+  terms = c("COUNT(*) AS fwl_n", paste(sql_stable_sum(conn, "w", backend_info), "AS fwl_sw"))
   for (i in seq_along(columns)) for (j in seq_len(i)) {
     terms = c(terms, paste(sql_stable_sum(
       conn,
-      paste0("w*(", columns[[i]], ")*(", columns[[j]], ")")
+      paste0("w*(", columns[[i]], ")*(", columns[[j]], ")"), backend_info
     ), "AS", sprintf("h_%d_%d", i, j)))
   }
   terms
@@ -1528,6 +1533,7 @@ print.dbreg_query_plan = function(x, ...) {
 solve_partial_wls = function(conn, table, x, fe, control, create, drop, response = TRUE, cache = NULL, materialize = TRUE, scales = NULL, extra_sums = character(), need_table = TRUE, precomputed = NULL) {
   columns = c(x, if (response) "z")
   backend_info = detect_backend(conn)
+  sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   slopes = attr(fe, "slopes")
   if (is.null(cache)) cache = new.env(parent = emptyenv())
   if (length(fe) > 1) {
@@ -1536,9 +1542,7 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
       identical(control[["projection_method"]], "auto") && length(columns)) {
       identifiers = unique(c(fe, unlist(slopes)))
       if (is.null(scales)) {
-        norm = as.numeric(backend_get_query(conn, paste("SELECT", paste(sprintf(
-          "FSUM(w*POWER(%s,2)) AS n%d", columns, seq_along(columns)
-        ), collapse = ","), "FROM", table))[1, ])
+        norm = as.numeric(backend_get_query(conn, paste("SELECT", paste(paste(sum_sql(sprintf("w*POWER(%s,2)", columns)), "AS", paste0("n", seq_along(columns))), collapse = ","), "FROM", table))[1, ])
         scales = sqrt(pmax(norm, .Machine[["double.xmin"]]))
       }
       target = control[["fe_tol"]]
@@ -1583,7 +1587,7 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
       for (i in seq_along(fe)) for (v in slopes[[i]]) ops[[length(ops) + 1]] = list(f = fe[i], v = v)
       identifiers = unique(c(fe, unlist(slopes)))
       if (is.null(scales)) {
-        norm = if (length(columns)) as.numeric(backend_get_query(conn, paste("SELECT", paste(sprintf("FSUM(w*POWER(%s,2)) AS n%d", columns, seq_along(columns)), collapse = ","), "FROM", table))[1, ]) else numeric()
+        norm = if (length(columns)) as.numeric(backend_get_query(conn, paste("SELECT", paste(paste(sum_sql(sprintf("w*POWER(%s,2)", columns)), "AS", paste0("n", seq_along(columns))), collapse = ","), "FROM", table))[1, ]) else numeric()
         scales = sqrt(pmax(norm, .Machine[["double.xmin"]]))
       }
       target = control[["fe_tol"]]
@@ -1691,6 +1695,8 @@ dbglm_moments_enabled = function(conn, table, fe, control, cache, columns = 1L) 
 # from group lookups, so roundoff cannot introduce arbitrary row-space effects.
 # State size is O(number of FE coefficients * number of projected columns).
 dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, target, control, create, drop) {
+  backend_info = detect_backend(conn)
+  sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   index = seq_along(columns)
   r = paste0("__cg_r", index)
   d = paste0("__cg_d", index)
@@ -1702,8 +1708,8 @@ dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, targ
     pieces = vapply(seq_along(ops), function(i) {
       op = ops[[i]]
       terms = c(
-        if (is.null(info)) sprintf("SQRT(FSUM(w*(%1$s)*(%1$s))) AS __cg_scale", op[["v"]]),
-        sprintf("FSUM(w*(%s)*(%s)) AS u%d", op[["v"]], inputs, index)
+        if (is.null(info)) paste0("SQRT(", sum_sql(sprintf("w*(%1$s)*(%1$s)", op[["v"]])), ") AS __cg_scale"),
+        paste(sum_sql(sprintf("w*(%s)*(%s)", op[["v"]], inputs)), "AS", paste0("u", index))
       )
       paste0(
         "SELECT ", i, " AS __cg_op,", op[["f"]], " AS __cg_group,", paste(terms, collapse = ","),
@@ -1749,8 +1755,8 @@ dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, targ
     drop(direction)
     joined = create(paste0("SELECT s.*,", paste(paste0("a.", a), collapse = ","), " FROM ", state, " s JOIN ", applied, " a USING (", key, ")"))
     moment = backend_get_query(conn, paste("SELECT", paste(c(
-      sprintf("FSUM(%1$s*%1$s) AS rr%2$d", r, index),
-      sprintf("FSUM(%s*%s) AS da%d", d, a, index)
+      paste(sum_sql(sprintf("%1$s*%1$s", r)), "AS", paste0("rr", index)),
+      paste(sum_sql(sprintf("%s*%s", d, a)), "AS", paste0("da", index))
     ), collapse = ","), "FROM", joined))
     rr = vapply(index, function(j) as.numeric(moment[[paste0("rr", j)]]), numeric(1))
     da = vapply(index, function(j) as.numeric(moment[[paste0("da", j)]]), numeric(1))
@@ -1796,7 +1802,7 @@ dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, targ
       drop(certificate)
     }
     if (!restart) {
-      new_rr = as.numeric(backend_get_query(conn, paste("SELECT", paste(sprintf("FSUM(%1$s*%1$s) AS r%2$d", r, index), collapse = ","), "FROM", state))[1, ])
+      new_rr = as.numeric(backend_get_query(conn, paste("SELECT", paste(paste(sum_sql(sprintf("%1$s*%1$s", r)), "AS", paste0("r", index)), collapse = ","), "FROM", state))[1, ])
       beta = ifelse(active & rr > floor_rr, new_rr / rr, 0)
       next_state = create(paste(
         "SELECT * EXCLUDE(", paste(d, collapse = ","), "),",

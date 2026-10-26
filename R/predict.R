@@ -810,6 +810,8 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
                                            center, trend_aliases, sizes, create, drop, n,
                                            dictionary_components = components, beta = NULL,
                                            expected_rss = NULL, constant = 0, precomputed = NULL) {
+  backend_info = detect_backend(conn)
+  sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   limit = prediction_state_limit()
   limits = projection_limits()
   max_rows = limits[["summary_rows"]]
@@ -853,7 +855,7 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
     # prediction_max_entries bounds the retained matrices and key dictionaries.
     row_cap = min(max_rows, floor((limits[["transfer_cells"]] - payload) / 5L) - 1L)
     if (row_cap < 1L) prediction_state_overflow()
-    sql = fe_moments_sql(conn, source, fe, fe_value_terms(conn, columns),
+    sql = fe_moments_sql(conn, source, fe, fe_value_terms(conn, columns, backend_info = backend_info),
       limit = row_cap + 1, compact = TRUE
     )
     res = read_fe_moments(conn, sql)
@@ -867,8 +869,8 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
   } else {
     info = lapply(ops, function(op) bounded_query(paste0(
       "SELECT ", op[["f"]], " AS id,",
-      "FSUM(w*(", op[["v"]], ")*(", op[["v"]], ")) AS h,",
-      paste(sprintf("FSUM(w*(%s)*(%s)) AS b%d", op[["v"]], columns, seq_along(columns)), collapse = ","),
+      sum_sql(paste0("w*(", op[["v"]], ")*(", op[["v"]], ")")), " AS h,",
+      paste(paste(sum_sql(sprintf("w*(%s)*(%s)", op[["v"]], columns)), "AS", paste0("b", seq_along(columns))), collapse = ","),
       " FROM ", source, " GROUP BY ", op[["f"]], " ORDER BY ", op[["f"]]
     ), length(columns) + 2L))
     pairs = list()
@@ -877,7 +879,7 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
       oj = ops[[j]]
       edge = bounded_query(paste0(
         "SELECT ", oi[["f"]], " AS i,", oj[["f"]], " AS j,",
-        "FSUM(w*(", oi[["v"]], ")*(", oj[["v"]], ")) AS h FROM ", source,
+        sum_sql(paste0("w*(", oi[["v"]], ")*(", oj[["v"]], ")")), " AS h FROM ", source,
         " GROUP BY ", paste(unique(c(oi[["f"]], oj[["f"]])), collapse = ",")
       ), 3L)
       pairs[[length(pairs) + 1L]] = list(
@@ -955,7 +957,7 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
       "MAX(ABS(", residual,
       ")) AS error,MAX(ABS(s.__dbglm_prediction_target)) AS scale"
     ) else
-      paste0("FSUM(s.w*POWER(", residual, ",2)) AS rss")
+      paste(sum_sql(paste0("s.w*POWER(", residual, ",2)")), "AS rss")
     error = backend_get_query(conn, paste0(
       "WITH ", paste(ctes, collapse = ","), " SELECT ", diagnostics, " FROM ",
       source, " s", paste(joins, collapse = "")
@@ -1268,7 +1270,9 @@ predict_linear_state = function(object, newdata, interval) {
 # collecting FE levels. Reusing native table names bounds the number of live
 # intermediates; the fit manager owns all allocations until final adoption.
 prediction_two_fe_projection = function(conn, source, fe, targets, create, drop, tol = 1e-10, max_iter = 100L) {
-  native = isTRUE(detect_backend(conn)[["is_databricks"]])
+  backend_info = detect_backend(conn)
+  sum_sql = function(expr) sql_sum(conn, expr, backend_info)
+  native = isTRUE(backend_info[["is_databricks"]])
   names = paste0("r", seq_along(targets))
   scale_row = backend_get_query(conn, paste("SELECT", paste(sprintf("MAX(ABS(%s)) AS s%d", targets, seq_along(targets)), collapse = ","), "FROM", source))
   scales = pmax(1, as.numeric(scale_row[1L, ]))
@@ -1282,7 +1286,7 @@ prediction_two_fe_projection = function(conn, source, fe, targets, create, drop,
     for (i in seq_along(fe)) {
       f = fe[[i]]
       next_mean = create(paste(
-        "SELECT", f, "AS id,", paste(sprintf("FSUM(w*%s)/FSUM(w) AS %s", names, names), collapse = ","),
+        "SELECT", f, "AS id,", paste(paste0(sum_sql(paste0("w*", names)), "/", sum_sql("w"), " AS ", names), collapse = ","),
         "FROM", residual, "GROUP BY", f
       ), target = means[[i]])
       next_dictionary = create(paste(
@@ -1309,7 +1313,7 @@ prediction_two_fe_projection = function(conn, source, fe, targets, create, drop,
       }
       means[[i]] = next_mean
     }
-    terms = paste(sprintf("ABS(FSUM(w*%s)/FSUM(w)) AS %s", names, names), collapse = ",")
+    terms = paste(paste0("ABS(", sum_sql(paste0("w*", names)), "/", sum_sql("w"), ") AS ", names), collapse = ",")
     branches = vapply(fe, function(f) paste("SELECT", terms, "FROM", residual, "GROUP BY", f), character(1))
     diagnostic = backend_get_query(conn, paste0(
       "SELECT ", paste(sprintf("MAX(%s) AS %s", names, names), collapse = ","),
@@ -1373,6 +1377,8 @@ build_database_prediction_state = function(
   conn, working, retained, fe, components, x,
   design_names, center, create, n, dictionary_components, beta, expected_rss, constant
 ) {
+  backend_info = detect_backend(conn)
+  sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   p = length(x)
   if ((p + 1)^2 > prediction_state_limit()) prediction_state_overflow()
   if (length(beta) != p || any(!is.finite(beta))) stop("Database prediction requires finite fitted slopes.", call. = FALSE)
@@ -1383,8 +1389,8 @@ build_database_prediction_state = function(
   target = "(s.eta-s.__dbglm_o)"
   fields = c(
     paste0("s.", fe, " AS id"),
-    paste0("FSUM(s.__dbglm_a*(", target, "-(", slope, ")))/FSUM(s.__dbglm_a) AS gamma"),
-    sprintf("FSUM(s.__dbglm_a*s.%s)/FSUM(s.__dbglm_a) AS %s", x, mx)
+    paste0(sum_sql(paste0("s.__dbglm_a*(", target, "-(", slope, "))")), "/", sum_sql("s.__dbglm_a"), " AS gamma"),
+    if (p) paste0(sum_sql(paste0("s.__dbglm_a*s.", x)), "/", sum_sql("s.__dbglm_a"), " AS ", mx)
   )
   aggregate = paste("SELECT", paste(fields, collapse = ","), "FROM", working, "s GROUP BY", paste0("s.", fe))
   keys = paste0("k", seq_along(dictionary_components[[1L]]))
@@ -1402,7 +1408,7 @@ build_database_prediction_state = function(
     "MAX(ABS(", residual,
     ")) AS error,MAX(ABS(", target, ")) AS scale"
   ) else
-    paste0("FSUM(s.__dbglm_a*POWER(", residual, ",2)) AS rss,FSUM(s.__dbglm_a*POWER(", target, ",2)) AS scale")
+    paste0(sum_sql(paste0("s.__dbglm_a*POWER(", residual, ",2)")), " AS rss,", sum_sql(paste0("s.__dbglm_a*POWER(", target, ",2)")), " AS scale")
   diagnostic = backend_get_query(conn, paste("SELECT", diagnostics, join))
   recovery_error = if (is.null(expected_rss)) as.numeric(diagnostic[["error"]]) else abs(as.numeric(diagnostic[["rss"]]) - expected_rss)
   tolerance = if (is.null(expected_rss)) 1e-7 else 1e-6
@@ -1543,6 +1549,8 @@ build_database_two_fe_state = function(
   design_names, center, create, drop, n, dictionary_components, beta, expected_rss,
   constant, recovery_control
 ) {
+  backend_info = detect_backend(conn)
+  sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   p = length(x)
   if ((p + 1)^2 > prediction_state_limit()) prediction_state_overflow()
   if (length(beta) != p || any(!is.finite(beta))) stop("Database prediction requires finite fitted slopes.", call. = FALSE)
@@ -1558,13 +1566,13 @@ build_database_two_fe_state = function(
   within = projection[["residual"]]
   columns = projection[["columns"]]
   diagnostics = if (is.null(expected_rss)) paste0("MAX(ABS(", columns[[1L]], "))*(", dbglm_number(scale[[1L]]), ") AS error") else
-    paste0("FSUM(w*POWER(", columns[[1L]], "*(", dbglm_number(scale[[1L]]), "),2)) AS rss")
+    paste(sum_sql(paste0("w*POWER(", columns[[1L]], "*(", dbglm_number(scale[[1L]]), "),2)")), "AS rss")
   diagnostic = backend_get_query(conn, paste("SELECT", diagnostics, "FROM", within))
   recovery_error = if (is.null(expected_rss)) as.numeric(diagnostic[["error"]]) else abs(as.numeric(diagnostic[["rss"]]) - expected_rss)
   if (is.null(expected_rss)) {
     bound = 1e-7 * scale[[1L]]
   } else {
-    norm = backend_get_query(conn, paste("SELECT FSUM(w*POWER(", target, ",2)) AS norm FROM", source))[["norm"]]
+    norm = backend_get_query(conn, paste("SELECT", sum_sql(paste0("w*POWER( ", target, " ,2)")), "AS norm FROM", source))[["norm"]]
     bound = 1e-6 * max(1, abs(expected_rss), as.numeric(norm))
   }
   if (!is.finite(recovery_error) || recovery_error > bound) {

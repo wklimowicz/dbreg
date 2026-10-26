@@ -5,7 +5,7 @@ dbglm_test_databricks_cases = function(conn, verbose = FALSE) {
   # translation and execution on both the fixture and the native warehouse.
   payload = strrep("QUJDZGVmMDEyMzQ1Njc4OSsv", 300000L)
   decoded = dbreg:::backend_get_query(conn, paste0("SELECT LENGTH('", payload,
-    "') AS n,FSUM(x) AS total FROM (SELECT 1.0 AS x UNION ALL SELECT 2.0 AS x) t"))
+    "') AS n,", dbreg:::sql_sum(conn, "x"), " AS total FROM (SELECT 1.0 AS x UNION ALL SELECT 2.0 AS x) t"))
   expect_equal(as.numeric(decoded[["n"]]), nchar(payload))
   expect_equal(as.numeric(decoded[["total"]]), 3)
   # A wide coefficient dictionary must be shared across FE operations. Six

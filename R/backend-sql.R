@@ -1,6 +1,6 @@
 # Translate only generated SQL tokens, preserving quoted source identifiers and
 # literals. Finite predicates are emitted at their owning builders. This
-# temporary adapter still owns aggregate, exclusion and text-type token families.
+# temporary adapter still owns exclusion and text-type token families.
 backend_sql = function(conn, sql) {
   if (!identical(detect_backend(conn)[["name"]], "spark")) return(sql)
   # Consume quoted runs in chunks, without backtracking over each character.
@@ -11,10 +11,17 @@ backend_sql = function(conn, sql) {
   if (sum(nchar(tokens, type = "bytes")) != nchar(sql, type = "bytes")) {
     stop("Could not tokenize the complete generated GLM SQL statement.", call. = FALSE)
   }
-  tokens[tokens == "FSUM"] = "SUM"
   tokens[tokens == "EXCLUDE"] = "EXCEPT"
   tokens[tokens == "VARCHAR"] = "STRING"
   paste0(tokens, collapse = "")
+}
+
+# Ordinary generated aggregates preserve DuckDB compensation without changing
+# Spark's existing double-SUM semantics. Stable working sums remain separate.
+sql_sum = function(conn, expr, backend_info = detect_backend(conn)) {
+  if (!length(expr)) return(character())
+  aggregate = if (identical(backend_info[["name"]], "duckdb")) "FSUM" else "SUM"
+  paste0(aggregate, "(", expr, ")")
 }
 
 # Emit the complete finite predicate where its owning expression is built.
@@ -35,7 +42,7 @@ sql_is_finite = function(conn, expr, backend_info = detect_backend(conn)) {
 # (sum(x*score) cancels heavily). Fixed-point DECIMAL addition is exact, so
 # these sums no longer depend on summation order.
 sql_stable_sum = function(conn, expr, backend_info = detect_backend(conn)) {
-  if (!identical(backend_info[["name"]], "spark")) return(sprintf("FSUM(%s)", expr))
+  if (!identical(backend_info[["name"]], "spark")) return(sql_sum(conn, expr, backend_info))
   value = paste0("(", expr, ")")
   ok = paste0(sql_is_finite(conn, value, backend_info), " AND ABS(", value, ") < 1e10")
   # DECIMAL(38,18) stabilizes distributed cancellation but rounds very small

@@ -218,9 +218,10 @@ dbglm_binomial_working_cte = function(working_name = "working") {
 dbglm_deviance_term = function(conn) paste(sql_stable_sum(conn, "dev"), "AS deviance")
 
 dbglm_saturated_loglik = function(conn, base) {
-  if (!isTRUE(detect_backend(conn)[["is_databricks"]])) return(backend_get_query(conn, paste0(
-    "SELECT FSUM(__dbglm_a*(CASE WHEN __dbglm_y=0 THEN 0.0 ELSE ",
-    "__dbglm_y*LN(__dbglm_y)-__dbglm_y-lgamma(__dbglm_y+1) END)) AS ll FROM ", base
+  backend_info = detect_backend(conn)
+  if (!isTRUE(backend_info[["is_databricks"]])) return(backend_get_query(conn, paste0(
+    "SELECT ", sql_sum(conn, paste0("__dbglm_a*(CASE WHEN __dbglm_y=0 THEN 0.0 ELSE ",
+      "__dbglm_y*LN(__dbglm_y)-__dbglm_y-lgamma(__dbglm_y+1) END)"), backend_info), " AS ll FROM ", base
   ))[["ll"]])
   # Databricks has no lgamma builtin. A bounded count histogram is sufficient
   # for the likelihood constant, with R's canonical lgamma evaluation.

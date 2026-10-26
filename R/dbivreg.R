@@ -120,6 +120,7 @@ dbivreg = function(
   # Collect the (normalised) arguments into the `inputs` environment, which
   # the rest of the pipeline reads from and writes to (reference semantics)
   inputs = new.env(parent = emptyenv())
+  inputs[["retain"]] = "none"
   env2env(
     environment(),
     inputs,

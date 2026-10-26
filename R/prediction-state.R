@@ -58,19 +58,25 @@ prediction_key_fields = function(conn, components) {
   list(fields = fields, columns = columns)
 }
 
-prediction_key_metadata = function(conn, retained, components) {
-  q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
-  sql_types = backend_get_query(conn, paste0("SELECT ", paste0("typeof(", q(components), ") AS t", seq_along(components), collapse = ","),
-    " FROM ", retained, " LIMIT 1"))
-  types = vapply(sql_types, function(type) {
-    type = tolower(type[[1]])
-    if (grepl("^(tinyint|smallint|int|integer|bigint|hugeint|u(tinyint|smallint|integer|bigint|hugeint)|decimal\\([0-9]+,0\\))$", type)) "integer" else
+prediction_key_type = function(type) {
+  type = tolower(type)
+  if (grepl("^(tinyint|smallint|int|integer|bigint|hugeint|u(tinyint|smallint|integer|bigint|hugeint)|decimal\\([0-9]+,0\\))$", type)) "integer" else
     if (type %in% c("double", "double precision")) "numeric" else
     if (type %in% c("float", "real")) "float" else
     if (type %in% c("boolean", "bool")) "logical" else
     if (grepl("^(varchar|char|string|enum)", type)) "character" else
-    if (type == "date") "date" else stop("Portable FE prediction does not support key SQL type '", type, "'.", call. = FALSE)
-  }, character(1))
+    if (type == "date") "date" else NA_character_
+}
+
+prediction_key_metadata = function(conn, retained, components) {
+  q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
+  sql_types = backend_get_query(conn, paste0("SELECT ", paste0("typeof(", q(components), ") AS t", seq_along(components), collapse = ","),
+    " FROM ", retained, " LIMIT 1"))
+  types = vapply(sql_types, function(type) prediction_key_type(type[[1L]]), character(1))
+  if (anyNA(types)) {
+    unknown = tolower(sql_types[[which(is.na(types))[[1L]]]][[1L]])
+    stop("Portable FE prediction does not support key SQL type '", unknown, "'.", call. = FALSE)
+  }
   list(types = unname(types), sql_types = vapply(sql_types, function(type) type[[1]], character(1)))
 }
 
@@ -119,7 +125,7 @@ build_prediction_state = function(conn, working, retained, fe, components, x, de
 build_portable_prediction_state = function(conn, working, retained, fe, components, x, design_names,
                                   center, trend_aliases, sizes, create, drop, n,
                                   dictionary_components = components, beta = NULL,
-                                  expected_rss = NULL, constant = 0) {
+                                  expected_rss = NULL, constant = 0, precomputed = NULL) {
   limit = prediction_state_limit()
   limits = projection_limits()
   max_rows = limits[["summary_rows"]]
@@ -140,8 +146,8 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
     ops[[length(ops) + 1L]] = list(f = fe[i], v = variable, group = i,
       variable = name, center = if (is.null(centers)) 0 else centers[[name]])
   }
-  source = paste0("(", backend_sql(conn, paste0("SELECT * EXCLUDE(w), __dbglm_a AS w,",
-    "(eta-__dbglm_o) AS __dbglm_prediction_target FROM ", working)), ")")
+  source = if (is.null(precomputed)) paste0("(", backend_sql(conn, paste0("SELECT * EXCLUDE(w), __dbglm_a AS w,",
+    "(eta-__dbglm_o) AS __dbglm_prediction_target FROM ", working)), ")") else NULL
   columns = c(x, "__dbglm_prediction_target")
   op_sizes = sizes[vapply(ops, `[[`, integer(1), "group")]
   total = sum(op_sizes) + length(x)
@@ -149,7 +155,11 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
   if (!fe_dense_feasible(c(op_sizes, rep(1, length(x))), length(columns), limits) || total * max(1, rest, length(columns)) > limit) {
     prediction_state_overflow()
   }
-  if (length(fe) >= 2L && length(ops) == length(fe)) {
+  if (!is.null(precomputed)) {
+    info = precomputed[["info"]]
+    sys = precomputed[["sys"]]
+    B = precomputed[["B"]]
+  } else if (length(fe) >= 2L && length(ops) == length(fe)) {
     payload = sum(sizes)*length(columns)
     # Recovery's transient sufficient statistics use the shared transfer budget;
     # prediction_max_entries bounds the retained matrices and key dictionaries.
@@ -184,8 +194,10 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
     if (is.null(sys)) prediction_state_overflow()
     B = do.call(rbind, lapply(info, function(group) as.matrix(group[paste0("b", seq_along(columns))])))
   }
-  global = backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(columns, "w"), collapse = ","), "FROM", source))
-  cross = dbglm_read_information(global, length(columns))
+  cross = if (!is.null(precomputed)) precomputed[["cross"]] else {
+    global = backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(columns, "w"), collapse = ","), "FROM", source))
+    dbglm_read_information(global, length(columns))
+  }
   p = length(x)
   fe_n = sys[["n"]]
   fe_system = sys
@@ -212,40 +224,54 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
     if (length(beta) != p || any(!is.finite(beta)) || is.null(expected_rss)) {
       stop("OLS prediction recovery requires fitted slopes and residual sum of squares.", call. = FALSE)
     }
-    fe_solver = fe_solver(fe_system, new.env(parent = emptyenv()))
-    residual_rhs = matrix(B[, p + 1L] - B[, seq_len(p), drop = FALSE] %*% beta, ncol = 1L)
-    residual_rhs = fe_solver[["project"]](residual_rhs)
-    gamma = fe_solver[["solve"]](residual_rhs)
-    for (i in seq_len(3L)) gamma = gamma + fe_solver[["solve"]](residual_rhs - fe_multiply(fe_system, gamma))
+    if (!is.null(precomputed[["alpha"]])) {
+      alpha = precomputed[["alpha"]]
+      gamma = as.numeric(alpha[, p + 1L] - alpha[, seq_len(p), drop = FALSE] %*% beta)
+    } else {
+      fe_solver = fe_solver(fe_system, new.env(parent = emptyenv()))
+      residual_rhs = matrix(B[, p + 1L] - B[, seq_len(p), drop = FALSE] %*% beta, ncol = 1L)
+      residual_rhs = fe_solver[["project"]](residual_rhs)
+      gamma = fe_solver[["solve"]](residual_rhs)
+      for (i in seq_len(3L)) gamma = gamma + fe_solver[["solve"]](residual_rhs - fe_multiply(fe_system, gamma))
+    }
     coefficients = matrix(c(gamma, beta), ncol = 1L)
   }
   if (any(!is.finite(coefficients))) stop("Prediction coefficient recovery is nonfinite.", call. = FALSE)
-  frame = dbglm_coefficient_frame(info, coefficients[seq_len(fe_n), , drop = FALSE])
-  lookup = dbglm_coefficient_lookup(conn, frame, create)
-  ctes = dbglm_coefficient_ctes(lookup[["source"]], length(ops), "pred")
-  joins = vapply(seq_along(ops), function(i) paste0(" LEFT JOIN pred_g", i, " ON s.", ops[[i]][["f"]], "=pred_g", i, ".__glm_group"), character(1))
-  terms = c(if (p) sprintf("(%s)*s.%s", dbglm_number(coefficients[fe_n + seq_len(p)]), x),
-    vapply(seq_along(ops), function(i) sprintf("(%s)*pred_g%d.c1", if (ops[[i]][["v"]] == "1.0") "1.0" else paste0("s.", ops[[i]][["v"]]), i), character(1)))
-  residual = paste0("((", paste(terms, collapse = "+"), ")-s.__dbglm_prediction_target)")
-  diagnostics = if (is.null(expected_rss)) paste0("MAX(ABS(", residual,
-    ")) AS error,MAX(ABS(s.__dbglm_prediction_target)) AS scale") else
-    paste0("FSUM(s.w*POWER(", residual, ",2)) AS rss")
-  error = backend_get_query(conn, paste0("WITH ", paste(ctes, collapse = ","), " SELECT ", diagnostics, " FROM ",
-    source, " s", paste(joins, collapse = "")))
-  for (table in lookup[["tables"]]) drop(table)
-  if (is.null(expected_rss)) {
-    recovery_error = error[["error"]]
-    if (!is.finite(recovery_error) || recovery_error > 1e-7 * max(1, error[["scale"]])) {
-      stop("Recovered prediction state does not reproduce the fitted linear predictor.", call. = FALSE)
+  if (!is.null(precomputed)) {
+    contrast = c(-beta, 1)
+    recovered = as.numeric(crossprod(contrast, precomputed[["within"]] %*% contrast))
+    recovery_error = abs(recovered - expected_rss)
+    if (!is.finite(recovery_error) || recovery_error > 1e-6 * max(1, abs(expected_rss), cross[p + 1L, p + 1L])) {
+      stop("Recovered OLS effects do not reproduce the fitted residual sum of squares.", call. = FALSE)
     }
   } else {
-    recovery_error = abs(error[["rss"]] - expected_rss)
-    if (!is.finite(recovery_error) || recovery_error > 1e-6 * max(1, abs(expected_rss), cross[p + 1L, p + 1L])) {
-      stop("Recovered OLS effects do not reproduce the fitted residual sum of squares (recovered=",
-        signif(error[["rss"]], 9), ", fitted=", signif(expected_rss, 9), ").", call. = FALSE)
+    frame = dbglm_coefficient_frame(info, coefficients[seq_len(fe_n), , drop = FALSE])
+    lookup = dbglm_coefficient_lookup(conn, frame, create)
+    ctes = dbglm_coefficient_ctes(lookup[["source"]], length(ops), "pred")
+    joins = vapply(seq_along(ops), function(i) paste0(" LEFT JOIN pred_g", i, " ON s.", ops[[i]][["f"]], "=pred_g", i, ".__glm_group"), character(1))
+    terms = c(if (p) sprintf("(%s)*s.%s", dbglm_number(coefficients[fe_n + seq_len(p)]), x),
+      vapply(seq_along(ops), function(i) sprintf("(%s)*pred_g%d.c1", if (ops[[i]][["v"]] == "1.0") "1.0" else paste0("s.", ops[[i]][["v"]]), i), character(1)))
+    residual = paste0("((", paste(terms, collapse = "+"), ")-s.__dbglm_prediction_target)")
+    diagnostics = if (is.null(expected_rss)) paste0("MAX(ABS(", residual,
+      ")) AS error,MAX(ABS(s.__dbglm_prediction_target)) AS scale") else
+      paste0("FSUM(s.w*POWER(", residual, ",2)) AS rss")
+    error = backend_get_query(conn, paste0("WITH ", paste(ctes, collapse = ","), " SELECT ", diagnostics, " FROM ",
+      source, " s", paste(joins, collapse = "")))
+    for (table in lookup[["tables"]]) drop(table)
+    if (is.null(expected_rss)) {
+      recovery_error = error[["error"]]
+      if (!is.finite(recovery_error) || recovery_error > 1e-7 * max(1, error[["scale"]])) {
+        stop("Recovered prediction state does not reproduce the fitted linear predictor.", call. = FALSE)
+      }
+    } else {
+      recovery_error = abs(error[["rss"]] - expected_rss)
+      if (!is.finite(recovery_error) || recovery_error > 1e-6 * max(1, abs(expected_rss), cross[p + 1L, p + 1L])) {
+        stop("Recovered OLS effects do not reproduce the fitted residual sum of squares (recovered=",
+          signif(error[["rss"]], 9), ", fitted=", signif(expected_rss, 9), ").", call. = FALSE)
+      }
     }
   }
-  dictionaries = lapply(seq_along(fe), function(i) {
+  dictionaries = if (!is.null(precomputed)) precomputed[["dictionaries"]] else lapply(seq_along(fe), function(i) {
     prediction_fe_dictionary(conn, retained, fe[i], unique(dictionary_components[[i]]),
       floor(limit / length(fe)), public_components = unique(components[[i]]))
   })

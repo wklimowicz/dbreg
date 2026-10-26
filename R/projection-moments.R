@@ -240,8 +240,8 @@ fe_solver = function(sys, cache, retain_null = FALSE) {
 # only the weight sum, so each is a narrow GROUP BY over one shared source;
 # GROUPING SETS would evaluate every aggregate for every set.
 fe_moments_sql = function(conn, source, fe, value_terms, global_terms = character(), limit = NULL, compact = FALSE, text_keys = FALSE) {
-  if (!text_keys && identical(detect_backend(conn)[["name"]], "spark")) {
-    sql = dbglm_databricks_moments_sql(source, fe, value_terms, global_terms, limit)
+  if (identical(detect_backend(conn)[["name"]], "spark")) {
+    sql = dbglm_databricks_moments_sql(source, fe, value_terms, global_terms, limit, text_keys = text_keys)
     if (!is.null(sql)) return(if (compact) pack_fe_moments_sql(conn, sql, length(fe), value_terms, global_terms, globals_packed = TRUE) else sql)
   }
   K = length(fe)

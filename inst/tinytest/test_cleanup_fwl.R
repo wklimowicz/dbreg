@@ -25,6 +25,10 @@ local({
     expect_equal(fit[["projection_diagnostics"]][[1L]][["details"]][["observation_tables"]], 0L)
     expect_identical(DBI::dbListTables(conn), "fwl_source")
   }
+  prediction = dbreg::dbreg(y ~ x | g + h, conn = conn, table = "fwl_source",
+    strategy = "demean", retain = "prediction")
+  expect_equal(stats::predict(prediction, d), as.numeric(stats::predict(reference)), tolerance = 1e-7)
+  expect_identical(DBI::dbListTables(conn), "fwl_source")
   untrace("fit_table_manager", where = asNamespace("dbreg"))
   traced = FALSE
   # Retention changes the saved state, while estimation uses the same compact

@@ -1,11 +1,12 @@
 # Databricks inlines CTEs, so a UNION branch per FE pair repeatedly plans the
 # predictor. Keep three aggregation branches: globals, FE marginals and pairs.
 # Pairs need only their weight sum, not every diagnostic/score aggregate.
-dbglm_databricks_moments_sql = function(source, fe, value_terms, global_terms = character(), limit = NULL) {
+dbglm_databricks_moments_sql = function(source, fe, value_terms, global_terms = character(), limit = NULL, text_keys = FALSE) {
   K = length(fe)
   # GROUPING_ID uses a signed BIGINT. Keep masks exactly representable in R.
   if (K < 2L || K > 30L) return(NULL)
   aliases = function(terms) sub(".* AS ([A-Za-z_0-9]+)$", "\\1", terms)
+  id_type = if (text_keys) "STRING" else "BIGINT"
   value_names = aliases(value_terms)
   global_names = aliases(global_terms)
   nulls = function(names) if (length(names)) paste0("CAST(NULL AS DOUBLE) AS ", names) else character()
@@ -15,9 +16,9 @@ dbglm_databricks_moments_sql = function(source, fe, value_terms, global_terms = 
       cases = vapply(seq_along(groups), function(i) {
         g = groups[[i]]
         if (length(g) < j) return("")
-        sprintf("WHEN %.0f THEN CAST(%s AS BIGINT)", masks[[i]], fe[g[[j]]])
+        sprintf("WHEN %.0f THEN CAST(%s AS %s)", masks[[i]], fe[g[[j]]], id_type)
       }, character(1))
-      if (!any(nzchar(cases))) return("CAST(NULL AS BIGINT)")
+      if (!any(nzchar(cases))) return(paste0("CAST(NULL AS ", id_type, ")"))
       paste("CASE __gid", paste(cases, collapse = " "), "END")
     }
     fields = c(paste("CASE __gid", paste(sprintf("WHEN %.0f THEN %d", masks, sets), collapse = " "), "END AS __set"),
@@ -30,7 +31,7 @@ dbglm_databricks_moments_sql = function(source, fe, value_terms, global_terms = 
   }
   pairs = utils::combn(K, 2L, simplify = FALSE)
   branches = c(
-    if (length(global_terms)) paste0("SELECT 0 AS __set,CAST(NULL AS BIGINT) AS __i,CAST(NULL AS BIGINT) AS __j,",
+    if (length(global_terms)) paste0("SELECT 0 AS __set,CAST(NULL AS ", id_type, ") AS __i,CAST(NULL AS ", id_type, ") AS __j,",
       paste(c(global_terms, nulls(value_names)), collapse = ","), " FROM ", source),
     grouped(as.list(seq_len(K)), seq_len(K), value_terms),
     grouped(pairs, K + seq_along(pairs), value_terms[1L]))

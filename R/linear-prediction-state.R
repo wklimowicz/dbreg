@@ -2,6 +2,9 @@
 # recovered. Both model classes share the bounded FE kernel and prediction state.
 finalize_linear_prediction = function(result, inputs) {
   if (!retain_prediction(inputs[["retain"]]) || !length(inputs[["fe"]])) return(result)
+  reused = tryCatch(finalize_fwl_prediction(result, inputs),
+    dbreg_prediction_overflow = function(error) NULL)
+  if (!is.null(reused)) return(reused)
   conn = inputs[["conn"]]
   components = lapply(inputs[["prediction_fe_components"]], unique)
   from = inputs[["from_statement"]]
@@ -67,6 +70,79 @@ finalize_linear_prediction = function(result, inputs) {
   levels = inputs[["factor_levels"]]
   if (length(levels)) names(levels) = restore_term_names(names(levels), inputs[["source_map"]])
   result[["factor_levels"]] = levels
+  result
+}
+
+# Native typed IDs already arrived in compact FE summaries. Reuse them as
+# prediction dictionaries, without scanning rows to rank the same keys again.
+fwl_prediction_dictionary = function(ids, sql_type, column) {
+  type = prediction_key_type(sql_type)
+  if (is.na(type)) return(NULL)
+  values = switch(type, numeric = as.numeric(ids), float = as.numeric(ids),
+    logical = ifelse(toupper(ids) == "TRUE", TRUE, ifelse(toupper(ids) == "FALSE", FALSE, NA)), ids)
+  keys = prediction_tuple_key(stats::setNames(list(values), column), type)
+  if (anyNA(keys) || anyDuplicated(keys)) return(NULL)
+  list(columns = column, types = type, key = keys, id = seq_along(ids), sql_types = sql_type)
+}
+
+finalize_fwl_prediction = function(result, inputs) {
+  moments = inputs[["linear_prediction_moments"]]
+  if (is.null(moments) || moments[["nobs"]] != result[["nobs_orig"]]) return(NULL)
+  x = moments[["x"]]
+  p = length(x)
+  map = inputs[["name_map"]]
+  variables = names(map) %in% names(inputs[["source_map"]])
+  map[variables] = coef_var_name(map[variables])
+  design_names = standardize_coef_names(restore_names(x, map))
+  fitted = coef.dbreg(result)
+  if (length(setdiff(names(fitted), design_names))) return(NULL)
+  beta = stats::setNames(rep(0, p), design_names)
+  beta[names(fitted)] = fitted
+  alpha = moments[["alpha"]]
+  gamma = as.numeric(alpha[, 1L] - alpha[, seq_len(p) + 1L, drop = FALSE] %*% unname(beta))
+  starts = cumsum(c(0, moments[["sizes"]]))
+  nuisance_bound = sum(vapply(seq_along(moments[["sizes"]]), function(i)
+    max(abs(gamma[starts[[i]] + seq_len(moments[["sizes"]][[i]])])), numeric(1)))
+  x_bound = sqrt(pmax(diag(moments[["cross"]])[-1L], 0) / moments[["min_weight"]])
+  prediction_bound = nuisance_bound + sum(abs(beta) * x_bound)
+  response_scale = max(1, sqrt(max(moments[["cross"]][1L, 1L], 0) / moments[["sum_w"]]))
+  # Keep the existing row certificate for numerically risky cancellation.
+  if (!is.finite(prediction_bound) || prediction_bound > 1e8 * response_scale) return(NULL)
+  components = lapply(inputs[["prediction_fe_components"]], unique)
+  public = lapply(components, restore_names, map = inputs[["source_map"]])
+  conn = inputs[["conn"]]
+  source = paste0("(SELECT * ", inputs[["from_statement"]], ")")
+  dictionaries = vector("list", length(components))
+  info = moments[["info"]]
+  for (i in seq_along(components)) {
+    ids = info[[i]][["id"]]
+    dictionary = if (length(components[[i]]) == 1L) {
+      fwl_prediction_dictionary(ids, moments[["types"]][[i]], public[[i]])
+    } else {
+      key = paste0("CAST(", DBI::dbQuoteIdentifier(conn, inputs[["fe"]][[i]]), " AS VARCHAR)")
+      dictionary = prediction_fe_dictionary(conn, source, key, components[[i]],
+        floor(prediction_state_limit() / length(components)), public_components = public[[i]])
+      dictionary[["id"]] = match(as.character(dictionary[["id"]]), ids)
+      if (length(dictionary[["id"]]) != length(ids) || anyNA(dictionary[["id"]])) return(NULL)
+      dictionary
+    }
+    if (is.null(dictionary)) return(NULL)
+    dictionaries[[i]] = dictionary
+    info[[i]][["id"]] = seq_along(ids)
+  }
+  order = c(seq_len(p) + 1L, 1L)
+  precomputed = list(info = info, sys = moments[["sys"]],
+    B = moments[["B"]][, order, drop = FALSE], alpha = alpha[, order, drop = FALSE],
+    cross = moments[["cross"]][order, order, drop = FALSE],
+    within = moments[["within"]][order, order, drop = FALSE], dictionaries = dictionaries)
+  state = tryCatch(build_portable_prediction_state(conn, NULL, NULL, inputs[["fe"]], public,
+    x, design_names, moments[["centers"]][-1L], character(), moments[["sizes"]], NULL, NULL,
+    moments[["nobs"]], beta = unname(beta),
+    expected_rss = attr(result[["vcov"]], "rss") / moments[["weight_scale"]],
+    constant = moments[["centers"]][[1L]], precomputed = precomputed),
+    dbreg_prediction_overflow = function(error) NULL)
+  if (is.null(state)) return(NULL)
+  result[["fitted_state"]] = state
   result
 }
 

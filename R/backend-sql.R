@@ -52,6 +52,19 @@ sql_stable_sum = function(conn, expr) {
 
 backend_get_query = function(conn, sql) DBI::dbGetQuery(conn, backend_sql(conn, sql))
 
+# Projection preflights share stable locations and UTF-8 byte bounds across
+# DuckDB and native Spark, without fetching an observation-sized key column.
+sql_projection_mean = function(conn, expr) {
+  if (identical(detect_backend(conn)[["name"]], "duckdb")) return(paste0("FAVG(", expr, ")"))
+  paste0("(", sql_stable_sum(conn, expr), ")/COUNT(*)")
+}
+
+sql_text_bytes = function(conn, expr) {
+  value = paste0("CAST(", expr, " AS VARCHAR)")
+  if (identical(detect_backend(conn)[["name"]], "duckdb")) value = paste0("encode(", value, ")")
+  paste0("OCTET_LENGTH(", value, ")")
+}
+
 # Bounded lookup literals hold FE coefficients or requested prediction keys,
 # never training observation state. A size limit bounds SQL text. The caller
 # owns materialization and cleanup just as for every other projector state.

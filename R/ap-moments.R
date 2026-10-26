@@ -8,7 +8,7 @@ dbreg_moment_projections = function(inputs, x_sql, x_names, max_iter, tol) {
       length(fe) < 2L || length(fe) > 30L) return(NULL)
   if (isTRUE(backend[["is_databricks"]])) validate_databricks_ap_backend(backend)
 
-  if (identical(backend[["name"]], "duckdb") && !is.null(inputs[["retain"]])) {
+  if (!is.null(inputs[["retain"]])) {
     fast = dbreg_fwl_moments(inputs, x_sql, x_names, max_iter, tol)
     if (!is.null(fast)) return(fast)
   }
@@ -178,10 +178,11 @@ dbreg_fwl_moments = function(inputs, x_sql, x_names, max_iter, tol) {
   preflight = backend_get_query(conn, paste("SELECT", paste(c("COUNT(*) AS n", "MIN(w) AS wmin", "MAX(w) AS wmax",
     sprintf("COUNT(DISTINCT %s) AS size%d", fe_ids, seq_along(fe)),
     sprintf("MIN(typeof(%s)) AS type%d", fe_ids, seq_along(fe)),
-    sprintf(paste0("MAX(CASE WHEN typeof(%1$s) IN ('TINYINT','SMALLINT','INTEGER','BIGINT',",
+    sprintf(paste0("MAX(CASE WHEN UPPER(typeof(%1$s)) IN ('TINYINT','SMALLINT','INT','INTEGER','BIGINT',",
       "'UTINYINT','USMALLINT','UINTEGER','UBIGINT','DOUBLE','FLOAT','DATE','BOOLEAN') ",
-      "THEN 64 ELSE OCTET_LENGTH(encode(CAST(%1$s AS VARCHAR))) END) AS bytes%2$d"), fe_ids, seq_along(fe)),
-    sprintf("FAVG(%s) AS center%d", columns, seq_along(columns)),
+      "THEN 64 ELSE %2$s END) AS bytes%3$d"), fe_ids,
+      vapply(fe_ids, function(key) sql_text_bytes(conn, key), character(1)), seq_along(fe)),
+    sprintf("%s AS center%d", vapply(columns, function(column) sql_projection_mean(conn, column), character(1)), seq_along(columns)),
     sprintf("MAX(ABS(%s)) AS maximum%d", columns, seq_along(columns))), collapse = ","), "FROM (", raw, ") raw"))
   nobs = as.numeric(preflight[["n"]])
   sizes = vapply(seq_along(fe), function(i) as.numeric(preflight[[paste0("size", i)]]), numeric(1))
@@ -262,6 +263,18 @@ dbreg_fwl_moments = function(inputs, x_sql, x_names, max_iter, tol) {
     row[[paste0("dbreg_moment_original_", i)]] = maximum[match(c(x_names, yvar)[[i]], vars)]
   }
   row[["dbreg_moment_weight_scale"]] = weight_scale
+  if (retain_prediction(inputs[["retain"]])) {
+    total = sum(sizes) + length(x_names)
+    if (total * max(1, total - max(sizes), length(columns)) <= prediction_state_limit()) {
+      inputs[["linear_prediction_moments"]] = list(
+        info = lapply(moments[["info"]], function(group) group[c("id", "h")]),
+        sys = moments[["sys"]], B = moments[["B"]], alpha = projected[["coefficients"]],
+        cross = raw_moments, within = M, centers = centers, x = x_names,
+        sizes = sizes, nobs = nobs, sum_w = global[["fwl_sw"]], weight_scale = weight_scale,
+        min_weight = as.numeric(preflight[["wmin"]]) / weight_scale,
+        types = vapply(seq_along(fe), function(i) as.character(preflight[[paste0("type", i)]]), character(1)))
+    }
+  }
   tables = resources[["tables"]]
   resources[["tables"]] = character()
   list(table = table, base_table = NULL, all_tables = tables, inline = TRUE, moments = as.data.frame(row),

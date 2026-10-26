@@ -1,3 +1,46 @@
+# Work in D2-scaled coordinates so component deflation remains stable for
+# unequal group weights. Bounded Schur fill permits symmetric Gauss-Seidel;
+# otherwise use an additive block SGS/Jacobi preconditioner without that fill.
+two_way_cg_preconditioner = function(C, d1, d2, limits, available_bytes) {
+  n1 = nrow(C)
+  n2 = ncol(C)
+  system = list(n = n1 + n2, big = seq_len(n1), rest = n1 + seq_len(n2),
+    Cm = C, Dg = d1, diag = c(d1, d2), sizes = c(n1, n2))
+  components = fe_two_components(system)
+  if (is.null(components)) return(NULL)
+  components = components[n1 + seq_len(n2)]
+  total = as.numeric(rowsum(d2, components, reorder = TRUE))
+  root = sqrt(d2)
+  null = root / sqrt(total[components])
+  project = function(value) {
+    sums = rowsum(null * value, components, reorder = TRUE)
+    value - null * sums[components, , drop = FALSE]
+  }
+  row_scaled = C
+  row_scaled@x = row_scaled@x / d1[row_scaled@i + 1L]
+  diagonal = pmax(1 - as.numeric(Matrix::colSums(C * row_scaled)) / d2, .Machine[["double.eps"]])
+  walk = function(value) {
+    as.matrix(Matrix::crossprod(C, as.matrix(C %*% (value / root)) / d1)) / root
+  }
+  degree = as.numeric(Matrix::rowSums(C != 0))
+  fill = n2 + sum(degree^2)
+  if (fill <= limits[["cross_entries"]] && 64 * fill <= available_bytes) {
+    scaled = Matrix::Diagonal(x = 1 / sqrt(d1)) %*% C %*% Matrix::Diagonal(x = 1 / root)
+    S = Matrix::Diagonal(n2) - Matrix::crossprod(scaled)
+    S = S + Matrix::Diagonal(x = diagonal - as.numeric(Matrix::diag(S)))
+    lower = Matrix::tril(S)
+    upper = Matrix::t(lower)
+    precondition = function(value) as.matrix(Matrix::solve(upper,
+      diagonal * as.matrix(Matrix::solve(lower, value))))
+    method = "schur_sgs"
+  } else {
+    precondition = function(value) value / diagonal + value + walk(value)
+    method = "block_sgs"
+  }
+  list(project = project, precondition = precondition, walk = walk,
+    root = root, method = method, components = max(components))
+}
+
 #' Bounded two-way fixed-effect projection for DuckDB and Databricks
 #'
 #' The observation relation remains in the database. Weighted FE-pair counts and
@@ -30,12 +73,21 @@ dbreg_duckdb_cg_projections = function(
     if (backend_info[["name"]] == "duckdb") paste0("OCTET_LENGTH(encode(", value, "))") else
       paste0("OCTET_LENGTH(", value, ")")
   }
+  w = if (is.null(weights)) "1.0" else weights
+  raw_vars = sql_cast_double(c(yvar, xvars_sql), conn)
+  w_double = sql_cast_double(w, conn)
+  center_terms = paste0(vapply(paste0("(", w_double, ")*(", raw_vars, ")"),
+    function(value) sql_stable_sum(conn, value), character(1)), "/(", sql_stable_sum(conn, w_double),
+    ") AS center", seq_along(raw_vars))
   preflight = backend_get_query(conn, paste("SELECT COUNT(*) AS source_n,",
     paste(c(sprintf("COUNT(DISTINCT %s) AS n%d", fe, 1:2),
-      sprintf("MAX(%s) AS bytes%d", vapply(fe, key_bytes, character(1)), 1:2)), collapse = ","), from_statement))
+      sprintf("MAX(%s) AS bytes%d", vapply(fe, key_bytes, character(1)), 1:2), center_terms), collapse = ","), from_statement))
   sizes = as.numeric(preflight[c("n1", "n2")][1L, ])
   key_width = as.numeric(preflight[c("bytes1", "bytes2")][1L, ])
   if (any(!is.finite(c(sizes, key_width))) || any(sizes < 1L)) return(NULL)
+  centers = vapply(seq_along(vars), function(i) as.numeric(preflight[[paste0("center", i)]]), numeric(1))
+  if (any(!is.finite(centers))) return(NULL)
+  vars_sql = paste0("(", raw_vars, "-(", dbglm_number(centers), "))")
   if (sum(sizes)*length(vars) > max_entries) projection_abort("system_limit", "Sparse FE system exceeds its design budget.")
   row_bytes = 4*(sum(key_width) + 128 + 8*(width + 3L))
   remaining = limits[["memory_bytes"]] - 8*sum(sizes)*max(1L, width)*12
@@ -48,7 +100,6 @@ dbreg_duckdb_cg_projections = function(
     stop("Projection scales must be positive and match the projected columns.", call. = FALSE)
   }
   aggregate = if (equation_metric) "FSUM" else "SUM"
-  vars_sql = c(yvar, xvars_sql)
   ids = setdiff(unique(c(fe, cluster_var)), vars)
   if ("__w" %in% c(ids, vars)) {
     stop("Model column conflicts with the internal AP column __w.", call. = FALSE)
@@ -149,19 +200,23 @@ dbreg_duckdb_cg_projections = function(
     dims = c(nrow(means[[1]]), nrow(means[[2]]))
   )
 
-  # S = D2 - C' D1^-1 C. Applying S never constructs its dense matrix.
+  # S = D2 - C' D1^-1 C. The iterative operator never constructs a
+  # dense Schur matrix; every vector stays orthogonal to component nulls.
+  preconditioner = two_way_cg_preconditioner(C, d1, d2, limits,
+    max(0, remaining - nrow(edges) * row_bytes))
+  if (is.null(preconditioner)) return(NULL)
+  project = preconditioner[["project"]]
+  precondition = preconditioner[["precondition"]]
+  root = preconditioner[["root"]]
   rhs = s2 - as.matrix(Matrix::crossprod(C, y1))
-  apply_s = function(b) {
-    b * d2 - as.matrix(Matrix::crossprod(C, as.matrix(C %*% b) / d1))
+  rhs_scaled = project(rhs / root)
+  apply_s = function(value) value - preconditioner[["walk"]](value)
+  normalize = function(value) {
+    if (equation_metric) sweep(value, 2L, scales, "/") else value / root
   }
-  normalize = function(r) {
-    if (equation_metric) sweep(r / sqrt(d2), 2L, scales, "/") else r / d2
-  }
-  diagonal = d2 - as.numeric(Matrix::colSums(C * (Matrix::Diagonal(x = 1 / d1) %*% C)))
-  diagonal = pmax(diagonal, .Machine$double.eps * pmax(d2, 1))
-  b = matrix(0, nrow(y2), ncol(y2))
-  r = rhs
-  z = r / diagonal
+  scaled_b = matrix(0, nrow(y2), ncol(y2))
+  r = rhs_scaled
+  z = project(precondition(r))
   direction = z
   rz = colSums(r * z)
   residual = max(abs(normalize(r)))
@@ -169,28 +224,29 @@ dbreg_duckdb_cg_projections = function(
   for (iter in seq_len(max_iter)) {
     if (is.finite(residual) && residual <= tol) break
     active = apply(abs(normalize(r)), 2L, max) > tol
-    product = apply_s(direction)
+    product = project(apply_s(direction))
     denominator = colSums(direction * product)
     if (any(!is.finite(denominator[active])) || any(denominator[active] <= 0)) return(NULL)
     alpha = numeric(ncol(y2))
     alpha[active] = rz[active] / denominator[active]
     if (any(!is.finite(alpha))) return(NULL)
-    b = b + sweep(direction, 2L, alpha, "*")
+    scaled_b = project(scaled_b + sweep(direction, 2L, alpha, "*"))
     # Recompute the true residual rather than trusting the CG recurrence.
-    r = rhs - apply_s(b)
+    r = project(rhs_scaled - apply_s(scaled_b))
     residual = max(abs(normalize(r)))
     iterations = iter
     if (verbose) message("[AP] iter ", iter, ": max abs mean = ", sprintf("%.4e", residual))
     if (is.finite(residual) && residual <= tol) break
-    z = r / diagonal
+    z = project(precondition(r))
     new_rz = colSums(r * z)
     beta = numeric(ncol(y2))
     beta[active] = new_rz[active] / rz[active]
     if (any(!is.finite(beta))) return(NULL)
-    direction = z + sweep(direction, 2L, beta, "*")
+    direction = project(z + sweep(direction, 2L, beta, "*"))
     rz = new_rz
   }
   if (!is.finite(residual) || residual > tol) return(NULL)
+  b = scaled_b / root
   a = y1 - as.matrix(C %*% b) / d1
   # Exact cell-level residual verification in R: r1 = s1 - d1*a - C*b, r2 = s2 - C'*a - d2*b
   r1 = s1 - a * d1 - as.matrix(C %*% b)
@@ -204,6 +260,15 @@ dbreg_duckdb_cg_projections = function(
   cross_reduction = crossprod(s1, a) + crossprod(s2, b) + crossprod(r1, a) + crossprod(r2, b)
   cross_reduction = 0.5 * (cross_reduction + t(cross_reduction))
   extra_reduction = if (length(extra_sums)) crossprod(a, ex1) + crossprod(b, ex2) else NULL
+  # Public reductions refer to the original columns, while the streamed
+  # within rows use centered coordinates. Restore the constant contribution.
+  total_centered = colSums(s_mat)
+  cross_reduction = cross_reduction + outer(centers, total_centered) +
+    outer(total_centered, centers) + sum(ew) * tcrossprod(centers)
+  if (length(extra_sums)) extra_reduction = extra_reduction + outer(centers, colSums(ex1))
+  raw_a = sweep(a, 2L, centers, "+")
+  raw_s1 = s1 + outer(d1, centers)
+  raw_s2 = s2 + outer(d2, centers)
 
   if (inline_result && isTRUE(backend_info$is_databricks) &&
       !isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) {
@@ -226,8 +291,9 @@ dbreg_duckdb_cg_projections = function(
     )
     success = TRUE
     return(list(table = result_sql, base_table = NULL, all_tables = character(), view_tables = character(),
-      iterations = iterations, max_abs = actual, method = "bounded_pcg", backend_info = backend_info,
-      cross_reduction = cross_reduction, extra_reduction = extra_reduction, s1 = s1, s2 = s2, a = a, b = b,
+      iterations = iterations, max_abs = actual, method = "bounded_pcg", backend_info = backend_info, preconditioner = preconditioner[["method"]],
+      components = preconditioner[["components"]],
+      cross_reduction = cross_reduction, extra_reduction = extra_reduction, s1 = raw_s1, s2 = raw_s2, a = raw_a, b = b,
       transfer_cells = nrow(edges)*(width + 3L), estimated_bytes = nrow(edges)*row_bytes + 8*sum(sizes)*max(1L, width)*12))
   }
   for (k in 1:2) {
@@ -269,7 +335,8 @@ dbreg_duckdb_cg_projections = function(
   }
   success = TRUE
   list(table = tables[["result"]], base_table = NULL, all_tables = state[["created"]], view_tables = intersect(state[["created"]], views),
-    iterations = iterations, max_abs = actual, method = "bounded_pcg", backend_info = backend_info,
-    cross_reduction = cross_reduction, extra_reduction = extra_reduction, s1 = s1, s2 = s2, a = a, b = b,
+    iterations = iterations, max_abs = actual, method = "bounded_pcg", backend_info = backend_info, preconditioner = preconditioner[["method"]],
+      components = preconditioner[["components"]],
+    cross_reduction = cross_reduction, extra_reduction = extra_reduction, s1 = raw_s1, s2 = raw_s2, a = raw_a, b = b,
     transfer_cells = nrow(edges)*(width + 3L), estimated_bytes = nrow(edges)*row_bytes + 8*sum(sizes)*max(1L, width)*12)
 }

@@ -5,7 +5,10 @@
   across IRLS updates. Small systems retain dense factorization. Component null
   projections avoid observation-by-component dense allocations in compact fits;
   numerical zeros rebuild component pins, and direct row scaling handles very
-  small information weights without reciprocal overflow.
+  small information weights without reciprocal overflow. The iterative fallback
+  deflates connected-component null directions and uses bounded Schur SGS or
+  block SGS preconditioning. It centers source columns before solving while
+  preserving the original moment reductions used by GLM inference.
 
 - Linear moments now center variables before forming products, normalize weights,
   and scale rank/solve calculations. Robust score passes retain centered

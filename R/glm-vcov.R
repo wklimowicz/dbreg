@@ -34,7 +34,7 @@ dbglm_ssc = function(ssc) {
   defaults
 }
 
-dbglm_covariance = function(conn, table, x, fit, family, kind, ssc, n) {
+dbglm_covariance = function(conn, table, x, fit, family, kind, ssc, n, cell = FALSE) {
   inverse = dbglm_solve(fit[["H"]])[["inverse"]]
   p = length(x)
   if (ssc[["K.adj"]] && n <= p) stop("Insufficient residual degrees of freedom.", call. = FALSE)
@@ -43,10 +43,10 @@ dbglm_covariance = function(conn, table, x, fit, family, kind, ssc, n) {
     if (ssc[["K.adj"]]) V = V * (n - 1) / (n - p)
     return(list(matrix = V, clusters = NULL))
   }
-  cte = dbglm_working_sql(table, x, fit[["beta"]], family[["link"]])
+  cte = dbglm_working_sql(table, x, fit[["beta"]], family[["link"]], cell = cell)
   if (kind == "hc1") {
     row = backend_get_query(conn, paste0(cte, "SELECT ",
-      paste(dbglm_moment_terms(x, "score*score"), collapse = ", "), " FROM working"))
+      paste(dbglm_moment_terms(x, if (cell) "score_sq" else "score*score"), collapse = ", "), " FROM working"))
     G = NULL
   } else {
     scores = sprintf("SUM((%s)*score) AS s_%d", x, seq_along(x))
@@ -65,7 +65,7 @@ dbglm_covariance = function(conn, table, x, fit, family, kind, ssc, n) {
   list(matrix = V, clusters = G)
 }
 
-dbglm_fe_covariance = function(conn, x, fit, kind, ssc, n, counts) {
+dbglm_fe_covariance = function(conn, x, fit, kind, ssc, n, counts, cell = FALSE) {
   p = length(x)
   K = if (kind == "cluster") counts[["covariance"]] else counts[["covariance"]]
   if (ssc[["K.adj"]] && n <= K) stop("Insufficient residual degrees of freedom.", call. = FALSE)
@@ -85,7 +85,7 @@ dbglm_fe_covariance = function(conn, x, fit, kind, ssc, n, counts) {
       x_cols = paste0("p.", x)
     }
     if (kind == "hc1") {
-      sql = paste0("SELECT ", paste(dbglm_moment_terms(x_cols, "b.score*b.score"), collapse = ","), from)
+      sql = paste0("SELECT ", paste(dbglm_moment_terms(x_cols, if (cell) "b.score_sq" else "b.score*b.score"), collapse = ","), from)
       row = backend_get_query(conn, sql)
     } else {
       scores = sprintf("SUM(%s*b.score) AS s%d", x_cols, seq_along(x))

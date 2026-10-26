@@ -1,6 +1,6 @@
 # Capture only immutable fit context. Strategy flags are passed on each call,
 # so a moment-cap fallback cannot leave a stale strategy in this callback.
-dbglm_fe_state_builder = function(conn, base, x, link, create) {
+dbglm_fe_state_builder = function(conn, base, x, link, create, cell = FALSE) {
   backend_info = detect_backend(conn)
   inline_sql = function(sql) {
     if (isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) {
@@ -38,15 +38,15 @@ dbglm_fe_state_builder = function(conn, base, x, link, create) {
       broadcast = if (isTRUE(backend_info[["is_databricks"]])) paste0("/*+ BROADCAST(", paste0("eta_g", seq_along(ops), collapse = ","), ") */ ") else ""
       st = inline_sql(paste0("WITH ", paste(ctes, collapse = ","), " SELECT ", broadcast, "s.*, CAST((", paste(base_terms, collapse = " + "), ") AS DOUBLE) AS __dbglm_eta FROM ", base, " s", paste(joins, collapse = "")))
     }
-    wk = if (use_moments) inline_sql(paste0(dbglm_working_sql(st, character(), numeric(), link, eta = "__dbglm_eta"), "SELECT * FROM working")) else
-      dbglm_fe_working(conn, st, link, create)
+    wk = if (use_moments) inline_sql(paste0(dbglm_working_sql(st, character(), numeric(), link, eta = "__dbglm_eta", cell = cell), "SELECT * FROM working")) else
+      dbglm_fe_working(conn, st, link, create, cell = cell)
     list(state = st, working = wk, lookup = lookup_sub)
   }
 }
 
 # Working-state construction and diagnostics for absorbed GLMs.
-dbglm_fe_working = function(conn, table, link, create, target = NULL) {
-  create(paste0(dbglm_working_sql(table, character(), numeric(), link, eta = "__dbglm_eta"), "SELECT * FROM working"), target = target)
+dbglm_fe_working = function(conn, table, link, create, target = NULL, cell = FALSE) {
+  create(paste0(dbglm_working_sql(table, character(), numeric(), link, eta = "__dbglm_eta", cell = cell), "SELECT * FROM working"), target = target)
 }
 
 dbglm_fe_evaluate = function(conn, working, x, fe, collect_fe_moments = FALSE, moment_rows = NULL, fe_sizes = NULL, limits = projection_limits()) {

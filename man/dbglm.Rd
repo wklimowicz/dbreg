@@ -24,7 +24,10 @@ dbglm(
   sample_table = NULL,
   separation = c("error", "prediction"),
   retain = c("none", "prediction", "inference", "all"),
-  subset = NULL
+  subset = NULL,
+  strategy = c("auto", "compress", "moments", "ap"),
+  compress_ratio = NULL,
+  compress_nmax = 1e+06
 )
 }
 \arguments{
@@ -108,6 +111,16 @@ newdata prediction needs `"prediction"` or `"all"`.}
 
 \item{subset}{Optional logical column or restricted one-sided predicate
 formula, as in [dbreg()]. Original row identities precede this filter.}
+
+\item{strategy}{`"auto"` selects exact cell compression when its cardinality
+satisfies `compress_ratio` and `compress_nmax`. `"compress"` always uses
+cells; `"moments"` uses original-row IRLS sufficient statistics. `"ap"`
+requires fixed effects and selects SQL alternating projections.}
+
+\item{compress_ratio, compress_nmax}{Compression thresholds, as in [dbreg()].
+Compression groups the expanded regressors, fixed effects, offsets and
+initial cluster. It preserves original observation counts, likelihoods,
+IID and sandwich covariance, and requested original-row retention.}
 }
 \value{
 A compact object of class `c("dbglm", "dbreg")`, containing slopes,
@@ -151,7 +164,7 @@ Missing/nonfinite model values and zero weights are omitted. Model
   weights. The divisor is recorded in `weight_scale`. Likelihood, deviance
   and IID covariance are returned on the original weight scale; sandwich
   covariances are invariant to this rescaling. Score diagnostics use the
-  internal scale. Gaussian models also normalize uniformly large weights and
+  internal scale. All families normalize uniformly large weights. Gaussian models
   combine dispersion and bread on the internal scale before restoring units.
   With absorbed effects, expanded regressor columns are centered internally
   before forming projection moments. Their slopes, units and covariance are

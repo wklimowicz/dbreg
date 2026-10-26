@@ -1,20 +1,3 @@
-# A raw-key preflight avoids ranking and joining every FE dictionary just to
-# discover that no group needs pruning. Only a proven empty removal set skips
-# the existing recursive pruner; any removable group keeps that exact path.
-dbglm_databricks_pruning_needed = function(conn, table, groups, y, mode, family) {
-  if (!length(groups) || mode == "none") return(FALSE)
-  if (length(unique(unlist(groups))) > 30L) return(TRUE)
-  condition = switch(mode,
-    singletons = "__n = 1",
-    infinite_coef = if (family == "poisson") "__hi = 0" else "__lo = __hi",
-    perfect_fit = if (family == "poisson") "(__n = 1 OR __hi = 0)" else "(__n = 1 OR __lo = __hi)")
-  sql = paste0("SELECT COUNT(*) AS n FROM (SELECT COUNT(*) AS __n, MIN(", y,
-    ") AS __lo, MAX(", y, ") AS __hi FROM ", table, " GROUP BY GROUPING SETS (",
-    paste(vapply(groups, function(g) paste0("(", paste(g, collapse = ","), ")"), character(1)), collapse = ","),
-    ")) __dbglm_prune WHERE ", condition)
-  as.numeric(backend_get_query(conn, sql)[["n"]]) > 0
-}
-
 # Databricks inlines CTEs, so a UNION branch per FE pair repeatedly plans the
 # predictor. Keep three aggregation branches: globals, FE marginals and pairs.
 # Pairs need only their weight sum, not every diagnostic/score aggregate.

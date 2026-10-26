@@ -46,8 +46,8 @@ dbglm_solve = function(H, b = NULL) {
   list(beta = beta, inverse = inverse)
 }
 
-dbglm_evaluate = function(conn, table, x, beta, link) {
-  cte = dbglm_working_sql(table, x, beta, link)
+dbglm_evaluate = function(conn, table, x, beta, link, cell = FALSE) {
+  cte = dbglm_working_sql(table, x, beta, link, cell = cell)
   terms = dbglm_moment_terms(x, "w")
   terms = c(terms, sprintf("SUM(w*(%s)*z) AS b_%d", x, seq_along(x)),
     sprintf("%s AS s_%d", vapply(sprintf("(%s)*score", x), function(e) sql_stable_sum(conn, e), character(1)), seq_along(x)),
@@ -61,8 +61,8 @@ dbglm_evaluate = function(conn, table, x, beta, link) {
     deviance = row[["deviance"]], bad = row[["bad"]], mu_min = row[["mu_min"]], mu_max = row[["mu_max"]])
 }
 
-dbglm_irls = function(conn, table, x, beta, family, control, verbose, separation = "error") {
-  current = dbglm_evaluate(conn, table, x, beta, family[["link"]])
+dbglm_irls = function(conn, table, x, beta, family, control, verbose, separation = "error", cell = FALSE) {
+  current = dbglm_evaluate(conn, table, x, beta, family[["link"]], cell = cell)
   initial_information = sqrt(diag(current[["H"]]))
   history = current[["deviance"]]
   halvings_total = 0L
@@ -72,7 +72,7 @@ dbglm_irls = function(conn, table, x, beta, family, control, verbose, separation
     accepted = FALSE
     for (halvings in 0:control[["step_max_halvings"]]) {
       next_beta = beta + step * (candidate - beta)
-      next_state = dbglm_evaluate(conn, table, x, next_beta, family[["link"]])
+      next_state = dbglm_evaluate(conn, table, x, next_beta, family[["link"]], cell = cell)
       # The no-FE path allows boundary trials for separation = "prediction".
       # Its acceptance policy deliberately differs from the absorbed FE fit.
       allowance = dbglm_deviance_allowance(current[["deviance"]])

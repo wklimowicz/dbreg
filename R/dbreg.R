@@ -699,7 +699,8 @@ resolve_compress_ratio = function(compress_ratio, fe) {
     # Stricter compress_ratio logic for 1 and 2 FE cases
     return(if (length(fe) %in% 1:2) 0.6 else 0.01)
   }
-  if (!(is.numeric(compress_ratio) && compress_ratio >= 0 && compress_ratio <= 1)) {
+  if (!is.numeric(compress_ratio) || length(compress_ratio) != 1L ||
+      !is.finite(compress_ratio) || compress_ratio < 0 || compress_ratio > 1) {
     stop("Argument `compress_ratio` ratio must be a numeric in the range [0, 1]\n.")
   }
   compress_ratio

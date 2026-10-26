@@ -65,7 +65,7 @@ local({
   # fixest's independently constructed sample and full clustered covariance.
   clean = d[d[["id"]] <= 480 & d[["f"]] != 3, ]
   dbExecute(conn, paste("CREATE TEMP TABLE", clean_table, "AS SELECT * FROM", source, "WHERE id<=480 AND f!=3"))
-  expect_false(dbreg:::dbglm_databricks_pruning_needed(conn, clean_table,
+  expect_false(dbreg:::dbglm_pruning_needed(conn, clean_table,
     list(c("f", "h1"), "g", "h2", "h3", "h4"), "y", "perfect_fit", "binomial"))
   composite = y ~ x | f^h1 + g + h2 + h3 + h4
   ref_clean = dbglm_reference_feglm(composite, clean, family = binomial("cloglog"), vcov = ~g, fixef.rm = "none")

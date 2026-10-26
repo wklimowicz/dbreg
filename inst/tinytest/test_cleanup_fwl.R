@@ -12,7 +12,8 @@ local({
   # An accidental return to the old N-row materialization path fails here.
   trace("fit_table_manager", where = asNamespace("dbreg"),
     tracer = quote(stop("Read-only FWL requested a table manager.")), print = FALSE)
-  on.exit(untrace("fit_table_manager", where = asNamespace("dbreg")), add = TRUE)
+  traced = TRUE
+  on.exit(if (traced) untrace("fit_table_manager", where = asNamespace("dbreg")), add = TRUE)
   sources = c("fwl_source",
     "(SELECT * EXCLUDE(g),CAST(9007199254740992 AS BIGINT)+g AS g FROM fwl_source) exact_keys",
     "(SELECT * EXCLUDE(g),1.0+g*2.220446049250313e-16 AS g FROM fwl_source) adjacent_keys",
@@ -25,6 +26,7 @@ local({
     expect_identical(DBI::dbListTables(conn), "fwl_source")
   }
   untrace("fit_table_manager", where = asNamespace("dbreg"))
+  traced = FALSE
   # Retention changes the saved state, while estimation uses the same compact
   # moments. Inference deliberately retains original rows for later requests.
   for (retain in c("prediction", "inference", "all")) {

@@ -60,6 +60,23 @@ dbglm_formula = function(fml) {
     factor_display = state[["factor_display"]], i_aliases = state[["i_aliases"]])
 }
 
+# A raw-key preflight avoids ranking and joining every FE dictionary just to
+# discover that no group needs pruning. Only a proven empty removal set skips
+# the existing recursive pruner; any removable group keeps that exact path.
+dbglm_pruning_needed = function(conn, table, groups, y, mode, family) {
+  if (!length(groups) || mode == "none") return(FALSE)
+  if (length(unique(unlist(groups))) > 30L) return(TRUE)
+  condition = switch(mode,
+    singletons = "__n = 1",
+    infinite_coef = if (family == "poisson") "__hi = 0" else "__lo = __hi",
+    perfect_fit = if (family == "poisson") "(__n = 1 OR __hi = 0)" else "(__n = 1 OR __lo = __hi)")
+  sql = paste0("SELECT COUNT(*) AS n FROM (SELECT COUNT(*) AS __n, MIN(", y,
+    ") AS __lo, MAX(", y, ") AS __hi FROM ", table, " GROUP BY GROUPING SETS (",
+    paste(vapply(groups, function(g) paste0("(", paste(g, collapse = ","), ")"), character(1)), collapse = ","),
+    ")) __dbglm_prune WHERE ", condition)
+  as.numeric(backend_get_query(conn, sql)[["n"]]) > 0
+}
+
 # Recursion operates on a snapshot and never rediscovers keys.
 dbglm_prune = function(conn, table, fe, y, mode, create, drop, family = "binomial",
   flags = c("__dbglm_single", "__dbglm_infinite")) {

@@ -40,12 +40,11 @@ dbglm_number = function(x) sprintf("%.17g", x)
 # SQL ROUND commonly rounds halves away from zero, so implement R's ties to
 # even explicitly. Weights here are finite and strictly positive. This is a
 # reporting convention only: never use the rounded values in IRLS or scores.
-dbglm_binomial_loglik = function(conn, working, weight_scale = 1) {
+dbglm_binomial_loglik = function(conn, working, weight_scale = 1, cell = FALSE) {
   a = paste0("(__dbglm_a*(", dbglm_number(weight_scale), "))")
-  rounded = paste0("(CASE WHEN ", a, "-FLOOR(", a, ")<0.5 THEN FLOOR(", a, ") ",
-    "WHEN ", a, "-FLOOR(", a, ")>0.5 THEN CEIL(", a, ") ",
-    "WHEN MOD(FLOOR(", a, "),2.0)=0 THEN FLOOR(", a, ") ELSE CEIL(", a, ") END)")
-  term = paste0(rounded, "*(CASE WHEN __dbglm_y=1 THEN LN(mu) ELSE LN(1.0-mu) END)")
+  rounded = sql_round_even(a)
+  term = if (cell) "__dbglm_round_ay*LN(mu)+(__dbglm_round_a-__dbglm_round_ay)*LN(1.0-mu)" else
+    paste0(rounded, "*(CASE WHEN __dbglm_y=1 THEN LN(mu) ELSE LN(1.0-mu) END)")
   as.numeric(backend_get_query(conn, paste0("SELECT ", sql_stable_sum(conn, term),
     " AS ll FROM ", working))[["ll"]])
 }
@@ -117,19 +116,28 @@ dbglm_family_sql = function(link, eta = "eta", a = NULL, exp_half = NULL) {
   list(mu = mu, derivative = derivative)
 }
 
-dbglm_working_sql = function(table, x, beta, link, eta = NULL) {
+dbglm_working_sql = function(table, x, beta, link, eta = NULL, cell = FALSE) {
+  if (!cell) return(dbglm_working_rows_sql(table, x, beta, link, eta))
+  rows = dbglm_working_rows_sql(table, x, beta, link, eta, working_name = "dbglm_cell_working")
+  deviance = if (link %in% c("identity", "log")) "dev+__dbglm_dev_const" else
+    "-2.0*__dbglm_a*(__dbglm_y*LN(mu)+(1.0-__dbglm_y)*LN(1.0-mu))"
+  paste0(rows, ", working AS (SELECT * EXCLUDE(dev),", deviance, " AS dev,",
+    dbglm_cell_score_square(link), " AS score_sq FROM dbglm_cell_working) ")
+}
+
+dbglm_working_rows_sql = function(table, x, beta, link, eta = NULL, working_name = "working") {
   if (is.null(eta)) eta = paste(c("__dbglm_o", sprintf("(%s)*(%s)", dbglm_number(beta), x)), collapse = " + ")
   if (link == "identity") return(paste0(
     "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
     "means AS (SELECT *,eta AS mu,1.0 AS d FROM predictor), ",
-    "working AS (SELECT *,__dbglm_a AS w,__dbglm_y-__dbglm_o AS z,",
+    working_name, " AS (SELECT *,__dbglm_a AS w,__dbglm_y-__dbglm_o AS z,",
     "__dbglm_a*(__dbglm_y-mu) AS score,__dbglm_a*POWER(__dbglm_y-mu,2) AS dev FROM means) "))
   if (link == "log") {
     kernel = dbglm_family_sql(link)
     return(paste0(
       "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
       "means AS (SELECT *, ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM predictor), ",
-      "working AS (SELECT *, __dbglm_a*mu AS w, eta-__dbglm_o+(__dbglm_y-mu)/mu AS z, ",
+      working_name, " AS (SELECT *, __dbglm_a*mu AS w, eta-__dbglm_o+(__dbglm_y-mu)/mu AS z, ",
       "__dbglm_a*(__dbglm_y-mu) AS score, ",
       "2.0*__dbglm_a*(CASE WHEN __dbglm_y=0 THEN mu ELSE ",
       "__dbglm_y*(LN(__dbglm_y)-eta)-__dbglm_y+mu END) AS dev FROM means) "
@@ -141,7 +149,7 @@ dbglm_working_sql = function(table, x, beta, link, eta = NULL) {
       "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
       "prep AS (SELECT *, ABS(eta) AS __dbglm_abs_eta, EXP(-0.5*POWER(eta,2)) AS __dbglm_eh FROM predictor), ",
       "means AS (SELECT * EXCLUDE (__dbglm_abs_eta, __dbglm_eh), ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM prep), ",
-      dbglm_binomial_working_cte()
+      dbglm_binomial_working_cte(working_name)
     ))
   }
   if (link == "cloglog") {
@@ -150,22 +158,22 @@ dbglm_working_sql = function(table, x, beta, link, eta = NULL) {
       "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
       "prep AS (SELECT *, EXP(LEAST(eta, 700.0)) AS __dbglm_eh FROM predictor), ",
       "means AS (SELECT * EXCLUDE (__dbglm_eh), ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM prep), ",
-      dbglm_binomial_working_cte()
+      dbglm_binomial_working_cte(working_name)
     ))
   }
   kernel = dbglm_family_sql(link)
   paste0(
     "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
     "means AS (SELECT *, ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM predictor), ",
-    dbglm_binomial_working_cte()
+    dbglm_binomial_working_cte(working_name)
   )
 }
 
 # All binomial links share working weights, response, score and deviance.
 # Link-specific code only constructs the mean and its derivative.
-dbglm_binomial_working_cte = function() {
+dbglm_binomial_working_cte = function(working_name = "working") {
   paste0(
-    "working AS (SELECT *, __dbglm_a*d*d/(mu*(1.0-mu)) AS w, ",
+    working_name, " AS (SELECT *, __dbglm_a*d*d/(mu*(1.0-mu)) AS w, ",
     "eta-__dbglm_o+(__dbglm_y-mu)/d AS z, ",
     "__dbglm_a*d*(__dbglm_y-mu)/(mu*(1.0-mu)) AS score, ",
     "-2.0*__dbglm_a*(CASE WHEN __dbglm_y=1 THEN LN(mu) ELSE LN(1.0-mu) END) AS dev ",

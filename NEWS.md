@@ -1,5 +1,15 @@
 # dbreg (development version)
 
+- `dbglm()` supports automatic or explicit exact cell compression before IRLS,
+  alongside original-row moments and SQL AP strategies. Compression preserves
+  fractional-weight likelihoods, original observation counts, IID/HC1/cluster
+  covariance and requested prediction/inference retention across all supported
+  families. Retained original-row scores reuse the compact final projector.
+- All GLM families normalize very small or large weights internally, restoring
+  likelihoods and IID inference to their original units. This prevents false
+  nonconvergence with uniformly large binomial or Poisson weights. A shared
+  raw-key preflight avoids recursive pruning when no FE group needs removal.
+
 - DuckDB linear fixed-effect fits compute within moments from compact group
   information using FWL, without writing observation-sized demeaning tables.
   Robust covariance reads projected rows through an inline join to compact FE

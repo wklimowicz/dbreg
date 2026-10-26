@@ -1,5 +1,5 @@
 # Fisher-scoring IRLS with absorbed fixed effects.
-dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, verbose, cache = NULL, ybar = NULL, vcov_type = "iid") {
+dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, verbose, cache = NULL, ybar = NULL, vcov_type = "iid", cell = FALSE) {
   if (is.null(ybar)) ybar = backend_get_query(conn, paste("SELECT SUM(__dbglm_a*__dbglm_y)/SUM(__dbglm_a) AS y FROM", base))[["y"]]
   intercept = family[["linkfun"]](ybar)
   slopes = attr(fe, "slopes")
@@ -12,7 +12,7 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
     dbglm_fe_evaluate(conn, table, x, fe, collect_fe_moments = collect, moment_rows = bound,
       fe_sizes = cache[["fe_sizes"]], limits = cache[["projection_limits"]])
   }
-  build_state = dbglm_fe_state_builder(conn, base, x, family[["link"]], create)
+  build_state = dbglm_fe_state_builder(conn, base, x, family[["link"]], create, cell = cell)
   make_working = function(beta_val, c_eta_val, gamma_val = NULL, ops = NULL, info = NULL) {
     build_state(beta_val, c_eta_val, gamma_val, ops, info,
       use_moments = use_moments, collect_fe_moments = collect_fe_moments)
@@ -127,7 +127,7 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
       for (halvings in 0:control[["step_max_halvings"]]) {
         next_state = create(paste0("SELECT * EXCLUDE(eta,mu,d,w,z,score,dev,__dbglm_eta,__dbglm_candidate), ",
           "__dbglm_eta + ", dbglm_number(step), "*(__dbglm_candidate-__dbglm_eta) AS __dbglm_eta FROM ", candidate_state), materialize = FALSE)
-        next_working = dbglm_fe_working(conn, next_state, family[["link"]], create, target = alt_working)
+        next_working = dbglm_fe_working(conn, next_state, family[["link"]], create, target = alt_working, cell = cell)
         next_eval = evaluate_working(next_working)
         # Reject Fisher steps that collapse information before the next WLS.
         if (dbglm_fe_step_accepted(current, next_eval, family[["link"]], control)) {

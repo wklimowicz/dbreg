@@ -14,7 +14,7 @@ dbglm_test_databricks_pruning = function(conn) {
   composite = list(c(f, "g"), f)
   check = function(source, groups, family, expected) {
     for (mode in names(expected)) expect_identical(
-      dbreg:::dbglm_databricks_pruning_needed(conn, source, groups, "y", mode, family),
+      dbreg:::dbglm_pruning_needed(conn, source, groups, "y", mode, family),
       expected[[mode]])
   }
   modes = c(singletons = FALSE, infinite_coef = FALSE, perfect_fit = FALSE)
@@ -34,7 +34,7 @@ dbglm_test_databricks_pruning = function(conn) {
   zero = paste0("(SELECT ", f, ",g,CASE WHEN g=10 THEN 0 ELSE 2 END AS y FROM ", table, ")")
   check(zero, composite, "poisson", c(singletons=FALSE, infinite_coef=TRUE, perfect_fit=TRUE))
   check(paste0("(SELECT * FROM ", table, " WHERE 1=0)"), composite, "binomial", modes)
-  expect_false(dbreg:::dbglm_databricks_pruning_needed(NULL, table, composite, "y", "none", "binomial"))
-  expect_false(dbreg:::dbglm_databricks_pruning_needed(NULL, table, list(), "y", "perfect_fit", "binomial"))
-  expect_true(dbreg:::dbglm_databricks_pruning_needed(NULL, table, as.list(paste0("f",1:31)), "y", "perfect_fit", "binomial"))
+  expect_false(dbreg:::dbglm_pruning_needed(NULL, table, composite, "y", "none", "binomial"))
+  expect_false(dbreg:::dbglm_pruning_needed(NULL, table, list(), "y", "perfect_fit", "binomial"))
+  expect_true(dbreg:::dbglm_pruning_needed(NULL, table, as.list(paste0("f",1:31)), "y", "perfect_fit", "binomial"))
 }

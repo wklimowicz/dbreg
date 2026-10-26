@@ -58,27 +58,24 @@
 - Cluster-score cross-products stay in SQL for ordinary and compressed OLS/IV.
   Unconstrained binscatter builds its basis in SQL and collects only bin geometry;
   sampled-table cleanup is installed immediately.
-- Binscatter automatic selection no longer forces compression. Plot intervals
-  inherit the fitted testing degrees of freedom, and simultaneous bands use the
+- Unconstrained binscatter uses automatic strategy selection without fixed
+  effects, and compression for FE level plots to retain explicit coefficients
+  and joint covariance.
+  Plot intervals inherit the fitted testing degrees of freedom, and simultaneous bands use the
   covariance of the plotted contrasts with column-wise standardization. Bands
   also work with pointwise intervals disabled.
 - Automatic no-FE fitting skips compression probes for known continuous R input.
   Exact prediction keys are cast before collection, avoiding a second full fetch.
-  Added numerical-invariance and DBI-transfer regression tests and five benchmark
-  profiles covering translations, integer products, extreme weights and large
-  cluster dictionaries.
+  Added numerical-invariance and DBI-transfer regression tests.
 
 - DuckDB/Spark SQL weights now reject infinities during input validation for
-  OLS/IV, before they reach numerical factorization. Benchmark rejection gates
-  distinguish supported validation/numerical refusals from unrelated errors.
+  OLS/IV, before they reach numerical factorization.
 
 - Compression now applies the same declared full-FE degrees-of-freedom policy
   as within estimation on disconnected/nested graphs; numerical dummy rank no
   longer silently changes covariance corrections across strategies.
 
 - Independent references are protected against compatibility-export masking.
-  A maintained isolated benchmark corpus covers FE geometry, models and workflows,
-  with source provenance and unsuccessful results preserved.
 - FE projection, backend SQL and resource helpers are shared across estimators.
   Compact marginal/pair/global transport avoids mostly-NULL transfers and needs no
   optional DuckDB JSON extension. Prediction state and recovery transfer have
@@ -159,12 +156,12 @@
   retained observations. For fractional binomial weights, `logLik()` matches
   fixest/R's rounded-weight reporting convention. Use
   `logLik(model, type = "weighted")` for the unrounded objective.
-- See `inst/FIXEST-COMPATIBILITY.txt` for the staged compatibility contract and
-  outstanding prediction, formula, inference and fitted-state work.
-- `dbreg()` rejects unused arguments, including unsupported OLS offsets.
+- Estimator help pages and the introductory vignette describe supported
+  prediction, formula, inference and fitted-state requests.
+- `dbreg()` rejects unused arguments.
   Coefficient, covariance, confidence-interval and prediction methods reject
   unsupported requests rather than silently ignoring them. Existing `query_only`
-  and `fes` aliases remain supported. Post-fit clustering remains pending.
+  and `fes` aliases remain supported.
 - Saved linear-model formulas and compressed prediction formulas no longer
   capture the caller's data or fit-time connection environment. Existing fitted
   coding and predictions are preserved when serializing compact objects.

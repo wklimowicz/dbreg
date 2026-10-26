@@ -25,20 +25,27 @@ dbreg(weight ~ Time | Diet + Chick, data = ChickWeight, strategy = "mundlak")
 ## Repository Structure
 
 - `R/` — Package source:
-  - `dbreg.R` — public API, input processing, strategy selection, alternating projections, finalization
-  - `dbivreg.R` — IV public API, IV formula parsing, IV strategies, first-stage/overid diagnostics
-  - `strategies.R` — strategy execution functions (called from `dbreg.R`)
-  - `frames.R` — estimation frames: base, demeaned (incl. AP) CTEs and the moments query over them
+  - `dbreg.R` — OLS public API, input processing, strategy selection and finalization
+  - `dbivreg.R` — IV public API, formula parsing, strategies and diagnostics
+  - `dbglm.R` — GLM public API, input processing and fit orchestration
+  - `strategies.R` — linear strategy execution
+  - `frames.R` — estimation frames and moment queries
   - `fit.R` — estimators on sufficient statistics (`cross_moments()`, `fit_ols()`, `fit_2sls()`, `fit_meat()`)
-  - `vcov.R` — variance-covariance and meat matrix computation (shared across strategies)
-  - `utils.R` — shared helpers: SQL dialect, formula parsing, connection setup, `env2env`
-  - `dbbinsreg.R` — binscatter on database backends
-  - `sql_model_matrix.R` — factor/interaction expansion to SQL
-  - `stats-methods.R`, `tidiers.R`, `print.R`, `gof.R`, `plot.r` — S3 methods and output
+  - `vcov.R` — covariance calculation, SSC and completed inference records
+  - `fe-solver.R` — shared FE moment transport, projection systems and solvers
+  - `glm-family.R`, `glm-fit.R` — GLM family/SQL helpers and IRLS fitting
+  - `utils.R` — formula, source naming, connection setup and shared utilities
+  - `backend-sql.R` — backend SQL helpers and compact payload codecs
+  - `retain.R` — resource leases, retained samples and post-fit inference
+  - `predict.R` — coefficient/statistical methods and R/SQL prediction
+  - `dbbinsreg.R` — binscatter orchestration, basis construction and evaluation
+  - `sql_model_matrix.R` — formula/design compilation and factor/interaction expansion
+  - `tidiers.R`, `print.R`, `gof.R`, `plot.r` — output and ecosystem methods
+  - `dbreg-options.R`, `dbreg-package.R` — options, package metadata and check declarations
 - `inst/tinytest/` — Test suite (tinytest framework).
 - `man/` — roxygen2-generated `.Rd` files.
-- `vignettes/` — Package vignette (`intro.qmd`).
-- `_benchmarks/` — Performance comparisons with plots.
+- `vignettes/` — Introductory and binomial vignette sources.
+- `_benchmarks/` — Developer benchmark scripts (excluded from package builds).
 - `nyc-taxi/` — Large test dataset (180M rows, Hive-partitioned parquet). Not in repo; see download instructions below.
 - `SCRATCH/` — Developer scratch files and experiments (not part of the package).
 

@@ -42,7 +42,7 @@ coefficients, covariance and likelihood survive.
 | Covariance | IID, HC1, and one-way clustering at fit time; retained OLS also supports two-way clustering. String/list SSC policies are shared. Later cluster columns must be in the retained original source. New external key mappings and arbitrary covariance functions are unsupported. |
 | Extraction | `coef`, `vcov`, `summary`, `confint`, `logLik`, `AIC`, `BIC`, `nobs`, residuals, fitted values, `tidy`/`glance`, and the documented coefficient-table helpers. Internal fixest slots and unrelated fixest consumers are unsupported. |
 | IDs | `stats::case.names()` extracts sample IDs; `df.residual()` reports residual df. The corresponding `fixest::` functions are not S3 generics and cannot dispatch to dbreg objects. |
-| Prediction | Existing native OLS population intervals remain available; shared Gaussian designs and learned-FE prediction uncertainty are unsupported. R vectors preserve row order/missing positions. SQL output is a keyed relation with explicit collection. Unknown factor levels error; unknown/nonestimable absorbed-effect combinations yield missing predictions. |
+| Prediction | Existing native OLS population intervals remain available; GLM prediction intervals and learned-FE prediction uncertainty are unsupported. R vectors preserve row order/missing positions. SQL output is a keyed relation with explicit collection. Unknown factor levels error; unknown/nonestimable absorbed-effect combinations yield missing predictions. |
 | Persistence | Small learned dictionaries are portable for newdata prediction, including after release. Database dictionaries, retained rows and output handles need their live owning session and cannot be reopened by deserializing a DBI handle. |
 | Large designs | One-/two-FE learned dictionaries can remain in SQL. Larger FE/varying-slope prediction systems have an explicit portable-state budget; use compact fitting when prediction recovery is unnecessary. Dense slope covariance still needs quadratic space. |
 
@@ -106,9 +106,8 @@ clustering, outcome-free prediction and portable-state release is installed at:
 source(system.file("examples/fixest-compatibility.R", package = "dbreg"))
 ```
 
-See `system.file("FIXEST-COMPATIBILITY.txt", package = "dbreg")` for statistical
-conventions, validation provenance and measured performance costs. Ordinary OLS
-keeps its existing fast strategies. `i()`/factor-coercion/varying-slope OLS uses the
-shared Gaussian projector and can cost substantially more for simple models;
-full compatibility also retains database rows. Do not infer compact/native
-throughput or warehouse resource cost from a small returned R object.
+The support table above and the estimator help pages describe statistical
+conventions and supported requests. OLS formulas, including supported `i()`,
+factor and varying-slope terms, use `dbreg()`'s linear strategies. Retention is
+opt-in; the default remains `retain = "none"`. Database work and retained SQL
+storage are separate from the size of the returned R object.

@@ -540,8 +540,8 @@ inference_coefficients = function(object, V) {
   beta
 }
 
-inference_coeftable = function(object, V, distribution = NULL) {
-  beta = inference_coefficients(object, V)
+inference_coeftable = function(object, V, distribution = NULL, coefficients = NULL) {
+  beta = if (is.null(coefficients)) inference_coefficients(object, V) else coefficients
   se = sqrt(Matrix::diag(V))
   statistic = beta / se
   normal = if (is.null(distribution)) inherits(object, "dbglm") && object[["family"]][["family"]] %in% c("binomial", "poisson") else distribution == "normal"
@@ -573,7 +573,7 @@ summary.dbreg = function(object, vcov = NULL, cluster = NULL, ssc = NULL, vcov_f
     compact = function(value) if (inherits(value, "formula")) stats::as.formula(paste(deparse(value, width.cutoff = 500L), collapse = ""), env = baseenv()) else value
     if (!is.null(vcov) || !is.null(cluster)) object[["covariance_request"]] = list(vcov = compact(vcov), cluster = compact(cluster))
     object[["all_coefficients"]] = coef.dbreg(object, fe = TRUE)
-    object = install_inference_result(object, inference)
+    object = install_inference_result(object, inference, inference_coefficients(object, inference[["covariance"]]))
     object[["postfit_covariance"]] = TRUE
   }
   class(object) = unique(c(if (inherits(object, "dbglm")) "summary.dbglm", "summary.dbreg", class(object)))

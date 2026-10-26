@@ -785,7 +785,7 @@ restore_result_names = function(result, inputs) {
   if (!is.null(result[["coeftable"]])) {
     rownames(result[["coeftable"]]) = restore_names(rownames(result[["coeftable"]]), coef_map)
   }
-  if (!is.null(result[["vcov"]])) {
+  if (is.null(result[["inference_result"]]) && !is.null(result[["vcov"]])) {
     dimnames(result[["vcov"]]) = lapply(dimnames(result[["vcov"]]), restore_names, map = coef_map)
   }
   for (f in c("xvars", "collin.var", "coef_names", "coef_names_all", "endogenous", "instruments")) {
@@ -810,6 +810,22 @@ restore_result_names = function(result, inputs) {
     fml = if (inherits(result[["fml"]], "Formula")) formula(result[["fml"]]) else result[["fml"]]
     result[["fml"]] = Formula(rename_expr_vars(fml, map))
   }
+  inference = result[["inference_result"]]
+  if (!is.null(inference)) {
+    # Binscatter restores public names after the inner dbreg fit is complete.
+    # Rebind the completed covariance coordinates without changing its policy.
+    coordinates = rownames(result[["coeftable"]])
+    V = inference[["covariance"]]
+    dimnames(V) = rep(list(coordinates), 2L)
+    inference = new_inference_result(V, inference[["kind"]], coordinates,
+      lapply(inference[["clusters"]], restore_names, map = map),
+      inference[["n_clusters"]], inference[["ssc"]], inference[["n_params_vcov"]],
+      inference[["df_t"]], inference[["distribution"]], inference[["repair"]],
+      inference[["status"]], inference[["reason"]])
+    coefficients = stats::setNames(result[["coeftable"]][, "estimate"], coordinates)
+    result = install_inference_result(result, inference, coefficients)
+  }
+
   result
 }
 

@@ -52,7 +52,8 @@ dbglm_test_separation = function(conn, verbose = FALSE) {
   tryCatch({
     fit = dbglm(y ~ x, conn = conn, table = table, family = family, weights = "a", ssc = list(K.adj = FALSE))
     expect_equal(coef(fit), expected, tolerance = 1e-7)
-    expect_equal(unname(vcov(fit)), unname(solve(H)), tolerance = 1e-7)
+    expect_identical(dim(vcov(fit)), dim(H))
+    expect_equal(as.numeric(vcov(fit)), as.numeric(solve(H)), tolerance = 1e-7)
     expect_true(fit[["converged"]] && fit[["score_max"]] <= fit[["control"]][["score_tol"]])
     # The same finite slope survives absorption, with both outcomes in every FE.
     crossed = merge(finite, expand.grid(f = 1:3, g = 1:2))

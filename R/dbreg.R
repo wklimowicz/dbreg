@@ -1315,17 +1315,23 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   result = finalize_linear_prediction(result, inputs)
   result = finalize_linear_inference(result, inputs)
   result = finalize_linear_sample(result, inputs)
+  # Install while setup still owns resources, so validation errors are cleaned up.
+  class(result) = unique(class)
+  V = result[["vcov"]]
+  coordinates = rownames(result[["coeftable"]])
+  dimnames(V) = rep(list(coordinates), 2L)
+  coefficients = stats::setNames(result[["coeftable"]][, "estimate"], coordinates)
+  clusters = if (attr(V, "type") == "cluster") list(restore_names(inputs[["cluster_var"]], inputs[["source_map"]])) else list()
+  inference = new_inference_result(V, attr(V, "type"), coordinates, clusters,
+    attr(V, "n_clusters"), attr(V, "ssc"), attr(V, "n_params"), attr(V, "df.t"), "t", attr(V, "repair"))
+  result = install_inference_result(result, inference, coefficients)
   if (identical(result[["fitted_state"]][["resources"]][["storage"]], "database")) {
     inputs[["sample_resources"]][["own_conn"]] = isTRUE(inputs[["own_conn"]])
     result = finalize_retained_resources(result, inputs[["sample_resources"]])
     inputs[["own_conn"]] = FALSE
   }
   result[["strategy"]] = chosen_strategy
-  result[["ssc"]] = attr(result[["vcov"]], "ssc")
-  result[["n_params"]] = attr(result[["vcov"]], "n_params")
-  result[["df_t"]] = attr(result[["vcov"]], "df.t")
   # i() columns (display names), for predict()
   result[["i_columns"]] = inputs[["i_columns"]]
-  class(result) = unique(class)
   result
 }

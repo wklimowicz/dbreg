@@ -561,14 +561,8 @@ execute_dbglm_fit = function(inputs) {
   }
   dimnames(V) = list(public, public)
   beta = stats::setNames(fit[["beta"]], public)
-  se = sqrt(diag(V))
-  z = beta / se
   test_df = if (is.numeric(ssc[["t.df"]])) ssc[["t.df"]] else if (!is.null(covariance_result[["clusters"]]) && ssc[["t.df"]] == "min")
     max(covariance_result[["clusters"]] - 1, 1) else max(n - counts[["covariance"]], 1)
-  coeftable = cbind(
-    estimate = beta, std.error = se, statistic = z,
-    p.value = if (family[["family"]] == "gaussian") 2 * stats::pt(-abs(z), test_df) else 2 * stats::pnorm(-abs(z))
-  )
   full = stats::setNames(rep(NA_real_, length(all_names)), all_names)
   full[public] = beta
   saved_formula = Formula::Formula(stats::as.formula(paste(deparse(Formula::Formula(fml), width.cutoff = 500L), collapse = ""), env = baseenv()))
@@ -615,17 +609,16 @@ execute_dbglm_fit = function(inputs) {
     reported_loglik = dbglm_binomial_loglik(conn, working, weight_scale, cell = cell)
   }
   result = list(
-    coeftable = coeftable, vcov = V, collin.coef = full,
+    collin.coef = full,
     projection_diagnostics = resources[["projection_diagnostics"]],
     collin.var = setdiff(all_names, public), coef_names = public, coef_names_all = all_names,
     family = family, fml = saved_formula, model_spec = spec, has_intercept = has_intercept,
     yvar = parsed[["yvar"]], xvars = public, offset = offset, weights = weights,
     nobs_orig = n, nobs_input = as.numeric(count_input), nobs_dropped = as.numeric(count_input) - n,
-    n_params_model = counts[["model"]], n_params_vcov = counts[["covariance"]], n_slopes = sum(public != "(Intercept)"),
-    df_residual = n - counts[["model"]], vcov_type = covariance[["vcov_type"]],
-    cluster_var = covariance[["cluster_var"]], n_clusters = covariance_result[["clusters"]], ssc = ssc,
+    n_params_model = counts[["model"]], n_slopes = sum(public != "(Intercept)"),
+    df_residual = n - counts[["model"]],
     loglik = reported_loglik, weighted_loglik = weighted_loglik, weight_scale = weight_scale,
-    dispersion = dispersion, dispersion_scaled = dispersion_scaled, df_t = test_df,
+    dispersion = dispersion, dispersion_scaled = dispersion_scaled,
     deviance = fit[["deviance"]] * weight_scale, converged = !isFALSE(fit[["converged"]]),
     finite_mle = !isFALSE(fit[["finite_mle"]]), separation = separation,
     iterations = fit[["iterations"]], score_max = fit[["score_max"]],
@@ -641,6 +634,15 @@ execute_dbglm_fit = function(inputs) {
     projection_iterations = fit[["ap_cycles"]], projection_residual = fit[["ap_residual"]],
     projection_method = if (!is.null(fit[["projection_method"]])) fit[["projection_method"]] else if (length(fe)) "group" else "none", call = call
   )
+  class(result) = c("dbglm", "dbreg")
+  unavailable = isFALSE(fit[["finite_mle"]])
+  inference = new_inference_result(V, covariance[["vcov_type"]], public,
+    if (covariance[["vcov_type"]] == "cluster") list(covariance[["cluster_var"]]) else list(),
+    covariance_result[["clusters"]], ssc, counts[["covariance"]], test_df,
+    if (family[["family"]] == "gaussian") "t" else "normal",
+    status = if (unavailable) "unavailable" else "available",
+    reason = if (unavailable) "nonfinite_mle" else NULL)
+  result = install_inference_result(result, inference, beta)
   if (retain_prediction(retain) && length(fe)) {
     prediction_beta = numeric(length(all_x))
     prediction_beta[keep] = fit[["beta"]]
@@ -666,7 +668,6 @@ execute_dbglm_fit = function(inputs) {
     export_retained_sample(conn, sample_table, keys, from)
   }
   result = finalize_retained_resources(result, resources)
-  class(result) = c("dbglm", "dbreg")
   result
 }
 

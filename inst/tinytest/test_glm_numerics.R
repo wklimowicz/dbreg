@@ -39,7 +39,10 @@ expect_identical(names(coef(fit_alias)), c("(Intercept)", "x", "large"))
 expect_identical(names(coef(fit_alias, collin = TRUE)), c("(Intercept)", "x", "duplicate", "large"))
 expect_true(is.na(coef(fit_alias, collin = TRUE)["duplicate"]))
 expect_equal(coef(fit_alias), coef(ref_alias), tolerance = 1e-7)
-expect_equal(vcov(fit_alias), vcov(ref_alias), tolerance = 1e-7)
+# Completed dbreg covariance carries inference policy metadata beyond glm's V.
+expect_identical(dim(vcov(fit_alias)), dim(vcov(ref_alias)))
+expect_identical(dimnames(vcov(fit_alias)), dimnames(vcov(ref_alias)))
+expect_equal(as.numeric(vcov(fit_alias)), as.numeric(vcov(ref_alias)), tolerance = 1e-7)
 expect_equal(predict(fit_alias, alias_glm), unname(predict(ref_alias, alias_glm)), tolerance = 1e-7)
 
 ref_dat <- transform(bad_start_dat, code = rep(1:3, length.out = 180))

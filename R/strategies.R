@@ -76,6 +76,7 @@ execute_moments_strategy = function(inputs) {
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
 
   list(
+    linear_design = native_linear_layout(sql_design, fit[["x"]], frame[["intercept"]]),
     coeftable = coeftable,
     vcov = vcov_mat,
     fml = fml,
@@ -297,9 +298,7 @@ execute_mundlak_strategy = function(inputs) {
 
   # Display names for the means: "<coef name>_bar_<fe>"
   map = inputs[["name_map"]]
-  coef_map = map
-  is_var = names(coef_map) %in% names(inputs[["source_map"]])
-  coef_map[is_var] = coef_var_name(coef_map[is_var])
+  coef_map = coefficient_name_map(map, inputs[["source_map"]])
   term_display = standardize_coef_names(restore_names(xvar_names, coef_map))
   fe_display = restore_names(fe, map)
   mundlak_means = data.frame(
@@ -411,6 +410,8 @@ execute_compress_strategy = function(inputs) {
       "compression_ratio_est", "ssc"
     )
   )
+  sql_design = NULL
+  compressed_layout = NULL
   from_statement = inputs[["from_statement"]]
   composite_columns = unique(unlist(inputs[["composite_fes"]], use.names = FALSE))
   trends = as.character(unique(unlist(inputs[["fe_slopes"]], use.names = FALSE)))
@@ -575,6 +576,11 @@ execute_compress_strategy = function(inputs) {
   trend_centers = vapply(matrix_data[trend_aliases], function(value) min(value) / 2 + max(value) / 2, numeric(1))
   for (alias in trend_aliases) matrix_data[[alias]] = matrix_data[[alias]] - trend_centers[[alias]]
   X = fitted_model_matrix(matrix_formula, matrix_data)
+  if (!length(fe)) {
+    compressed_layout = compressed_linear_layout(X, matrix_formula, matrix_data,
+      sql_design, fml, inputs)
+    colnames(X) = compressed_layout[["aliases"]]
+  }
   numeric_sql = if (length(trends)) stats::setNames(paste0(
     "(", sql_cast_double(trends, conn), "-(",
     dbglm_number(trend_centers), "))"
@@ -689,6 +695,8 @@ execute_compress_strategy = function(inputs) {
 
   return(
     list(
+      linear_design = if (!is.null(compressed_layout)) native_linear_layout(
+        list(columns = compressed_layout[["columns"]]), fit[["x"]], FALSE),
       coeftable = coeftable,
       compressed_design = list(
         formula = matrix_formula, trend_sources = trend_sources, trend_centers = trend_centers,

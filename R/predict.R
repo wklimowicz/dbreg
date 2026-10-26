@@ -222,6 +222,7 @@ predict.dbreg = function(
     return(if (interval == "none") blank else data.frame(fit = blank, lwr = blank, upr = blank))
   }
   newdata = newdata[valid, , drop = FALSE]
+  native_data = if (!is.null(object[["linear_design"]])) newdata else NULL
   newdata = prediction_factors(object, newdata)
 
   # Ensure FE columns are factors
@@ -252,7 +253,9 @@ predict.dbreg = function(
     terms_rhs = "1"
   }
   fml_mm = reformulate(terms_rhs, intercept = intercept)
-  if (stored && !is.null(object[["compressed_design"]])) {
+  if (!is.null(object[["linear_design"]])) {
+    mm = native_linear_matrix(object, native_data, stored = stored && identical(object[["strategy"]], "compress"))
+  } else if (stored && !is.null(object[["compressed_design"]])) {
     spec = object[["compressed_design"]]
     data = expand_newdata_i(stats::formula(fml, lhs = 0, rhs = 1), newdata, i_cols, object[["i_specs"]])[["data"]]
     names(data) = unname(spec[["source_names"]][names(data)])
@@ -287,7 +290,9 @@ predict.dbreg = function(
       call. = FALSE
     )
   }
-  mm = if (length(betas)) mm[, names(betas), drop = FALSE] else matrix(0, nrow(newdata), 0L)
+  if (is.null(object[["linear_design"]])) {
+    mm = if (length(betas)) mm[, names(betas), drop = FALSE] else matrix(0, nrow(newdata), 0L)
+  }
 
   if (strategy == "demean") {
     # demean: sweep the FE out of the regressors (and recover the outcome's
@@ -1065,9 +1070,7 @@ finalize_linear_prediction = function(result, inputs) {
     expand = "all", fe_vars = inputs[["fe"]], intercept = inputs[["intercept"]], factor_refs = inputs[["factor_refs"]]
   )
   register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]], design[["col_names"]], design[["aliases"]], factor_classes = design[["factor_classes"]])
-  map = inputs[["name_map"]]
-  variable = names(map) %in% names(inputs[["source_map"]])
-  map[variable] = coef_var_name(map[variable])
+  map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])
   design_names = standardize_coef_names(restore_names(design[["aliases"]], map))
   beta = coef.dbreg(result)
   if (length(setdiff(names(beta), design_names))) stop("Could not align fitted OLS prediction slopes.", call. = FALSE)
@@ -1159,9 +1162,7 @@ finalize_fwl_prediction = function(result, inputs) {
   if (is.null(moments) || moments[["nobs"]] != result[["nobs_orig"]]) return(NULL)
   x = moments[["x"]]
   p = length(x)
-  map = inputs[["name_map"]]
-  variables = names(map) %in% names(inputs[["source_map"]])
-  map[variables] = coef_var_name(map[variables])
+  map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])
   design_names = standardize_coef_names(restore_names(x, map))
   fitted = coef.dbreg(result)
   if (length(setdiff(names(fitted), design_names))) return(NULL)
@@ -1882,7 +1883,9 @@ sql_prediction_context = function(object, conn, dataframe_labels = NULL) {
   if (is.null(state)) {
     beta = stats::coef(object)
     if (inherits(object, "dbglm")) names(beta) = object[["design_names"]]
-    index = match(names(beta), design[["names"]])
+    index = if (!is.null(object[["linear_design"]])) {
+      match(object[["linear_design"]][["fitted_ids"]], design[["ids"]])
+    } else match(names(beta), design[["names"]])
     if (anyNA(index)) stop("Could not align fitted SQL prediction coefficients.", call. = FALSE)
     design[["expressions"]] = design[["expressions"]][index]
     design[["names"]] = design[["names"]][index]
@@ -2096,9 +2099,7 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
       design[["col_names"]], design[["aliases"]],
       i_columns = design[["i_columns"]]
     )
-    map = inputs[["name_map"]]
-    variable = names(map) %in% names(source_map)
-    map[variable] = coef_var_name(map[variable])
+    map = coefficient_name_map(inputs[["name_map"]], source_map)
     names = standardize_coef_names(restore_names(design[["aliases"]], map))
     expressions = design[["select_exprs"]]
     intercept = intercept && !length(object[["fe"]])
@@ -2109,6 +2110,7 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
   }
   list(
     expressions = expressions, names = names, sources = sources,
+    ids = if (!glm) c(if (intercept) "intercept", design[["columns"]][["id"]]),
     factor_levels = levels, factor_classes = classes,
     level_sql = info[["level_sql"]],
     factor_labels = factor_labels,

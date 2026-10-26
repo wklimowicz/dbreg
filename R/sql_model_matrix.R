@@ -74,6 +74,7 @@ sql_model_matrix = function(
       select_exprs = character(), col_names = character(), aliases = character(),
       factor_levels = list(), level_aliases = data.frame(alias = character(), var = character(), level = character()),
       i_columns = empty_i_columns(), coef_names = character(), terms = character(),
+      columns = empty_linear_columns(),
       source_classes = character(), i_specs = list(), ordinary_rhs = formula
     ))
   }
@@ -136,7 +137,8 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
   ), powers) else character()
 
   fe_terms = vapply(fe_vars, function(name) paste(deparse(as.name(name), backtick = TRUE), collapse = ""), character(1))
-  result = list(select_exprs = character(), col_names = character(), aliases = character())
+  result = list(select_exprs = character(), col_names = character(), aliases = character(),
+    columns = empty_linear_columns())
 
   # Without an intercept, the first factor main effect (incl. a plain i(f))
   # keeps all its levels
@@ -167,6 +169,15 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
     result[["col_names"]] = c(result[["col_names"]], expanded[["name"]])
     result[["aliases"]] = c(result[["aliases"]], expanded[["alias"]])
     result[["terms"]] = c(result[["terms"]], rep(term, length(expanded[["sql"]])))
+    count = length(expanded[["sql"]])
+    if (count) {
+      columns = data.frame(id = paste0("t", k, "b", seq_len(count)), term = k,
+        basis = seq_len(count), alias = expanded[["alias"]],
+        label = expanded[["name"]], role = "slope", stringsAsFactors = FALSE)
+      columns[["recipe"]] = expanded[["recipe"]]
+      columns[["cell_recipe"]] = rep(list(NULL), count)
+      result[["columns"]] = rbind(result[["columns"]], columns)
+    }
   }
 
   result[["factor_levels"]] = col_info[["levels"]]
@@ -254,7 +265,7 @@ expand_term = function(term, col_info, expand, sep = "_x_", all_terms = characte
   if (!is_interaction && expand == "interactions" && is.null(parse_power_term(term)) &&
     is.null(col_info[["factor_sources"]][[term]])) {
     # Main effect, only expanding interactions: return as-is
-    return(list(sql = term, name = term, alias = term))
+    return(list(sql = term, name = term, alias = term, recipe = list(list(kind = "raw", variable = term))))
   }
 
   # Formula term ordering is not a canonical interaction ordering. Compare
@@ -282,7 +293,8 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
   if (!is.null(power)) {
     source = col_info[["numeric_sql"]][[power[["variable"]]]]
     if (is.null(source)) source = power[["variable"]]
-    return(list(sql = sprintf("POWER(%s, %d)", source, power[["exponent"]]), name = var, alias = unname(col_info[["power_aliases"]][var])))
+    return(list(sql = sprintf("POWER(%s, %d)", source, power[["exponent"]]), name = var, alias = unname(col_info[["power_aliases"]][var]),
+      recipe = list(list(kind = "power", variable = power[["variable"]], exponent = power[["exponent"]]))))
   }
   is_factor = identical(col_info[["types"]][[var]], "factor")
 
@@ -292,7 +304,8 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
     # Numeric or unexpanded factor: pass through
     sql = if (!is_factor) col_info[["numeric_sql"]][[var]] else NULL
     if (is.null(sql)) sql = var
-    return(list(sql = sql, name = var, alias = var))
+    return(list(sql = sql, name = var, alias = var,
+      recipe = list(list(kind = if (is_factor) "raw" else "numeric", variable = var))))
   }
   lvls = col_info[["levels"]][[var]]
   level_sql = col_info[["level_sql"]][[var]]
@@ -300,7 +313,8 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
   la = col_info[["level_aliases"]]
   la = la[la[["var"]] == var, , drop = FALSE]
   if (length(lvls) < 2) {
-    return(list(sql = "1", name = paste0(var, "_constant"), alias = la[["alias"]][la[["level"]] == "_constant"]))
+    return(list(sql = "1", name = paste0(var, "_constant"), alias = la[["alias"]][la[["level"]] == "_constant"],
+      recipe = list(list(kind = "constant"))))
   }
   # Drop first level (reference) only if appropriate
   if (drop_ref) {
@@ -313,7 +327,10 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
       " = ", level_sql, " THEN 1.0 ELSE 0.0 END"
     ),
     name = paste0(var, lvls),
-    alias = la[["alias"]][match(lvls, la[["level"]])]
+    alias = la[["alias"]][match(lvls, la[["level"]])],
+    recipe = lapply(seq_along(lvls), function(i) list(kind = "indicator",
+      variable = if (forced) unname(explicit_factor_sources(var)) else var,
+      value = lvls[i]))
   )
 }
 
@@ -327,7 +344,9 @@ cross_product = function(a, b, sep = "_x_") {
   list(
     sql = paste0("(", a[["sql"]][i], ") * (", b[["sql"]][j], ")"),
     name = paste0(a[["name"]][i], sep, b[["name"]][j]),
-    alias = paste0(a[["alias"]][i], "_x_", b[["alias"]][j])
+    alias = paste0(a[["alias"]][i], "_x_", b[["alias"]][j]),
+    recipe = Map(function(left, right) list(kind = "product", left = left, right = right),
+      a[["recipe"]][i], b[["recipe"]][j])
   )
 }
 
@@ -486,7 +505,11 @@ expand_i_term = function(spec, col_info, k, keep_all_levels = FALSE) {
     sql = sql,
     name = name,
     alias = alias,
-    columns = data.frame(alias = alias, var = f, level = lvl_chr, by = if (is.null(var)) NA_character_ else var)
+    columns = data.frame(alias = alias, var = f, level = lvl_chr, by = if (is.null(var)) NA_character_ else var),
+    recipe = lapply(seq_along(lvls), function(i) list(kind = "i", variable = f,
+      second = var, term = spec[["term"]],
+      level = if (is.null(dictionary)) match(lvl_chr[i], as.character(col_info[["levels"]][[f]])) else
+        match(lvl_chr[i], dictionary[["labels"]])))
   )
 }
 
@@ -954,6 +977,10 @@ read_compressed_frame = function(inputs, sql, from_statement = inputs[["from_sta
 # Only compressed fits retain explicit FE coefficients. Their tuple-to-rank
 # mapping comes from cells already collected for estimation, with no extra scan.
 finalize_linear_design = function(result, inputs) {
+  if (!is.null(result[["linear_design"]])) {
+    result[["linear_design"]] = restore_native_linear_layout(result[["linear_design"]],
+      inputs[["source_map"]], inputs[["name_map"]], rownames(result[["coeftable"]]))
+  }
   result[["i_specs"]] = inputs[["i_specs"]]
   result[["offset"]] = inputs[["offset"]]
   result[["fixef_rm"]] = inputs[["fixef_rm"]]
@@ -1128,10 +1155,7 @@ explicit_factor_newdata = function(fml, data, factor_levels) {
   names = character()
   for (term in names(sources)) {
     value = data[[sources[[term]]]]
-    levels = factor_levels[[term]]
-    if (is.null(levels)) levels = levels(factor(value))
-    unseen = setdiff(unique(as.character(value[!is.na(value)])), as.character(levels))
-    if (length(unseen)) stop("newdata contains unseen levels for `", term, "`.", call. = FALSE)
+    levels = explicit_prediction_levels(term, value, factor_levels)
     data[[term]] = if (length(levels) == 1L) rep(1, length(value)) else factor(value, levels = levels)
     key = paste(deparse(as.name(term), width.cutoff = 500L, backtick = TRUE), collapse = "")
     names[[key]] = if (length(levels) == 1L) paste0(term, "_constant") else term
@@ -1186,4 +1210,207 @@ compressed_trend_data = function(data, sources, centers = NULL) {
     data[[alias]] = if (is.null(centers)) value else value - centers[[alias]]
   }
   data
+}
+
+# A column identity is compiler metadata, never a public coefficient label.
+empty_linear_columns = function() {
+  columns = data.frame(id = character(), term = integer(), basis = integer(),
+    alias = character(), label = character(), role = character(), stringsAsFactors = FALSE)
+  columns[["recipe"]] = list()
+  columns[["cell_recipe"]] = list()
+  columns
+}
+
+linear_intercept_column = function() {
+  column = data.frame(id = "intercept", term = 0L, basis = 1L,
+    alias = "(Intercept)", label = "(Intercept)", role = "intercept", stringsAsFactors = FALSE)
+  column[["recipe"]] = list(list(kind = "constant"))
+  column[["cell_recipe"]] = list(NULL)
+  column
+}
+
+native_linear_layout = function(design, fitted, intercept) {
+  columns = design[["columns"]]
+  if (is.null(columns)) columns = empty_linear_columns()
+  if (intercept) columns = rbind(linear_intercept_column(), columns)
+  positions = match(fitted, columns[["alias"]])
+  if (anyNA(positions) || anyDuplicated(columns[["id"]])) {
+    stop("Fitted native coordinates do not match their compiled columns.", call. = FALSE)
+  }
+  ids = columns[["id"]][positions]
+  list(version = 1L, columns = columns, fitted_ids = ids,
+    slope_ids = ids[columns[["role"]][positions] == "slope"])
+}
+
+# Capture the expansion actually emitted by the compressed matrix producer.
+# Its term assignment disambiguates a factor dummy from a same-labelled source.
+compressed_linear_layout = function(X, formula, data, design, original_formula, inputs) {
+  assignment = attr(X, "assign")
+  terms = attr(stats::terms(formula), "term.labels")
+  original = attr(stats::terms(stats::formula(original_formula, lhs = 0, rhs = 1)), "term.labels")
+  compiled = design[["columns"]]
+  columns = empty_linear_columns()
+  for (j in seq_len(ncol(X))) {
+    term_id = assignment[[j]]
+    if (!term_id) {
+      column = linear_intercept_column()
+    } else {
+      variable = terms[[term_id]]
+      emitted = if (!is.null(compiled)) match(variable, compiled[["alias"]]) else NA_integer_
+      if (!is.na(emitted) && !identical(compiled[["recipe"]][[emitted]][["kind"]], "raw")) {
+        column = compiled[emitted, , drop = FALSE]
+      } else {
+        basis = match(j, which(assignment == term_id))
+        value = data[[variable]]
+        categorical = is.factor(value) || is.character(value) || is.logical(value)
+        if (categorical) {
+          levels = if (is.factor(value)) levels(value) else levels(factor(value))
+          width = sum(assignment == term_id)
+          selected = if (width == length(levels)) seq_along(levels) else seq.int(2L, length(levels))
+          if (length(selected) != width) stop("Compressed factor coding does not match its emitted basis.", call. = FALSE)
+          recipe = list(kind = "indicator", variable = variable, value = levels[selected[[basis]]])
+        } else recipe = list(kind = "numeric", variable = variable)
+        source_term = match(variable, original)
+        if (is.na(source_term)) stop("Compressed term has no fitted source identity.", call. = FALSE)
+        column = data.frame(id = paste0("t", source_term, "b", basis), term = source_term,
+          basis = basis, alias = colnames(X)[[j]], label = colnames(X)[[j]], role = "slope", stringsAsFactors = FALSE)
+        column[["recipe"]] = list(recipe)
+      }
+    }
+    if (!term_id) {
+      cell_recipe = list(kind = "constant")
+    } else {
+      position = match(variable, names(data))
+      if (is.na(position)) stop("Compressed cell term has no prepared column.", call. = FALSE)
+      cell_recipe = if (!is.na(emitted) && !identical(compiled[["recipe"]][[emitted]][["kind"]], "raw")) {
+        list(kind = "numeric", variable = position)
+      } else {
+        recipe = column[["recipe"]][[1L]]
+        recipe[["variable"]] = position
+        recipe
+      }
+    }
+    column[["cell_recipe"]] = list(cell_recipe)
+    columns = rbind(columns, column)
+  }
+  aliases = columns[["alias"]]
+  positions = which(columns[["role"]] != "intercept")
+  aliases[positions] = safe_identifiers(paste0("dbreg_linear_column", seq_along(positions), "__"),
+    taken = c(names(data), names(inputs[["name_map"]])))
+  display = restore_names(standardize_coef_names(colnames(X)),
+    coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]]))
+  additions = stats::setNames(display[positions], aliases[positions])
+  inputs[["name_map"]] = c(inputs[["name_map"]], additions)
+  columns[["alias"]] = aliases
+  list(columns = columns, aliases = aliases)
+}
+
+restore_linear_recipe = function(recipe, map) {
+  if (!is.null(recipe[["variable"]])) recipe[["variable"]] = restore_names(recipe[["variable"]], map)
+  if (!is.null(recipe[["second"]])) recipe[["second"]] = restore_names(recipe[["second"]], map)
+  if (!is.null(recipe[["term"]])) recipe[["term"]] = restore_term_names(recipe[["term"]], map)
+  if (!is.null(recipe[["left"]])) recipe[["left"]] = restore_linear_recipe(recipe[["left"]], map)
+  if (!is.null(recipe[["right"]])) recipe[["right"]] = restore_linear_recipe(recipe[["right"]], map)
+  recipe
+}
+
+linear_recipe_value = function(recipe, data, i_specs) {
+  kind = recipe[["kind"]]
+  if (kind == "constant") return(rep(1, nrow(data)))
+  if (kind == "product") return(linear_recipe_value(recipe[["left"]], data, i_specs) *
+    linear_recipe_value(recipe[["right"]], data, i_specs))
+  value = data[[recipe[["variable"]]]]
+  if (kind == "numeric") return(as.numeric(value))
+  if (kind == "power") return(as.numeric(value^recipe[["exponent"]]))
+  if (kind == "indicator") {
+    expected = recipe[["value"]]
+    if (inherits(expected, "integer64") || !is.numeric(expected)) {
+      return(as.numeric(as.character(value) == as.character(expected)))
+    }
+    if (is.factor(value) || is.character(value)) return(as.numeric(as.character(value) == as.character(expected)))
+    return(as.numeric(value == expected))
+  }
+  if (kind == "i") {
+    matching = which(vapply(i_specs, function(spec) identical(spec[["term"]], recipe[["term"]]), logical(1)))
+    if (length(matching) != 1L) stop("Missing fitted indicator dictionary.", call. = FALSE)
+    out = as.numeric(i_match_values(i_specs[[matching]], value, strict = TRUE) == recipe[["level"]])
+    if (!is.null(recipe[["second"]])) out = out * as.numeric(data[[recipe[["second"]]]])
+    return(out)
+  }
+  stop("Unsupported internal native column recipe.", call. = FALSE)
+}
+
+native_linear_matrix = function(object, data, stored = FALSE) {
+  layout = object[["linear_design"]]
+  columns = layout[["columns"]]
+  positions = match(layout[["fitted_ids"]], columns[["id"]])
+  if (!stored) {
+    rhs = stats::formula(object[["fml"]], lhs = 0, rhs = 1)
+    forced = explicit_factor_sources(attr(stats::terms(rhs), "term.labels"))
+    for (term in names(forced)) explicit_prediction_levels(term, data[[forced[[term]]]], object[["factor_levels"]])
+    validate_native_numeric_types(object, data, columns[["recipe"]][positions])
+  }
+  recipes = if (stored) columns[["cell_recipe"]] else columns[["recipe"]]
+  values = lapply(recipes[positions], linear_recipe_value, data = data,
+    i_specs = object[["i_specs"]])
+  out = if (length(values)) do.call(cbind, values) else matrix(0, nrow(data), 0L)
+  colnames(out) = columns[["label"]][positions]
+  out
+}
+
+restore_native_linear_layout = function(layout, source_map, name_map, fitted_labels) {
+  layout[["columns"]][["recipe"]] = lapply(layout[["columns"]][["recipe"]],
+    restore_linear_recipe, map = source_map)
+  layout[["columns"]][["label"]] = standardize_coef_names(
+    restore_names(layout[["columns"]][["label"]], name_map))
+  positions = match(layout[["fitted_ids"]], layout[["columns"]][["id"]])
+  layout[["columns"]][["label"]][positions] = fitted_labels
+  layout
+}
+
+# The raw source determines forced-factor validation even when a column with
+# the generated factor expression's name is present in arbitrary newdata.
+explicit_prediction_levels = function(term, value, factor_levels) {
+  fitted = factor_levels[[term]]
+  if (is.null(fitted)) fitted = levels(factor(value))
+  unseen = setdiff(unique(as.character(value[!is.na(value)])), as.character(fitted))
+  if (length(unseen)) stop("newdata contains unseen levels for `", term, "`.", call. = FALSE)
+  fitted
+}
+
+# Preserve the existing R expression/type contract for exceptional inputs.
+# Numeric vectors take the recipe fast path; categorical reinterpretations do
+# not become factor codes merely because an output column has the same label.
+validate_native_numeric_types = function(object, data, recipes) {
+  inspect = function(recipe) {
+    kind = recipe[["kind"]]
+    if (kind == "product") return(c(inspect(recipe[["left"]]), inspect(recipe[["right"]])))
+    if (kind %in% c("numeric", "power")) {
+      value = data[[recipe[["variable"]]]]
+      regular = is.numeric(value) && !is.factor(value) && !is.complex(value) && is.null(dim(value))
+      return(list(list(exceptional = !regular,
+        invalid = is.factor(value) || is.character(value) || is.complex(value) ||
+          kind == "numeric" && is.logical(value))))
+    }
+    if (kind == "i" && !is.null(recipe[["second"]])) {
+      value = data[[recipe[["second"]]]]
+      regular = (is.numeric(value) || is.logical(value)) && !is.factor(value) && !is.complex(value)
+      return(list(list(exceptional = !regular, invalid = !regular)))
+    }
+    list()
+  }
+  inputs = unlist(lapply(recipes, inspect), recursive = FALSE)
+  if (!length(inputs) || !any(vapply(inputs, `[[`, logical(1), "exceptional"))) return(invisible(NULL))
+  # This adapter validates/evaluates the existing formula semantics only. Its
+  # columns are not used to align coefficients or replace fitted coordinates.
+  rhs = stats::formula(object[["fml"]], lhs = 0, rhs = 1)
+  legacy = build_newdata_design(rhs, data, object[["factor_levels"]],
+    object[["i_columns"]], object[["i_specs"]])
+  missing = setdiff(names(coef.dbreg(object, fe = TRUE)), colnames(legacy))
+  if (length(missing)) stop("predict() could not rebuild the design for coefficient(s): ",
+    paste(missing, collapse = ", "), call. = FALSE)
+  if (any(vapply(inputs, `[[`, logical(1), "invalid"))) {
+    stop("newdata changes a fitted numeric term to an incompatible input type.", call. = FALSE)
+  }
+  invisible(NULL)
 }

@@ -641,6 +641,10 @@ dbbinsreg = function(
     restore_fit = function(fit) {
       coefficient_names = rownames(fit[["coeftable"]])
       fit = restore_result_names(fit, list(name_map = name_map, source_map = name_map))
+      if (!is.null(fit[["linear_design"]])) {
+        fit[["linear_design"]] = restore_native_linear_layout(fit[["linear_design"]],
+          name_map, name_map, rownames(fit[["coeftable"]]))
+      }
       fit[["fe_labels"]] = restore_names(fit[["fe_labels"]], name_map)
       for (field in c("factor_levels", "factor_classes")) {
         if (length(fit[[field]])) names(fit[[field]]) = restore_names(names(fit[[field]]), name_map)

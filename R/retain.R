@@ -836,9 +836,7 @@ finalize_linear_inference = function(result, inputs) {
   state = inputs[["inference_state"]]
   if (is.null(state)) stop("This strategy has not retained its inference frame.", call. = FALSE)
   if (state[["nobs"]] != result[["nobs_orig"]]) stop("Retained score rows differ from the fitted sample.", call. = FALSE)
-  map = inputs[["name_map"]]
-  variable = names(map) %in% names(inputs[["source_map"]])
-  map[variable] = coef_var_name(map[variable])
+  map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])
   names = standardize_coef_names(restore_names(state[["coefficient_names"]], map))
   public_names = names(coef.dbreg(result))
   if (is.null(public_names)) public_names = character()

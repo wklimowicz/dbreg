@@ -763,6 +763,13 @@ restore_names = function(x, map) {
 # backtick names that aren't syntactic in R (e.g. `my grp`)
 coef_var_name = function(v) ifelse(make.names(v) == v, v, paste0("`", v, "`"))
 
+# Coefficient labels quote source variables while preserving expanded labels.
+coefficient_name_map = function(name_map, source_map) {
+  variables = names(name_map) %in% names(source_map)
+  name_map[variables] = coef_var_name(name_map[variables])
+  name_map
+}
+
 #' Map a result's internal names back to display names
 #'
 #' Applies `inputs$name_map` (see [safe_source()] and
@@ -775,9 +782,7 @@ restore_result_names = function(result, inputs) {
     return(result)
   }
   # Coefficient names backtick non-syntactic variable names (as in lm())
-  coef_map = map
-  is_var = names(coef_map) %in% names(inputs[["source_map"]])
-  coef_map[is_var] = coef_var_name(coef_map[is_var])
+  coef_map = coefficient_name_map(map, inputs[["source_map"]])
   if (is.data.frame(result)) {
     names(result) = restore_names(names(result), map)
     return(result)

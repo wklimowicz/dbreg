@@ -19,12 +19,15 @@ projection_limits = function() {
   limits
 }
 
-projection_memory = function(sizes, columns = 1L) {
-  largest = max(sizes)
-  rest = sum(sizes)-largest
-  # Include the cross block, scaled copies, Schur factor/basis work and RHS
-  # buffers. This is a conservative planning estimate, not a hard RSS limit.
-  8*(4*largest*rest + 6*rest^2 + 4*sum(sizes)*max(columns, 1L))
+projection_memory = function(sizes, columns = 1L, n_edges = NULL) {
+  rest = sum(sizes) - max(sizes)
+  if (is.null(n_edges)) {
+    possible = (sum(sizes)^2 - sum(sizes^2)) / 2
+    n_edges = min(possible, getOption("dbreg.duckdb_ap_max_edges", 1e6))
+  }
+  # Sparse cross blocks and scaled copies, plus a conservative dense Schur
+  # factor/basis allowance and RHS buffers. This plans allocations, not RSS.
+  64 * n_edges + 8 * (6 * rest^2 + 4 * sum(sizes) * max(columns, 1L))
 }
 
 projection_abort = function(reason, message, details = list()) {

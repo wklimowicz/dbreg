@@ -1,21 +1,23 @@
 # Bounded direct nuisance solves for moderate FE dimensions. The database sends
 # only FE cross-products and FE-by-design moments; no observation vectors enter R.
 # The largest FE block is diagonal and is absorbed analytically, so only the
-# remaining levels form a dense system (Schur complement).
-fe_dense_feasible = function(op_sizes, columns = 1L, limits = projection_limits()) {
+# remaining levels form the smaller Schur system; both cross blocks stay sparse.
+fe_dense_feasible = function(op_sizes, columns = 1L, limits = projection_limits(), n_edges = NULL) {
   op_sizes = as.numeric(op_sizes)
   if (!length(op_sizes) || any(!is.finite(op_sizes))) return(FALSE)
   rest = sum(op_sizes) - max(op_sizes)
+  if (is.null(n_edges)) n_edges = min((sum(op_sizes)^2 - sum(op_sizes^2)) / 2, limits[["summary_rows"]])
   rest <= limits[["dense_levels"]] &&
-    max(op_sizes) * rest <= limits[["cross_entries"]] &&
-    projection_memory(op_sizes, columns) <= limits[["memory_bytes"]]
+    (is.null(n_edges) || n_edges <= limits[["cross_entries"]]) &&
+    projection_memory(op_sizes, columns, n_edges) <= limits[["memory_bytes"]]
 }
 
 # info: per-op list(id, h); pairs: list of list(i, j, ir, jr, h) with local
 # level indices into info[[i]]$id and info[[j]]$id.
 fe_system = function(info, pairs) {
   sizes = vapply(info, function(x) length(x[["id"]]), integer(1))
-  if (!fe_dense_feasible(sizes)) return(NULL)
+  n_edges = sum(vapply(pairs, function(pair) length(pair[["h"]]), integer(1)))
+  if (!fe_dense_feasible(sizes, n_edges = n_edges)) return(NULL)
   starts = cumsum(c(0L, sizes))
   n = starts[length(info) + 1L]
   a = which.max(sizes)
@@ -24,39 +26,157 @@ fe_system = function(info, pairs) {
   pos = integer(n)
   pos[rest] = seq_along(rest)
   diagonal = as.numeric(unlist(lapply(info, `[[`, "h"), use.names = FALSE))
-  Cm = matrix(0, length(big), length(rest))
-  E = matrix(0, length(rest), length(rest))
-  E[cbind(seq_along(rest), seq_along(rest))] = diagonal[rest]
-  for (p in pairs) {
-    gi = starts[p[["i"]]] + p[["ir"]]
-    gj = starts[p[["j"]]] + p[["jr"]]
-    if (p[["i"]] == a) {
-      Cm[cbind(gi - starts[a], pos[gj])] = p[["h"]]
-    } else if (p[["j"]] == a) {
-      Cm[cbind(gj - starts[a], pos[gi])] = p[["h"]]
+  cross_i = cross_j = cross_h = list()
+  rest_i = rest_j = rest_h = list()
+  for (k in seq_along(pairs)) {
+    pair = pairs[[k]]
+    gi = starts[pair[["i"]]] + pair[["ir"]]
+    gj = starts[pair[["j"]]] + pair[["jr"]]
+    if (pair[["i"]] == a || pair[["j"]] == a) {
+      cross_i[[k]] = if (pair[["i"]] == a) gi - starts[a] else gj - starts[a]
+      cross_j[[k]] = if (pair[["i"]] == a) pos[gj] else pos[gi]
+      cross_h[[k]] = pair[["h"]]
     } else {
-      E[cbind(pos[gi], pos[gj])] = p[["h"]]
-      E[cbind(pos[gj], pos[gi])] = p[["h"]]
+      rest_i[[k]] = c(pos[gi], pos[gj])
+      rest_j[[k]] = c(pos[gj], pos[gi])
+      rest_h[[k]] = rep(pair[["h"]], 2L)
     }
   }
-  list(n = n, starts = starts, big = big, rest = rest, Dg = diagonal[big], Cm = Cm, E = E, diag = diagonal)
+  Cm = Matrix::sparseMatrix(i = as.integer(unlist(cross_i)), j = as.integer(unlist(cross_j)),
+    x = as.numeric(unlist(cross_h)), dims = c(length(big), length(rest)))
+  E = Matrix::sparseMatrix(i = c(seq_along(rest), as.integer(unlist(rest_i))),
+    j = c(seq_along(rest), as.integer(unlist(rest_j))),
+    x = c(diagonal[rest], as.numeric(unlist(rest_h))), dims = c(length(rest), length(rest)))
+
+  list(n = n, starts = starts, big = big, rest = rest, Dg = diagonal[big], Cm = Cm, E = E, diag = diagonal, sizes = sizes)
 }
 
 fe_multiply = function(sys, X) {
   x1 = X[sys[["big"]], , drop = FALSE]
   x2 = X[sys[["rest"]], , drop = FALSE]
   out = matrix(0, sys[["n"]], ncol(X))
-  out[sys[["big"]], ] = sys[["Dg"]] * x1 + sys[["Cm"]] %*% x2
-  out[sys[["rest"]], ] = crossprod(sys[["Cm"]], x1) + sys[["E"]] %*% x2
+  out[sys[["big"]], ] = sys[["Dg"]] * x1 + as.matrix(sys[["Cm"]] %*% x2)
+  out[sys[["rest"]], ] = as.matrix(Matrix::crossprod(sys[["Cm"]], x1) + sys[["E"]] %*% x2)
   out
+}
+
+# Two-way intercept information has one signed constant null direction per
+# connected component. Pin one smaller-family level in each component.
+fe_two_components = function(sys) {
+  C = sys[["Cm"]]
+  if (length(sys[["sizes"]]) != 2L || any(C < 0)) return(NULL)
+  if (any(abs(as.numeric(Matrix::rowSums(C)) - sys[["Dg"]]) > 1e-12 * sys[["Dg"]]) ||
+      any(abs(as.numeric(Matrix::colSums(C)) - sys[["diag"]][sys[["rest"]]]) >
+        1e-12 * sys[["diag"]][sys[["rest"]]])) return(NULL)
+  edges = Matrix::summary(C)
+  edge_i = edges[["i"]]
+  edge_j = edges[["j"]]
+  edge_h = edges[["x"]]
+  parent = seq_len(sys[["n"]])
+  rank = integer(sys[["n"]])
+  for (k in seq_along(edge_h)) {
+    if (edge_h[[k]] <= 0) next
+    i = sys[["big"]][edge_i[[k]]]
+    j = sys[["rest"]][edge_j[[k]]]
+    while (parent[[i]] != i) {
+      parent[[i]] = parent[[parent[[i]]]]
+      i = parent[[i]]
+    }
+    while (parent[[j]] != j) {
+      parent[[j]] = parent[[parent[[j]]]]
+      j = parent[[j]]
+    }
+    if (i == j) next
+    if (rank[[i]] < rank[[j]]) parent[[i]] = j else {
+      parent[[j]] = i
+      if (rank[[i]] == rank[[j]]) rank[[i]] = rank[[i]] + 1L
+    }
+  }
+  roots = integer(length(parent))
+  for (k in seq_along(parent)) {
+    i = k
+    while (parent[[i]] != i) i = parent[[i]]
+    roots[[k]] = i
+  }
+  match(roots, unique(roots))
+}
+
+fe_sparse_solver = function(sys, S, scaled, cache, retain_null) {
+  if (length(sys[["sizes"]]) != 2L) return(NULL)
+  nr = length(sys[["rest"]])
+  sparse = nr > 512L && Matrix::nnzero(S) / nr^2 < 0.15
+  components = cache[["sparse_components"]]
+  pattern = list(sys[["Cm"]]@i, sys[["Cm"]]@p, sys[["Cm"]]@x > 0)
+  if (is.null(components) || !identical(pattern, cache[["sparse_pattern"]])) {
+    components = fe_two_components(sys)
+    if (is.null(components)) return(NULL)
+    cache[["sparse_components"]] = components
+    cache[["sparse_pattern"]] = pattern
+    cache[["sparse_factor"]] = NULL
+  }
+  rest_components = components[sys[["rest"]]]
+  keep = which(duplicated(rest_components))
+  scale = sqrt(pmax(as.numeric(Matrix::diag(S))[keep], 0))
+  if (any(!is.finite(scale)) || any(scale <= 0)) projection_abort("singular", "Fixed-effect information is singular.")
+  factor = NULL
+  if (length(keep)) {
+    factor = tryCatch({
+      if (sparse) {
+        D = Matrix::Diagonal(x = 1 / scale)
+        matrix = Matrix::forceSymmetric(D %*% S[keep, keep, drop = FALSE] %*% D)
+        previous = cache[["sparse_factor"]]
+        if (is.null(previous)) Matrix::Cholesky(matrix, perm = TRUE, LDL = TRUE) else Matrix::update(previous, parent = matrix)
+      } else chol(as.matrix(S[keep, keep, drop = FALSE]) / outer(scale, scale))
+    }, error = function(error) NULL)
+    if (is.null(factor)) projection_abort("singular", "Fixed-effect factorization failed.")
+    if (sparse) cache[["sparse_factor"]] = factor
+  }
+  solve = function(rhs) {
+    r1 = rhs[sys[["big"]], , drop = FALSE]
+    r2 = rhs[sys[["rest"]], , drop = FALSE] - as.matrix(Matrix::crossprod(scaled, r1))
+    x2 = matrix(0, nr, ncol(rhs))
+    if (length(keep)) {
+      rhs2 = r2[keep, , drop = FALSE] / scale
+      x2[keep, ] = if (sparse) as.matrix(Matrix::solve(factor, rhs2)) / scale else
+        backsolve(factor, backsolve(factor, rhs2, transpose = TRUE)) / scale
+    }
+    out = matrix(0, sys[["n"]], ncol(rhs))
+    out[sys[["rest"]], ] = x2
+    out[sys[["big"]], ] = r1 / sys[["Dg"]] - as.matrix(scaled %*% x2)
+    out
+  }
+  sign = rep(-1, sys[["n"]])
+  sign[sys[["big"]]] = 1
+  component_weight = as.numeric(rowsum(sys[["diag"]], components, reorder = FALSE))
+  project = function(rhs) {
+    totals = rowsum(sign * rhs, components, reorder = FALSE)
+    rhs - (sign * (sys[["diag"]] / component_weight[components])) * totals[components, , drop = FALSE]
+  }
+  null_q = NULL
+  if (retain_null) {
+    count = max(components)
+    if (8 * sys[["n"]] * count > projection_limits()[["memory_bytes"]]) {
+      projection_abort("system_limit", "Fixed-effect null basis exceeds the prediction memory budget.")
+    }
+    null_q = matrix(0, sys[["n"]], count)
+    sizes = tabulate(components)
+    null_q[cbind(seq_len(sys[["n"]]), components)] = sign / sqrt(sizes[components])
+  }
+  list(solve = solve, project = project, null_basis = null_q, method = if (sparse) "sparse_cholesky" else "dense_cholesky")
 }
 
 # Factor the Schur complement on the non-absorbed levels; the identified basis
 # is chosen once per fit so FE normalisations stay fixed across iterations.
 fe_solver = function(sys, cache, retain_null = FALSE) {
   if (any(!is.finite(sys[["Dg"]])) || any(sys[["Dg"]] <= 0)) projection_abort("singular", "Fixed-effect information is singular.")
-  scaled = sys[["Cm"]] / sys[["Dg"]]
-  S = sys[["E"]] - crossprod(sys[["Cm"]], scaled)
+  scaled = sys[["Cm"]]
+  if (inherits(scaled, "CsparseMatrix")) {
+    scaled@x = scaled@x / sys[["Dg"]][scaled@i + 1L]
+  } else scaled = scaled / sys[["Dg"]]
+  S = Matrix::forceSymmetric(sys[["E"]] - Matrix::crossprod(sys[["Cm"]], scaled))
+  sparse = fe_sparse_solver(sys, S, scaled, cache, retain_null)
+  if (!is.null(sparse)) return(sparse)
+  S = as.matrix(S)
   sdiag = sqrt(pmax(diag(S), 0))
   if (is.null(cache[["moment_basis"]])) {
     positive = which(sdiag > 0 & is.finite(sdiag))
@@ -81,6 +201,9 @@ fe_solver = function(sys, cache, retain_null = FALSE) {
   scaled_null_q = NULL
   information_scale = sqrt(pmax(sys[["diag"]], .Machine[["double.xmin"]]))
   if (length(dropped)) {
+    if (32 * sys[["n"]] * length(dropped) > projection_limits()[["memory_bytes"]]) {
+      projection_abort("system_limit", "Fixed-effect null projection exceeds its memory budget.")
+    }
     v2 = matrix(0, length(sys[["rest"]]), length(dropped))
     v2[cbind(dropped, seq_along(dropped))] = 1
     if (length(keep)) {
@@ -88,7 +211,7 @@ fe_solver = function(sys, cache, retain_null = FALSE) {
     }
     V = matrix(0, sys[["n"]], length(dropped))
     V[sys[["rest"]], ] = v2
-    V[sys[["big"]], ] = -scaled %*% v2
+    V[sys[["big"]], ] = -as.matrix(scaled %*% v2)
     if (retain_null) null_q = qr.Q(qr(V))
     # Remove SQL roundoff in information-scaled coordinates. An unscaled
     # projection can move O(eps) from a large group into an O(1e-20) equation,
@@ -97,14 +220,14 @@ fe_solver = function(sys, cache, retain_null = FALSE) {
   }
   solve = function(rhs) {
     r1 = rhs[sys[["big"]], , drop = FALSE]
-    r2 = rhs[sys[["rest"]], , drop = FALSE] - crossprod(scaled, r1)
+    r2 = rhs[sys[["rest"]], , drop = FALSE] - as.matrix(Matrix::crossprod(scaled, r1))
     x2 = matrix(0, length(sys[["rest"]]), ncol(rhs))
     if (length(keep)) {
       x2[keep, ] = backsolve(factor, backsolve(factor, r2[keep, , drop = FALSE] / scale, transpose = TRUE)) / scale
     }
     out = matrix(0, sys[["n"]], ncol(rhs))
     out[sys[["rest"]], ] = x2
-    out[sys[["big"]], ] = r1 / sys[["Dg"]] - scaled %*% x2
+    out[sys[["big"]], ] = r1 / sys[["Dg"]] - as.matrix(scaled %*% x2)
     out
   }
   project = function(rhs) if (is.null(scaled_null_q)) rhs else

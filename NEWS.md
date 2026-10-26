@@ -1,5 +1,12 @@
 # dbreg (development version)
 
+- Fixed-effect systems now keep cross blocks sparse and use component-aware
+  Cholesky for sparse two-way Schur systems, reusing the symbolic factorization
+  across IRLS updates. Small systems retain dense factorization. Component null
+  projections avoid observation-by-component dense allocations in compact fits;
+  numerical zeros rebuild component pins, and direct row scaling handles very
+  small information weights without reciprocal overflow.
+
 - Linear moments now center variables before forming products, normalize weights,
   and scale rank/solve calculations. Robust score passes retain centered
   coordinates through covariance calculation. Coefficients and covariance return

@@ -297,7 +297,76 @@ inference_repair_vcov = function(V, fix = TRUE) {
   result
 }
 
+# A completed covariance policy is separate from its retained score recipe.
+new_inference_result = function(covariance, kind, coefficient_names, clusters,
+                                n_clusters, ssc, n_params_vcov, df_t, distribution,
+                                repair = NULL) {
+  if (!length(coefficient_names)) coefficient_names = character()
+  if (!identical(dim(covariance), rep(length(coefficient_names), 2L)) ||
+      anyNA(coefficient_names) ||
+      !identical(as.character(rownames(covariance)), coefficient_names) ||
+      !identical(as.character(colnames(covariance)), coefficient_names)) {
+    stop("Covariance coefficient identities do not match the fitted design.", call. = FALSE)
+  }
+  if (!kind %in% c("iid", "hc1", "cluster") || !distribution %in% c("t", "normal")) stop("Invalid inference policy.", call. = FALSE)
+  if (!is.list(clusters) || (kind == "cluster") != (length(clusters) > 0L) ||
+      length(n_clusters) != length(clusters) ||
+      any(vapply(clusters, function(x) !is.character(x) || !length(x) || anyNA(x), logical(1))) ||
+      any(!is.finite(n_clusters) | n_clusters < 2)) stop("Invalid covariance cluster identities or counts.", call. = FALSE)
+  if (length(n_params_vcov) != 1L || !is.finite(n_params_vcov) || n_params_vcov < 0 ||
+      length(df_t) != 1L || !is.finite(df_t) || df_t <= 0) stop("Invalid covariance degrees of freedom.", call. = FALSE)
+  list(covariance = covariance, coefficient_names = coefficient_names,
+    kind = kind, clusters = clusters, n_clusters = if (length(clusters)) n_clusters else NULL,
+    ssc = inference_ssc(ssc), n_params_vcov = n_params_vcov, df_t = df_t,
+    distribution = distribution, repair = repair)
+}
+
+inference_covariance = function(result, coefficients = result[["coefficient_names"]]) {
+  V = result[["covariance"]]
+  retained = lapply(c("rss", "tss"), function(field) attr(V, field))
+  if (!identical(coefficients, result[["coefficient_names"]])) V = V[coefficients, coefficients, drop = FALSE]
+  attr(V, "rss") = retained[[1L]]
+  attr(V, "tss") = retained[[2L]]
+  attr(V, "type") = attr(V, "vcov_type") = result[["kind"]]
+  attr(V, "cluster_var") = if (length(result[["clusters"]])) vapply(result[["clusters"]], paste, collapse = "^", character(1)) else NULL
+  attr(V, "n_clusters") = result[["n_clusters"]]
+  attr(V, "ssc") = result[["ssc"]]
+  attr(V, "n_params") = attr(V, "df.K") = result[["n_params_vcov"]]
+  attr(V, "df.t") = attr(V, "df_t") = result[["df_t"]]
+  attr(V, "repair") = result[["repair"]]
+  V
+}
+
+install_inference_result = function(object, result) {
+  V = inference_covariance(result)
+  object[["inference_result"]] = result
+  object[["vcov"]] = V
+  object[["coeftable"]] = inference_coeftable(object, V, result[["distribution"]])
+  object[["vcov_type"]] = result[["kind"]]
+  for (field in c("cluster_var", "n_clusters", "ssc", "n_params", "df_t")) object[[field]] = attr(V, field)
+  if (inherits(object, "dbglm")) object[["n_params_vcov"]] = result[["n_params_vcov"]]
+  object[["fitted_state"]][["inference"]][["default_ssc"]] = result[["ssc"]]
+  object
+}
+
+requested_inference_result = function(object, vcov = NULL, cluster = NULL, ssc = NULL, vcov_fix = TRUE) {
+  if (is.null(vcov) && is.null(cluster)) {
+    saved = object[["covariance_request"]]
+    if (!is.null(saved)) {
+      vcov = saved[["vcov"]]
+      cluster = saved[["cluster"]]
+    } else vcov = object[["fitted_state"]][["inference"]][["default_vcov"]]
+  }
+  if (is.null(vcov) && is.null(cluster)) vcov = object[["vcov_type"]]
+  if (is.null(vcov) && is.null(cluster)) vcov = attr(object[["vcov"]], "type")
+  retained_inference_result(object, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)
+}
+
 retained_covariance = function(object, vcov = "iid", cluster = NULL, ssc = NULL, vcov_fix = TRUE) {
+  inference_covariance(retained_inference_result(object, vcov, cluster, ssc, vcov_fix))
+}
+
+retained_inference_result = function(object, vcov = "iid", cluster = NULL, ssc = NULL, vcov_fix = TRUE) {
   state = object[["fitted_state"]][["inference"]]
   if (is.null(state)) stop("Post-fit covariance requires fitting with retain='all' or retain='inference'.", call. = FALSE)
   if (!identical(state[["version"]], 1L)) stop("Unsupported retained-inference version.", call. = FALSE)
@@ -352,16 +421,12 @@ retained_covariance = function(object, vcov = "iid", cluster = NULL, ssc = NULL,
   }
   V = inference_repair_vcov((V + t(V)) / 2, vcov_fix)
   dimnames(V) = rep(list(state[["coefficient_names"]]), 2L)
-  attr(V, "type") = attr(V, "vcov_type") = request[["kind"]]
-  attr(V, "cluster_var") = if (length(clusters)) vapply(clusters, paste, collapse = "^", character(1))
-  attr(V, "n_params") = attr(V, "df.K") = K
-  attr(V, "ssc") = ssc
   attr(V, "rss") = state[["rss"]]
   if (!is.null(attr(object[["vcov"]], "tss"))) attr(V, "tss") = attr(object[["vcov"]], "tss")
-  attr(V, "df.t") = if (is.numeric(ssc[["t.df"]])) ssc[["t.df"]] else if (length(G) && ssc[["t.df"]] == "min") max(min(G) - 1, 1) else max(n - K, 1)
-  attr(V, "df_t") = attr(V, "df.t")
-  if (length(G)) attr(V, "n_clusters") = G
-  V
+  test_df = if (is.numeric(ssc[["t.df"]])) ssc[["t.df"]] else if (length(G) && ssc[["t.df"]] == "min") max(min(G) - 1, 1) else max(n - K, 1)
+  distribution = if (inherits(object, "dbglm") && object[["family"]][["family"]] %in% c("binomial", "poisson")) "normal" else "t"
+  new_inference_result(V, request[["kind"]], state[["coefficient_names"]],
+    clusters, G, ssc, K, test_df, distribution, attr(V, "repair"))
 }
 
 # Aggregate cluster score cross-products in SQL. Even observation-sized cluster

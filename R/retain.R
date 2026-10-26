@@ -534,11 +534,12 @@ predict_retained_sample = function(object, type = "link", sample = c("estimation
   ), class = "dbreg_prediction")
 }
 
-inference_coeftable = function(object, V) {
-  beta = stats::coef(object)[rownames(V)]
-  se = sqrt(diag(V))
+inference_coeftable = function(object, V, distribution = NULL) {
+  beta = stats::coef(object)
+  if (!identical(names(beta), rownames(V))) beta = beta[rownames(V)]
+  se = sqrt(Matrix::diag(V))
   statistic = beta / se
-  normal = inherits(object, "dbglm") && object[["family"]][["family"]] %in% c("binomial", "poisson")
+  normal = if (is.null(distribution)) inherits(object, "dbglm") && object[["family"]][["family"]] %in% c("binomial", "poisson") else distribution == "normal"
   p = if (normal) 2 * stats::pnorm(-abs(statistic)) else 2 * stats::pt(-abs(statistic), attr(V, "df.t"))
   cbind(estimate = beta, std.error = se, statistic = statistic, p.value = p)
 }
@@ -563,18 +564,12 @@ summary.dbreg = function(object, vcov = NULL, cluster = NULL, ssc = NULL, vcov_f
   check_unused_args(list(...))
   changed = !is.null(vcov) || !is.null(cluster) || !is.null(ssc) || !identical(vcov_fix, TRUE)
   if (changed) {
-    V = vcov.dbreg(object, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)
+    inference = requested_inference_result(object, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)
     compact = function(value) if (inherits(value, "formula")) stats::as.formula(paste(deparse(value, width.cutoff = 500L), collapse = ""), env = baseenv()) else value
     if (!is.null(vcov) || !is.null(cluster)) object[["covariance_request"]] = list(vcov = compact(vcov), cluster = compact(cluster))
     object[["all_coefficients"]] = coef.dbreg(object, fe = TRUE)
-    object[["coeftable"]] = inference_coeftable(object, V)
-    object[["vcov"]] = V
-    object[["fitted_state"]][["inference"]][["default_ssc"]] = attr(V, "ssc")
+    object = install_inference_result(object, inference)
     object[["postfit_covariance"]] = TRUE
-    object[["vcov_type"]] = attr(V, "vcov_type")
-    for (field in c("cluster_var", "n_clusters", "ssc", "n_params", "df_t")) {
-      object[[field]] = attr(V, field)
-    }
   }
   class(object) = unique(c(if (inherits(object, "dbglm")) "summary.dbglm", "summary.dbreg", class(object)))
   object

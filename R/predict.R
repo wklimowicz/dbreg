@@ -375,20 +375,16 @@ vcov.dbreg = function(object, fe = FALSE, ..., vcov = NULL, cluster = NULL, ssc 
   }
   if (!is.null(vcov) || !is.null(cluster) || !is.null(ssc) || !identical(vcov_fix, TRUE)) {
     if (!identical(fe, FALSE)) stop("Post-fit absorbed-effect covariance is not supported; use fe=FALSE.", call. = FALSE)
-    if (is.null(vcov) && is.null(cluster)) {
-      saved = object[["covariance_request"]]
-      if (!is.null(saved)) {
-        vcov = saved[["vcov"]]
-        cluster = saved[["cluster"]]
-      } else vcov = object[["fitted_state"]][["inference"]][["default_vcov"]]
-    }
-    if (is.null(vcov) && is.null(cluster)) vcov = object[["vcov_type"]]
-    if (is.null(vcov) && is.null(cluster)) vcov = attr(object[["vcov"]], "type")
-    return(retained_covariance(object, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix))
+    return(inference_covariance(requested_inference_result(object,
+      vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)))
   }
   out = object[["vcov"]]
   if (isTRUE(fe) && length(object[["fe"]]) && isTRUE(object[["postfit_covariance"]])) stop("Post-fit absorbed-effect covariance is not supported; use fe=FALSE.", call. = FALSE)
-  fields = c("type", "n_clusters", "n_params", "rss", "tss", "df.K", "df.t", "ssc")
+  if (!is.null(object[["inference_result"]])) {
+    visible = if (!isTRUE(fe) && length(object[["fe"]])) names(coef(object, fe = fe)) else object[["inference_result"]][["coefficient_names"]]
+    return(inference_covariance(object[["inference_result"]], visible))
+  }
+  fields = c("type", "n_clusters", "n_params", "rss", "tss", "df.K", "df.t", "ssc", "vcov_type", "cluster_var", "df_t", "repair")
   metadata = lapply(fields, function(nm) attr(out, nm))
   names(metadata) = fields
   # The table already has public names (including interaction separators).

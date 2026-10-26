@@ -383,6 +383,8 @@ dbbinsreg = function(
   # Parse vcov arguments using shared helper (dbbinsreg accepts more vcov types)
   vcov_parsed = parse_vcov_args(vcov, cluster = NULL, valid_types = c("iid", "hc1", "hc0", "hc2", "hc3"))
   cluster_var = vcov_parsed[["cluster_var"]]
+  # Completed metadata needs column identities, never the caller frame.
+  if (inherits(vcov, "formula")) environment(vcov) = baseenv()
   # Note: we keep vcov as-is for dbbinsreg (not normalized to vcov_type)
 
   # Parse formula using shared helper
@@ -601,7 +603,7 @@ dbbinsreg = function(
     )
   )
   inputs[["B"]] = as.integer(B)
-  inputs[["formula"]] = as.formula(formula_str)
+  inputs[["formula"]] = as.formula(formula_str, env = baseenv())
   # binsreg-style (p, s) specs
   inputs[["points"]] = if (points_on) c(points_p, points_s) else NULL
   inputs[["line"]] = if (line_on) c(line_p, line_s) else NULL
@@ -699,7 +701,8 @@ execute_separate_binsreg = function(inputs) {
   # -------------------------------------------------------------------------
   # Step 1: Fit model for POINTS using points parameters
   # -------------------------------------------------------------------------
-  points_inputs = inputs
+  points_inputs = new.env(parent = parent.env(inputs))
+  env2env(inputs, points_inputs)
   points_inputs[["degree"]] = original_points[1]
   points_inputs[["smooth"]] = original_points[2]
   points_inputs[["line_on"]] = FALSE # Only compute points
@@ -714,7 +717,8 @@ execute_separate_binsreg = function(inputs) {
   # -------------------------------------------------------------------------
   # Step 2: Fit model for LINE using line parameters
   # -------------------------------------------------------------------------
-  line_inputs = inputs
+  line_inputs = new.env(parent = parent.env(inputs))
+  env2env(inputs, line_inputs)
   line_inputs[["degree"]] = original_line[1]
   line_inputs[["smooth"]] = original_line[2]
   line_inputs[["line_on"]] = TRUE # Only compute line
@@ -750,7 +754,8 @@ execute_separate_binsreg = function(inputs) {
       y_var = inputs[["y_name"]],
       formula = inputs[["formula"]],
       level = points_result[["opt"]][["level"]],
-      ci = inputs[["ci"]],
+      ci = points_result[["opt"]][["ci"]],
+      cb = points_result[["opt"]][["cb"]],
       vcov = inputs[["vcov"]]
     )
   )

@@ -437,6 +437,8 @@ dbbinsreg = function(
   controls = to_safe(controls)
   fe = to_safe(fe)
   cluster_var = to_safe(cluster_var)
+  # Keep the public request intact; nested fits read the mapped source relation.
+  vcov_physical = if (inherits(vcov, "formula")) to_safe(vcov) else vcov
 
   # Detect backend for SQL compatibility
   backend_info = detect_backend(conn)
@@ -592,7 +594,7 @@ dbbinsreg = function(
     inputs,
     c(
       "conn", "table_name", "sampled_table_name", "y_name", "x_name", "degree",
-      "smooth", "controls", "fe", "cluster_var", "partition_method", "breaks",
+      "smooth", "controls", "fe", "cluster_var", "vcov_physical", "partition_method", "breaks",
       "ci", "cb", "nsims", "vcov", "alpha", "strategy", "sample_fit",
       "n_rows_orig", "verbose", "linegrid", "points_on", "line_on", "binspos", "source_vars",
       "plot"
@@ -1075,7 +1077,7 @@ execute_unconstrained_binsreg = function(inputs) {
     # Level plots and intervals require explicit FE coefficients/covariance.
     # The demean strategy only provides within-slope inference.
     strategy = if (length(fe)) "compress" else inputs[["strategy"]],
-    vcov = if (isTRUE(inputs[["ci"]]) || isTRUE(inputs[["cb"]])) inputs[["vcov"]] else "iid",
+    vcov = if (isTRUE(inputs[["ci"]]) || isTRUE(inputs[["cb"]])) inputs[["vcov_physical"]] else "iid",
     verbose = inputs[["verbose"]]
   )
 
@@ -1119,7 +1121,7 @@ execute_constrained_binsreg = function(inputs) {
   partition_method = inputs[["partition_method"]]
   controls = inputs[["controls"]]
   fe = inputs[["fe"]]
-  vcov_type = if (isTRUE(inputs[["ci"]])) inputs[["vcov"]] else "iid"
+  vcov_type = if (isTRUE(inputs[["ci"]])) inputs[["vcov_physical"]] else "iid"
 
   # Get backend info
   backend_info = detect_backend(conn)

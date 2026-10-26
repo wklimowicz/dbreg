@@ -1,3 +1,8 @@
+# Small-sample policies count varying-slope coefficients separately from FE intercepts.
+fe_intercept_df = function(sizes) {
+  if (length(sizes)) sum(sizes) - length(sizes) + 1L else 0L
+}
+
 # Variance-covariance and meat matrix computation
 # These functions are shared across all dbreg strategies.
 
@@ -14,8 +19,11 @@ compute_vcov = function(
   X = NULL,
   rss_g = NULL,
   meat = NULL,
-  sandwich_bread = NULL
+  sandwich_bread = NULL,
+  ssc = NULL
 ) {
+  ssc = dbglm_ssc(if (is.null(ssc)) "full" else ssc)
+  if (is.null(n_params)) n_params = nobs_orig - df_res
   if (!is.finite(df_res) || df_res <= 0) stop("Insufficient residual degrees of freedom.", call. = FALSE)
   if (!is.finite(rss) || rss < 0) stop("Residual sum of squares is invalid; numerical precision was lost.", call. = FALSE)
   weight_scale = attr(meat, "weight_scale")
@@ -31,7 +39,7 @@ compute_vcov = function(
     if (is.null(meat)) {
       stop("HC1 requires meat matrix for non-compress strategies")
     }
-    scale_hc1 = nobs_orig / df_res
+    scale_hc1 = if (ssc[["K.adj"]]) nobs_orig / (nobs_orig - n_params) else 1
     vcov_mat = scale_hc1 * (sandwich_bread %*% meat %*% t(sandwich_bread))
     attr(vcov_mat, "type") = "hc1"
   } else if (vcov_type == "cluster") {
@@ -46,18 +54,21 @@ compute_vcov = function(
     if (any(n_clusters < 2)) stop("Clustered covariance requires at least two clusters.", call. = FALSE)
     if (is.null(n_params)) n_params = ncol(XtX_inv)
     # CR1 small-sample correction: (G/(G-1)) * ((N-1)/(N-K)), as in fixest
-    scale_cr1 = (n_clusters / (n_clusters - 1)) * ((nobs_orig - 1) / (nobs_orig - n_params))
+    scale_cr1 = (if (ssc[["G.adj"]]) n_clusters / (n_clusters - 1) else 1) *
+      (if (ssc[["K.adj"]]) (nobs_orig - 1) / (nobs_orig - n_params) else 1)
     vcov_mat = scale_cr1 * (sandwich_bread %*% meat %*% t(sandwich_bread))
     attr(vcov_mat, "type") = "cluster"
     attr(vcov_mat, "n_clusters") = n_clusters
   } else {
     # IID case (same for all strategies)
-    sigma2 = rss / df_res
+    sigma2 = rss / (if (ssc[["K.adj"]]) nobs_orig - n_params else nobs_orig - 1)
     vcov_mat = sigma2 * XtX_inv
     attr(vcov_mat, "type") = "iid"
   }
-  attr(vcov_mat, "n_params") = if (is.null(n_params)) ncol(XtX_inv) else n_params
-  attr(vcov_mat, "df.t") = if (vcov_type == "cluster") min(n_clusters)-1 else df_res
+  attr(vcov_mat, "n_params") = attr(vcov_mat, "df.K") = n_params
+  attr(vcov_mat, "ssc") = ssc
+  attr(vcov_mat, "df.t") = if (is.numeric(ssc[["t.df"]])) ssc[["t.df"]] else
+    if (vcov_type == "cluster" && ssc[["t.df"]] == "min") min(n_clusters) - 1 else max(nobs_orig - n_params, 1)
   dimnames(vcov_mat) = dimnames(XtX_inv)
   vcov_mat
 }

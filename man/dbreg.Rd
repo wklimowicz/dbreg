@@ -16,7 +16,7 @@ dbreg(
   compress_ratio = NULL,
   compress_nmax = 1e+06,
   cluster = NULL,
-  ssc = c("full", "nested"),
+  ssc = "full",
   sql_only = FALSE,
   data_only = FALSE,
   drop_missings = TRUE,
@@ -116,16 +116,16 @@ cluster-robust standard errors (i.e., instead of \code{vcov = ~cluster_var}).
 Either a one-sided formula (e.g., \code{~firm}) or character string giving the
 variable name. Only single-variable clustering is currently supported.}
 
-\item{ssc}{Character string controlling the small-sample correction for
-clustered standard errors. Options are \code{"full"} (default) or \code{"nested"}.
-With \code{"full"}, all parameters (including fixed effect dummies) are counted
-in K for the CR1 correction. With \code{"nested"}, fixed effects that are nested
-within the cluster variable are excluded from K, matching the default
-behavior of \code{fixest::feols}. Only applies to \code{"compress"} and \code{"demean"}
-strategies (Mundlak uses explicit group mean regressors, not FE dummies).
-This distinction only matters for small samples. For large datasets
-(\code{dbreg}'s target use case), the difference is negligible and hence we
-default to the simple \code{"full"} option.}
+\item{ssc}{Small-sample policy: \code{"full"} (default), \code{"nested"}, \code{"none"},
+or a named list. The strings set \code{K.fixef} to \code{"full"}, \code{"nonnested"},
+or \code{"none"}. Lists may set \code{K.adj}, \code{K.fixef}, \code{G.adj}, \code{G.df}, and
+\code{t.df}, as in \code{fixest::ssc()}. \code{K.exact=TRUE} is unsupported. A positive
+numeric \code{t.df} sets testing degrees of freedom directly.
+\code{K.fixef} controls FE intercept counts; varying-slope coefficients remain
+counted. \code{"nested"} excludes FE intercepts nested within clusters.
+\code{"none"} excludes FE intercepts from the parameter correction. Set
+\code{K.adj=FALSE} or \code{G.adj=FALSE} to disable the corresponding adjustment.
+Mundlak group means remain ordinary regressors in all policies.}
 
 \item{sql_only}{Return SQL without estimating coefficients? Multiway
 demeaning returns a \code{dbreg_query_plan} with executable templates for the

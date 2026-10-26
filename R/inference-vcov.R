@@ -1,15 +1,4 @@
-inference_ssc = function(ssc) {
-  if (!is.null(ssc) && !is.list(ssc)) stop("Invalid ssc list.", call. = FALSE)
-  numeric_df = !is.null(ssc) && is.numeric(ssc[["t.df"]])
-  if (numeric_df) {
-    df = ssc[["t.df"]]
-    if (length(df) != 1L || !is.finite(df) || df < 1) stop("Numeric t.df must be at least one.", call. = FALSE)
-    ssc[["t.df"]] = "min"
-  }
-  value = dbglm_ssc(ssc)
-  if (numeric_df) value[["t.df"]] = df
-  value
-}
+inference_ssc = function(ssc) dbglm_ssc(ssc)
 
 inference_cluster_terms = function(value) {
   if (is.character(value)) {
@@ -72,7 +61,8 @@ inference_fe_nesting = function(conn, state, clusters) {
 inference_parameter_count = function(conn, state, request, ssc) {
   K = state[["K_model"]]
   sizes = state[["fe_sizes"]]
-  fe_df = if (length(sizes)) sum(sizes) - length(sizes) + 1 else 0
+  fe_df = state[["fe_df"]]
+  if (is.null(fe_df)) fe_df = if (length(sizes)) sum(sizes) - length(sizes) + 1 else 0
   if (ssc[["K.fixef"]] == "none") return(K - fe_df)
   if (request[["kind"]] == "cluster" && ssc[["K.fixef"]] == "nonnested" && length(sizes)) {
     nested = inference_fe_nesting(conn, state, request[["clusters"]])

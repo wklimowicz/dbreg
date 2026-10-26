@@ -59,6 +59,7 @@ execute_moments_strategy = function(inputs) {
   meat = fit_meat(fit, frame, yvar, inputs)
   
   vcov_mat = compute_vcov(
+    ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
     strategy = "moments",
     XtX_inv = fit[["bread"]],
@@ -157,15 +158,16 @@ execute_demean_strategy = function(inputs) {
   
   # Compute meat matrix if needed (HC1 or cluster)
   meat = fit_meat(fit, frame, yvar, inputs)
-  n_params_cluster = p_kept + df_fe  # K for CR1 correction
+  n_params_cluster = p_kept + df_fe - if (ssc[["K.fixef"]] == "none") fe_intercept_df(n_fe_levels) else 0  # K for CR1 correction
   if (vcov_type_req == "cluster") {
     # For ssc = "nested", exclude nested FE levels from K
-    if (ssc == "nested") {
+    if (ssc[["K.fixef"]] == "nonnested") {
       n_params_cluster = p_kept + df_fe - nested_fe_df(inputs)
     }
   }
   
   vcov_mat = compute_vcov(
+    ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
     strategy = "demean",
     XtX_inv = fit[["bread"]],
@@ -360,6 +362,7 @@ execute_mundlak_strategy = function(inputs) {
   meat = fit_meat(fit, frame, yvar, inputs)
 
   vcov_mat = compute_vcov(
+    ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
     strategy = "mundlak",
     XtX_inv = fit[["bread"]],
@@ -611,7 +614,8 @@ execute_compress_strategy = function(inputs) {
   
   # Cluster cross-products stay in SQL, even for observation-sized groups.
   meat = NULL
-  n_params_cluster = n_params_full  # K for CR1 correction
+  n_params_cluster = n_params_full - if (ssc[["K.fixef"]] == "none" && length(fe))
+    fe_intercept_df(vapply(compressed_dat[fe], nlevels, integer(1))) else 0  # K for CR1 correction
   if (vcov_type_req == "hc1" && !is.null(weights)) {
     sum_w2 = compressed_dat[["sum_w2"]]
     sum_w2y = compressed_dat[["sum_w2y"]]
@@ -625,7 +629,7 @@ execute_compress_strategy = function(inputs) {
       cols = c(setNames(sql_cast_double(yvar, conn), yvar), score_expressions))
     meat = fit_meats(list(fit), score_frame, yvar, inputs)[[1L]]
     # For ssc = "nested", exclude nested FE levels from K
-    if (ssc == "nested") {
+    if (ssc[["K.fixef"]] == "nonnested") {
       n_params_cluster = n_params_full - nested_fe_df(inputs, from_statement)
     }
   }
@@ -636,6 +640,7 @@ execute_compress_strategy = function(inputs) {
     attr(meat, "weight_scale") = weight_scale
   }
   vcov_mat = compute_vcov(
+    ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
     strategy = "compress",
     XtX_inv = XtX_inv,

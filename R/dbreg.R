@@ -87,16 +87,16 @@
 #' cluster-robust standard errors (i.e., instead of `vcov = ~cluster_var`).
 #' Either a one-sided formula (e.g., `~firm`) or character string giving the
 #' variable name. Only single-variable clustering is currently supported.
-#' @param ssc Character string controlling the small-sample correction for
-#' clustered standard errors. Options are `"full"` (default) or `"nested"`.
-#' With `"full"`, all parameters (including fixed effect dummies) are counted
-#' in K for the CR1 correction. With `"nested"`, fixed effects that are nested
-#' within the cluster variable are excluded from K, matching the default
-#' behavior of `fixest::feols`. Only applies to `"compress"` and `"demean"`
-#' strategies (Mundlak uses explicit group mean regressors, not FE dummies).
-#' This distinction only matters for small samples. For large datasets
-#' (`dbreg`'s target use case), the difference is negligible and hence we
-#' default to the simple `"full"` option.
+#' @param ssc Small-sample policy: `"full"` (default), `"nested"`, `"none"`,
+#'   or a named list. The strings set `K.fixef` to `"full"`, `"nonnested"`,
+#'   or `"none"`. Lists may set `K.adj`, `K.fixef`, `G.adj`, `G.df`, and
+#'   `t.df`, as in `fixest::ssc()`. `K.exact=TRUE` is unsupported. A positive
+#'   numeric `t.df` sets testing degrees of freedom directly.
+#'   `K.fixef` controls FE intercept counts; varying-slope coefficients remain
+#'   counted. `"nested"` excludes FE intercepts nested within clusters.
+#'   `"none"` excludes FE intercepts from the parameter correction. Set
+#'   `K.adj=FALSE` or `G.adj=FALSE` to disable the corresponding adjustment.
+#'   Mundlak group means remain ordinary regressors in all policies.
 #' @param sql_only Return SQL without estimating coefficients? Multiway
 #'   demeaning returns a `dbreg_query_plan` with executable templates for the
 #'   iterative projection fallback; other strategies return their primary query.
@@ -415,7 +415,7 @@ dbreg = function(
   compress_ratio = NULL,
   compress_nmax = 1e6,
   cluster = NULL,
-  ssc = c("full", "nested"),
+  ssc = "full",
   sql_only = FALSE,
   data_only = FALSE,
   drop_missings = TRUE,
@@ -439,7 +439,7 @@ dbreg = function(
   validate_linear_offset(offset)
   subset_variables(subset)
   fixef_rm = match.arg(fixef_rm)
-  ssc = match.arg(ssc)
+  ssc = dbglm_ssc(ssc)
   vcov_parsed = parse_vcov_args(vcov, cluster)
   vcov_type_req = vcov_parsed[["vcov_type"]]
   cluster_var = vcov_parsed[["cluster_var"]]
@@ -1296,6 +1296,9 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
     inputs[["own_conn"]] = FALSE
   }
   result[["strategy"]] = chosen_strategy
+  result[["ssc"]] = attr(result[["vcov"]], "ssc")
+  result[["n_params"]] = attr(result[["vcov"]], "n_params")
+  result[["df_t"]] = attr(result[["vcov"]], "df.t")
   # i() columns (display names), for predict()
   result[["i_columns"]] = inputs[["i_columns"]]
   class(result) = c(class, class(result))

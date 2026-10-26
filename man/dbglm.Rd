@@ -59,9 +59,11 @@ not sums of weights. See the likelihood conventions below.}
 
 \item{vcov}{`"iid"`, `"hc1"`, or a one-sided formula naming one cluster column.}
 
-\item{ssc}{Optional named list overriding fixest-style defaults. `K.adj=TRUE`
-by default; use `list(K.adj=FALSE)` for base `glm` covariance comparisons.
-`G.adj` controls the cluster correction. Binomial and Poisson inference is normal.}
+\item{ssc}{Small-sample policy, as in [dbreg()]. Accepts `"full"`,
+`"nested"`, `"none"`, or a named correction-policy list. `NULL` preserves
+the GLM default of nonnested FE intercept counting. `K.adj=TRUE` by default;
+use `list(K.adj=FALSE)` for base `glm` covariance comparisons. Binomial and
+Poisson inference uses the normal distribution.}
 
 \item{start}{Optional starting slope vector, including the intercept if present.
 Named vectors must identify the retained design coefficients.}

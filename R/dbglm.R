@@ -69,9 +69,11 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   `~o`, entering the predictor with coefficient one.
 #' @param factor_refs Optional named categorical reference levels, as in [dbreg()].
 #' @param vcov `"iid"`, `"hc1"`, or a one-sided formula naming one cluster column.
-#' @param ssc Optional named list overriding fixest-style defaults. `K.adj=TRUE`
-#'   by default; use `list(K.adj=FALSE)` for base `glm` covariance comparisons.
-#'   `G.adj` controls the cluster correction. Binomial and Poisson inference is normal.
+#' @param ssc Small-sample policy, as in [dbreg()]. Accepts `"full"`,
+#'   `"nested"`, `"none"`, or a named correction-policy list. `NULL` preserves
+#'   the GLM default of nonnested FE intercept counting. `K.adj=TRUE` by default;
+#'   use `list(K.adj=FALSE)` for base `glm` covariance comparisons. Binomial and
+#'   Poisson inference uses the normal distribution.
 #' @param start Optional starting slope vector, including the intercept if present.
 #'   Named vectors must identify the retained design coefficients.
 #' @param control A list from [dbglm_control()].

@@ -16,7 +16,7 @@ dbivreg(
   compress_ratio = NULL,
   compress_nmax = 1e+06,
   cluster = NULL,
-  ssc = c("full", "nested"),
+  ssc = "full",
   sql_only = FALSE,
   data_only = FALSE,
   drop_missings = TRUE,
@@ -64,11 +64,8 @@ maximum compressed rows) that decide whether \code{strategy = "auto"} chooses
 \item{cluster}{Optional clustering variable, supplied as a one-sided formula
 or character string.}
 
-\item{ssc}{Character string controlling the small-sample correction for
-clustered standard errors. Options are \code{"full"} (default) or \code{"nested"}.
-With \code{"nested"}, fixed effects nested within the cluster variable are
-excluded from K, matching the default behavior of \code{fixest::feols}. See
-\code{\link[=dbreg]{dbreg()}} for details.}
+\item{ssc}{Small-sample policy, as in \code{\link[=dbreg]{dbreg()}}. Accepts \code{"full"} (default),
+\code{"nested"}, \code{"none"}, or a named correction-policy list.}
 
 \item{sql_only}{Logical indicating whether to return only the underlying SQL
 query, or an iterative projection plan for multiway demeaning.}

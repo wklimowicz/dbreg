@@ -28,6 +28,7 @@ retain_glm_score_frame = function(result, fit, conn, base, x, fe, original, reso
   state[["dispersion_scaled"]] = result[["dispersion_scaled"]]
   state[["weight_scale"]] = weight_scale
   state[["K_model"]] = counts[["model"]]
+  state[["fe_df"]] = fe_intercept_df(state[["fe_sizes"]])
   state[["default_ssc"]] = ssc
   state[["default_vcov"]] = if (result[["vcov_type"]] == "cluster") stats::reformulate(result[["cluster_var"]], env = baseenv()) else result[["vcov_type"]]
   attach_inference_state(result, state)

@@ -1,5 +1,11 @@
 # Fisher information, score meat and fixest-compatible GLM corrections.
 dbglm_ssc = function(ssc) {
+  if (is.character(ssc)) {
+    if (length(ssc) != 1L || is.na(ssc) || !ssc %in% c("full", "nested", "none")) {
+      stop("`ssc` must be full, nested, none, or a correction-policy list.", call. = FALSE)
+    }
+    ssc = list(K.fixef = switch(ssc, full = "full", nested = "nonnested", none = "none"))
+  }
   defaults = list(K.adj = TRUE, K.fixef = "nonnested", K.exact = FALSE,
     G.adj = TRUE, G.df = "min", t.df = "min")
   if (!is.null(ssc)) {
@@ -12,13 +18,17 @@ dbglm_ssc = function(ssc) {
       stop("`ssc` adjustment flags must be TRUE or FALSE.", call. = FALSE)
     }
   }
-  for (name in c("K.fixef", "G.df", "t.df")) {
+  numeric_df = is.numeric(defaults[["t.df"]])
+  if (numeric_df && (length(defaults[["t.df"]]) != 1L || !is.finite(defaults[["t.df"]]) || defaults[["t.df"]] < 1)) {
+    stop("Numeric t.df must be at least one.", call. = FALSE)
+  }
+  for (name in c("K.fixef", "G.df", if (!numeric_df) "t.df")) {
     if (!is.character(defaults[[name]]) || length(defaults[[name]]) != 1 || is.na(defaults[[name]])) {
       stop("`ssc` policies must be single character strings.", call. = FALSE)
     }
   }
   if (defaults[["K.exact"]] || !defaults[["K.fixef"]] %in% c("full", "none", "nonnested") ||
-    !defaults[["G.df"]] %in% c("min", "conventional") || !defaults[["t.df"]] %in% c("min", "conventional")) {
+    !defaults[["G.df"]] %in% c("min", "conventional") || !numeric_df && !defaults[["t.df"]] %in% c("min", "conventional")) {
     stop("Unsupported `ssc` settings.", call. = FALSE)
   }
   defaults

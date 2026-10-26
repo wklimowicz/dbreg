@@ -15,7 +15,8 @@ compute_vcov(
   X = NULL,
   rss_g = NULL,
   meat = NULL,
-  sandwich_bread = NULL
+  sandwich_bread = NULL,
+  ssc = NULL
 )
 }
 \description{

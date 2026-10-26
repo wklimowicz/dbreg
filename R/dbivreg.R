@@ -42,11 +42,8 @@
 #'   *Acceleration Strategies* section.
 #' @param cluster Optional clustering variable, supplied as a one-sided formula
 #'   or character string.
-#' @param ssc Character string controlling the small-sample correction for
-#'   clustered standard errors. Options are `"full"` (default) or `"nested"`.
-#'   With `"nested"`, fixed effects nested within the cluster variable are
-#'   excluded from K, matching the default behavior of `fixest::feols`. See
-#'   [dbreg()] for details.
+#' @param ssc Small-sample policy, as in [dbreg()]. Accepts `"full"` (default),
+#'   `"nested"`, `"none"`, or a named correction-policy list.
 #' @param sql_only Logical indicating whether to return only the underlying SQL
 #'   query, or an iterative projection plan for multiway demeaning.
 #' @param data_only Logical indicating whether to return only the aggregated
@@ -71,7 +68,7 @@ dbivreg = function(
   compress_ratio = NULL,
   compress_nmax = 1e6,
   cluster = NULL,
-  ssc = c("full", "nested"),
+  ssc = "full",
   sql_only = FALSE,
   data_only = FALSE,
   drop_missings = TRUE,
@@ -84,7 +81,7 @@ dbivreg = function(
   weights = formula_column(weights, "weights")
   verbose = isTRUE(verbose)
   strategy = match.arg(strategy)
-  ssc = match.arg(ssc)
+  ssc = dbglm_ssc(ssc)
   if (strategy == "within") {
     strategy = "demean"
   }
@@ -539,10 +536,10 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
   df_res = n_total - length(x_names_full) - df_fe
   # For ssc = "nested", exclude nested FE parameters from the CR1 K
   nested_levels = 0L
-  if (vcov_type_req == "cluster" && ssc == "nested") {
+  if (vcov_type_req == "cluster" && ssc[["K.fixef"]] == "nonnested") {
     nested_levels = nested_fe_df(inputs)
   }
-  n_params = length(x_names_full) + df_fe - nested_levels
+  n_params = length(x_names_full) + if (ssc[["K.fixef"]] == "none") 0 else df_fe - nested_levels
 
   tss = moment_tss(S, yvar)
 
@@ -556,6 +553,7 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
   meats = meats_fn(c(list(fit), fs_fits), c(yvar, endog))
   meat = meats[[1]]
   vcov_mat = compute_vcov(
+    ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
     strategy = if (has_intercept) "moments" else "demean",
     XtX_inv = fit[["bread"]],
@@ -837,6 +835,7 @@ compute_dbivreg_first_stage_wald = function(
   vcov_type = vcov_type_req
   out = Map(function(fit_u, meat_u) {
     vcov_u = compute_vcov(
+      ssc = inputs[["ssc"]],
       vcov_type = vcov_type,
       strategy = if (has_intercept) "moments" else "demean",
       XtX_inv = fit_u[["bread"]],
@@ -844,7 +843,8 @@ compute_dbivreg_first_stage_wald = function(
       rss = fit_u[["rss"]],
       df_res = df2,
       nobs_orig = n_total,
-      n_params = length(unrestricted) + df_fe - if (vcov_type == "cluster") nested_levels else 0L,
+      n_params = length(unrestricted) + if (inputs[["ssc"]][["K.fixef"]] == "none") 0 else
+        df_fe - if (vcov_type == "cluster") nested_levels else 0L,
       meat = meat_u
     )
     beta_q = fit_u[["coef"]][excluded, , drop = FALSE]

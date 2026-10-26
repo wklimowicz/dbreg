@@ -256,7 +256,8 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
       accepted = FALSE
       for (halvings in 0:control[["step_max_halvings"]]) {
         next_state = create(paste0(
-          "SELECT * EXCLUDE(eta,mu,d,w,z,score,dev,__dbglm_eta,__dbglm_candidate), ",
+          "SELECT * EXCLUDE(eta,mu,d,w,z,score,dev,__dbglm_eta,__dbglm_candidate",
+          if (cell) ",score_sq", "), ",
           "__dbglm_eta + ", dbglm_number(step), "*(__dbglm_candidate-__dbglm_eta) AS __dbglm_eta FROM ", candidate_state
         ), materialize = FALSE)
         next_working = dbglm_fe_working(conn, next_state, family[["link"]], create, target = alt_working, cell = cell)

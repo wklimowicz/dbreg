@@ -161,6 +161,14 @@ dbglm_test_databricks_cases = function(conn, verbose = FALSE) {
     "CAST(1e-300 AS DOUBLE) AS b,CAST(0.12345678901234567 AS DOUBLE) AS c"))
   # Compare transport with the database's own doubles: decimal-to-double
   # conversion can differ from R's literal parser by one rounding unit.
+  transported = as.numeric(attr(extremes, "dbglm_globals")[1, ])
+  database_doubles = as.numeric(direct[1, ])
+  if (!identical(transported, database_doubles)) {
+    print(data.frame(field = names(attr(extremes, "dbglm_globals")),
+      transported = sprintf("%a", transported),
+      database = sprintf("%a", database_doubles),
+      relative_error = (transported - database_doubles) / database_doubles))
+  }
   expect_identical(as.numeric(attr(extremes, "dbglm_globals")[1, ]), as.numeric(direct[1, ]))
   expect_true(all(abs(as.numeric(direct[1, ]) / c(1e300, 1e-300, .12345678901234567) - 1) <= 4 * .Machine$double.eps))
   expect_error(dbreg:::read_fe_moments(conn,

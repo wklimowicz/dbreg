@@ -87,6 +87,9 @@ local({
     (nrow(d) - big - small) / sum(residual[, 1L]^2)
   fit = dbreg::dbreg(y ~ x | g + h, data = d, weights = ~w, strategy = "demean")
   expect_equal(unname(stats::coef(fit)), beta, tolerance = 1e-10)
+  if (!isTRUE(all.equal(as.numeric(stats::vcov(fit)), covariance, tolerance = 1e-10))) {
+    str(list(actual = as.numeric(stats::vcov(fit)), reference = covariance), give.attr = TRUE)
+  }
   expect_equal(as.numeric(stats::vcov(fit)), covariance, tolerance = 1e-10)
   expect_identical(fit[["ap_method"]], "bounded_moments")
 

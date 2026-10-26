@@ -24,6 +24,10 @@
 #' @param table,data,path Mutually exclusive data source arguments with
 #'   precedence `table > data > path`. A `dbplyr` lazy table may be supplied
 #'   through `data` or `table`; its connection is inferred if `conn` is omitted.
+#' @param offset Optional numeric column name or one-sided column formula such
+#'   as `~o`, entering the structural equation with coefficient one.
+#' @param subset Optional logical column name or restricted one-sided predicate
+#'   formula, as in [dbreg()]. Applied before sample filtering.
 #' @param weights Optional observation-weight column name or one-sided formula
 #'   such as `~w`.
 #' @param vcov Character string or one-sided clustering formula. Character
@@ -76,9 +80,14 @@ dbivreg = function(
   fe_tol = getOption("dbreg.ap_tol", 1e-10),
   fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   diagnostics = FALSE,
+  offset = NULL,
+  subset = NULL,
   ...
 ) {
   weights = formula_column(weights, "weights")
+  offset = formula_column(offset, "offset")
+  validate_linear_offset(offset)
+  subset_variables(subset)
   verbose = isTRUE(verbose)
   strategy = match.arg(strategy)
   ssc = dbglm_ssc(ssc)
@@ -117,7 +126,7 @@ dbivreg = function(
     c(
       "fml", "conn", "table", "data", "path", "weights", "vcov_type_req",
       "cluster_var", "ssc", "strategy", "compress_ratio", "compress_nmax",
-      "sql_only", "data_only", "drop_missings", "verbose", "fe_tol", "fe_max_iter", "diagnostics"
+      "sql_only", "data_only", "drop_missings", "verbose", "fe_tol", "fe_max_iter", "diagnostics", "offset", "subset"
     )
   )
   # Release any connection/registration we create, including on errors during
@@ -179,7 +188,7 @@ process_dbivreg_inputs = function(inputs) {
 
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
   # results are mapped back to display names at the end
-  src = safe_source(conn, from_statement, c(model_vars(fml), weights, cluster_var))
+  src = safe_source(conn, from_statement, c(model_vars(fml), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]])))
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
   parsed_fml = dbivreg_parse_formula(src[["to_safe"]](fml))
@@ -190,10 +199,30 @@ process_dbivreg_inputs = function(inputs) {
   cluster_var = src[["to_safe"]](cluster_var)
   inputs[["name_map"]] = name_map
   inputs[["source_map"]] = name_map
+  if (!is.null(inputs[["subset"]])) {
+    schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from_statement), 0, detect_backend(conn)[["name"]]))
+    from_statement = filter_source_predicate(from_statement,
+      sql_subset_predicate(conn, inputs[["subset"]], schema, src[["to_safe"]]))
+  }
+  adjusted = offset_source_frame(conn, from_statement, yvar, src[["to_safe"]](inputs[["offset"]]))
+  if (!is.null(adjusted[["alias"]])) {
+    from_statement = filter_source_predicate(adjusted[["from_statement"]], adjusted[["finite"]])
+    formula = paste(adjusted[["alias"]], "~", parsed_fml[["exog_rhs_text"]], "|",
+      if (length(fe)) paste(parsed_fml[["fe_rhs_text"]], "|"),
+      parsed_fml[["endog_rhs_text"]], "~", parsed_fml[["instr_rhs_text"]])
+    parsed_fml = dbivreg_parse_formula(stats::as.formula(formula, env = baseenv()))
+    yvar = parsed_fml[["yvar"]]
+    name_map[[adjusted[["alias"]]]] = restore_names(adjusted[["outcome"]], src[["map"]])
+    inputs[["name_map"]] = inputs[["source_map"]] = name_map
+  }
 
   # In-memory data are checked by (display) column name; otherwise the database
   # is probed using the (safe) source names
-  validate_weights(if (is.null(data)) weights else weights_display, data, conn, from_statement)
+  if (is.null(inputs[["subset"]]) && is.null(inputs[["offset"]])) {
+    validate_weights(if (is.null(data)) weights else weights_display, data, conn, from_statement)
+  } else {
+    validate_weights(weights, NULL, conn, from_statement)
+  }
   inputs[["weights"]] = weights
   inputs[["sample_diagnostics"]] = sample_diagnostics(inputs, from_statement,
     list(outcome = yvar, regressor = parsed_fml[["exog_vars"]],
@@ -658,7 +687,7 @@ dbivreg_parse_formula = function(fml) {
   if (length(yvar) != 1L) {
     stop("Exactly one outcome variable required.")
   }
-  check_simple_terms(text(inner[[2]]), "outcome", allow_interactions = FALSE)
+  check_simple_terms(paste(deparse(inner[[2]], backtick = TRUE), collapse = ""), "outcome", allow_interactions = FALSE)
   exog_expr = blocks[[1]]
   endog_expr = blocks[[length(blocks)]]
   check_simple_terms(attr(terms(rhs(exog_expr)), "term.labels"), "exogenous regressors")

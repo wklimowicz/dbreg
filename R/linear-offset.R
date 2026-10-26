@@ -6,14 +6,13 @@ validate_linear_offset = function(offset) {
 
 # Derive a distinct outcome column so the original outcome can independently
 # occur in regressors, offsets, weights or identity columns.
-linear_offset_frame = function(conn, from, parsed, offset) {
-  if (is.null(offset)) return(list(from_statement = from, parsed = parsed))
+offset_source_frame = function(conn, from, y, offset) {
+  if (is.null(offset)) return(list(from_statement = from))
   backend = detect_backend(conn)
   if (backend[["name"]] != "duckdb" && !isTRUE(backend[["is_databricks"]])) {
     stop("OLS offsets support DuckDB and native Databricks.", call. = FALSE)
   }
   schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from), 0, backend[["name"]]))
-  y = parsed[["yvar"]]
   if (!is.numeric(schema[[offset]]) || !(is.numeric(schema[[y]]) || is.logical(schema[[y]]))) {
     stop("Outcome and offset must be numeric (the outcome may be logical).", call. = FALSE)
   }
@@ -22,10 +21,16 @@ linear_offset_frame = function(conn, from, parsed, offset) {
   expression = paste0("CAST(", q(y), " AS DOUBLE)-CAST(", q(offset), " AS DOUBLE)")
   from = paste0("FROM (SELECT dbreg_offset_source.*, (", expression, ") AS ", q(alias),
     " FROM (SELECT * ", from, ") dbreg_offset_source) dbreg_offset_frame")
-  formula = stats::as.formula(call("~", as.name(alias), parsed[["fml"]][[3L]]), env = baseenv())
-  parsed = parse_regression_formula(formula, allow_extended = TRUE)
-  list(from_statement = from, parsed = parsed, alias = alias, outcome = y,
+  list(from_statement = from, alias = alias, outcome = y,
     finite = backend_sql(conn, paste0("isfinite(", q(y), ") AND isfinite(", q(offset), ")")))
+}
+
+linear_offset_frame = function(conn, from, parsed, offset) {
+  if (is.null(offset)) return(list(from_statement = from, parsed = parsed))
+  frame = offset_source_frame(conn, from, parsed[["yvar"]], offset)
+  formula = stats::as.formula(call("~", as.name(frame[["alias"]]), parsed[["fml"]][[3L]]), env = baseenv())
+  frame[["parsed"]] = parse_regression_formula(formula, allow_empty = TRUE, allow_extended = TRUE)
+  frame
 }
 
 linear_prediction_offset = function(object, data) {

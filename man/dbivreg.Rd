@@ -24,6 +24,8 @@ dbivreg(
   fe_tol = getOption("dbreg.ap_tol", 1e-10),
   fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   diagnostics = FALSE,
+  offset = NULL,
+  subset = NULL,
   ...
 )
 }
@@ -84,6 +86,12 @@ dropped.}
 
 \item{diagnostics}{Run an additional input scan for per-variable missingness
 and dropped-row counts? Default is \code{FALSE}. Counts may overlap across roles.}
+
+\item{offset}{Optional numeric column name or one-sided column formula such
+as \code{~o}, entering the structural equation with coefficient one.}
+
+\item{subset}{Optional logical column name or restricted one-sided predicate
+formula, as in \code{\link[=dbreg]{dbreg()}}. Applied before sample filtering.}
 
 \item{...}{Additional unused arguments.}
 }

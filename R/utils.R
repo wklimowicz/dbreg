@@ -336,7 +336,7 @@ parse_regression_formula = function(fml, allow_empty = FALSE, allow_extended = F
   if (length(yvar) != 1) {
     stop("Exactly one outcome variable required.")
   }
-  check_simple_terms(paste(deparse(lhs[[2]]), collapse = " "), "outcome", allow_interactions = FALSE)
+  check_simple_terms(paste(deparse(lhs[[2]], backtick = TRUE), collapse = " "), "outcome", allow_interactions = FALSE)
   
   # Extract RHS part 1: variables and term structure
   rhs1 = formula(fml, lhs = 0, rhs = 1)

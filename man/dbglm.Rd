@@ -33,58 +33,52 @@ dbglm(
 }
 \arguments{
 \item{fml}{Regression formula. Supports the existing SQL design syntax:
-column names, categorical columns, interactions, and `I(x^2)`/`I(x^3)`.
+column names, categorical columns, interactions, and \code{I(x^2)}/\code{I(x^3)}.
 Intercept-only models and numeric no-intercept models are supported. Use
-`factor(column)` for categorical coercion. After `|`, column names are
-categorical effects, `a^b` is a joint effect, and `group[t]` or
-`group[t,t2]` adds an intercept and group-specific continuous slopes.}
+\code{factor(column)} for categorical coercion. After \code{|}, column names are
+categorical effects, \code{a^b} is a joint effect, and \code{group[t]} or
+\code{group[t,t2]} adds an intercept and group-specific continuous slopes.}
 
 \item{conn, table, data, path}{Connection and input relation, with the same
-precedence as [dbreg()]. A default connection is in memory with spilling
-disabled. `data` or `table` may also be a `dbplyr` lazy table, whose
+precedence as \code{\link[=dbreg]{dbreg()}}. A default connection is in memory with spilling
+disabled. \code{data} or \code{table} may also be a \code{dbplyr} lazy table, whose
 connection is inferred. Caller connections retain their settings and remain open.}
 
-\item{family}{A supported family name (`"gaussian"`, `"binomial"`, or
-`"poisson"`), a family function, or a family object. The default is
-`gaussian("identity")`. Supported alternatives are `binomial("cloglog")`,
-`binomial("logit")`, `binomial("probit")`, and `poisson("log")`. Poisson responses must be
+\item{family}{A supported family name (\code{"gaussian"}, \code{"binomial"}, or
+\code{"poisson"}), a family function, or a family object. The default is
+\code{gaussian("identity")}. Supported alternatives are \code{binomial("cloglog")},
+\code{binomial("logit")}, \code{binomial("probit")}, and \code{poisson("log")}. Poisson responses must be
 nonnegative integer counts; binomial responses must be zero or one.}
 
-\item{weights}{Optional column name or one-sided formula such as `~w`,
+\item{weights}{Optional column name or one-sided formula such as \code{~w},
 giving nonnegative observation weights, including
 fractional weights. Zero weights are omitted. Weights multiply each row's
 log likelihood and score; observation counts are counts of retained rows,
 not sums of weights. See the likelihood conventions below.}
 
 \item{offset}{Optional numeric column name or one-sided formula such as
-`~o`, entering the predictor with coefficient one.}
+\code{~o}, entering the predictor with coefficient one.}
 
-\item{factor_refs}{Optional named categorical reference levels, as in [dbreg()].}
+\item{factor_refs}{Optional named categorical reference levels, as in \code{\link[=dbreg]{dbreg()}}.}
 
-\item{vcov}{`"iid"`, `"hc1"`, or a one-sided formula naming one cluster column.}
+\item{vcov}{\code{"iid"}, \code{"hc1"}, or a one-sided formula naming one cluster column.}
 
-\item{ssc}{Small-sample policy, as in [dbreg()]. Accepts `"full"`,
-`"nested"`, `"none"`, or a named correction-policy list. `NULL` preserves
-the GLM default of nonnested FE intercept counting. `K.adj=TRUE` by default;
-use `list(K.adj=FALSE)` for base `glm` covariance comparisons. Binomial and
+\item{ssc}{Small-sample policy, as in \code{\link[=dbreg]{dbreg()}}. Accepts \code{"full"},
+\code{"nested"}, \code{"none"}, or a named correction-policy list. \code{NULL} preserves
+the GLM default of nonnested FE intercept counting. \code{K.adj=TRUE} by default;
+use \code{list(K.adj=FALSE)} for base \code{glm} covariance comparisons. Binomial and
 Poisson inference uses the normal distribution.}
 
 \item{start}{Optional starting slope vector, including the intercept if present.
 Named vectors must identify the retained design coefficients.}
 
-\item{control}{A list from [dbglm_control()].}
-
-\item{null_model}{Logical, default \code{FALSE}. Explicitly request compact global
-null likelihood diagnostics on the exact final estimation sample. The null drops
-regressors and fixed effects, retains the offset, and estimates one constant only
-if the fitted specification includes an ordinary or FE intercept. No null SQL or
-retained state is added when \code{FALSE}.}
+\item{control}{A list from \code{\link[=dbglm_control]{dbglm_control()}}.}
 
 \item{verbose}{Print iteration diagnostics?}
 
 \item{fixef_rm}{Recursive FE exclusion policy, using fixest conventions.
 If perfect-prediction groups remain under the selected policy, fitting errors.
-Gaussian `"perfect_fit"` removes singletons; `"infinite_coef"` removes none.}
+Gaussian \code{"perfect_fit"} removes singletons; \code{"infinite_coef"} removes none.}
 
 \item{row_id}{Optional character vector of unique, nonmissing source-key
 columns. Otherwise opaque snapshot keys are assigned once.}
@@ -92,48 +86,54 @@ columns. Otherwise opaque snapshot keys are assigned once.}
 \item{sample_table}{Optional new temporary table on a caller-supplied connection
 receiving retained keys after a successful fit. It remains caller-owned.}
 
-\item{separation}{Default `"error"` withholds fits at numerical boundaries.
-Explicit `"prediction"` allows a no-FE boundary probability approximation,
-with a warning, `finite_mle=FALSE`, `converged=FALSE`, and unavailable SEs,
+\item{separation}{Default \code{"error"} withholds fits at numerical boundaries.
+Explicit \code{"prediction"} allows a no-FE boundary probability approximation,
+with a warning, \code{finite_mle=FALSE}, \code{converged=FALSE}, and unavailable SEs,
 tests and AIC/BIC. Coefficients are finite approximations, not a finite MLE.}
 
-\item{retain}{Default `"none"` keeps the compact fit. `"prediction"` saves
+\item{retain}{Default \code{"none"} keeps the compact fit. \code{"prediction"} saves
 bounded portable FE dictionaries and learned coefficients for new-row
 prediction. It adds SQL aggregation and dictionary transfer, without keeping
-input rows. `options(dbreg.prediction_max_entries = 2e6)` bounds matrix and
+input rows. \code{options(dbreg.prediction_max_entries = 2e6)} bounds matrix and
 transfer entries alongside the existing FE moment limits. One or two FEs
 without varying slopes can keep oversized dictionaries in SQL instead.
 That state needs its live owning session, cannot be restored with
-`saveRDS()`, and can be released with [close()]. Other oversized designs
+\code{saveRDS()}, and can be released with \code{\link[=close]{close()}}. Other oversized designs
 error instead of collecting the panel. Two-FE recovery uses the fitted
-projection iteration limit and a tolerance at least as strict as `1e-10`.
-`"all"` also saves original rows, fitted predictors, residuals and scores
-in an owned database relation, enabling default/sample prediction, [stats::case.names()],
-[residuals()] and post-fit covariance via [summary()]. It requires a finite
+projection iteration limit and a tolerance at least as strict as \code{1e-10}.
+\code{"all"} also saves original rows, fitted predictors, residuals and scores
+in an owned database relation, enabling default/sample prediction, \code{\link[stats:case.names]{stats::case.names()}},
+\code{\link[=residuals]{residuals()}} and post-fit covariance via \code{\link[=summary]{summary()}}. It requires a finite
 fit, adds row-sized backend storage/SQL work and needs its live owning session.
 SQL inputs return keyed relations; R inputs preserve original positions.
-`"inference"` saves rows/scores without learned-effect dictionaries. It
+\code{"inference"} saves rows/scores without learned-effect dictionaries. It
 supports fitted-sample prediction and post-fit inference; learned-effect
-newdata prediction needs `"prediction"` or `"all"`.}
+newdata prediction needs \code{"prediction"} or \code{"all"}.}
 
 \item{subset}{Optional logical column or restricted one-sided predicate
-formula, as in [dbreg()]. Original row identities precede this filter.}
+formula, as in \code{\link[=dbreg]{dbreg()}}. Original row identities precede this filter.}
 
-\item{strategy}{`"auto"` selects exact cell compression when its cardinality
-satisfies `compress_ratio` and `compress_nmax`. `"compress"` always uses
-cells; `"moments"` uses original-row IRLS sufficient statistics. `"ap"`
+\item{strategy}{\code{"auto"} selects exact cell compression when its cardinality
+satisfies \code{compress_ratio} and \code{compress_nmax}. \code{"compress"} always uses
+cells; \code{"moments"} uses original-row IRLS sufficient statistics. \code{"ap"}
 requires fixed effects and selects SQL alternating projections.}
 
-\item{compress_ratio, compress_nmax}{Compression thresholds, as in [dbreg()].
+\item{compress_ratio, compress_nmax}{Compression thresholds, as in \code{\link[=dbreg]{dbreg()}}.
 Compression groups the expanded regressors, fixed effects, offsets and
 initial cluster. It preserves original observation counts, likelihoods,
 IID and sandwich covariance, and requested original-row retention.}
+
+\item{null_model}{Logical, default \code{FALSE}. Explicitly request compact global
+null likelihood diagnostics on the exact final estimation sample. The null
+drops regressors and fixed effects, retains the fixed offset, and estimates
+one constant only if the fitted specification includes an ordinary or FE
+intercept. No null SQL or retained state is added when \code{FALSE}.}
 }
 \value{
-A compact object of class `c("dbglm", "dbreg")`, containing slopes,
-  covariance, log likelihood, sample counts and convergence diagnostics. Compact
-  modes do not retain input rows. Database-backed retention keeps its owned
-  dictionary and live connection until [close()] or garbage collection.
+A compact object of class \code{c("dbglm", "dbreg")}, containing slopes,
+covariance, log likelihood, sample counts and convergence diagnostics. Compact
+modes do not retain input rows. Database-backed retention keeps its owned
+dictionary and live connection until \code{\link[=close]{close()}} or garbage collection.
 }
 \description{
 Fits binomial logit, probit, complementary-log-log and log-link Poisson models
@@ -145,90 +145,89 @@ DuckDB and Databricks connections, with recursive fixed-effect sample exclusions
 }
 \details{
 Missing/nonfinite model values and zero weights are omitted. Model
-  specification is fixed before IRLS, and rank decisions are held constant.
-  Fits that fail convergence or reach the numerical mean boundary
-  error rather than returning ordinary successful inference. These checks
-  do not constitute a complete general separation detector. Absorbed fits
-  support new-row prediction when fitted with `retain = "prediction"`.
-  Unknown FE keys and combinations outside the identified training span return
-  `NA`. The saved state survives serialization and database disconnection.
-  Grouped binomial responses and categorical
-  no-intercept models remain unsupported.
-  For binomial models, [logLik()] follows the `fixest::feglm()` / R binomial
-  AIC convention: original weights are rounded to integers (ties to even)
-  when reporting the likelihood. Fitting, deviance and covariance always use
-  the unrounded weights. Use `logLik(model, type = "weighted")` for the
-  weighted Bernoulli objective actually optimized. For Poisson models and
-  integer-weight binomial models the two likelihoods coincide.
-  Gaussian models estimate dispersion using weighted RSS divided by model
-  residual df. Their IID covariance and t tests follow `fixest::feglm()`,
-  including its additional IID SSC factor. Gaussian default likelihood uses
-  R's Gaussian AIC convention (profile likelihood minus one); `type="weighted"`
-  returns the profile likelihood. Likelihood df excludes the dispersion,
-  matching fixest. These conventions differ from OLS [dbreg()].
-  If all retained weights are below one, fitting rescales them by a power
-  of two to avoid premature convergence and loss of precision for very small
-  weights. The divisor is recorded in `weight_scale`. Likelihood, deviance
-  and IID covariance are returned on the original weight scale; sandwich
-  covariances are invariant to this rescaling. Score diagnostics use the
-  internal scale. All families normalize uniformly large weights. Gaussian models
-  combine dispersion and bread on the internal scale before restoring units.
-  With absorbed effects, expanded regressor columns are centered internally
-  before forming projection moments. Their slopes, units and covariance are
-  unchanged; the retained column centers are recorded in `design_center`.
-  Large two-way categorical FE problems use the shared bounded sparse
-  projector when possible. It rebuilds weighted sufficient statistics at each
-  IRLS step and certifies normalized group equations on the transformed rows.
-  Transfer limits use `dbreg.duckdb_ap_max_edges` and
-  `dbreg.duckdb_ap_max_entries`. Exceeding limits or numerical certification
-  falls back to the existing SQL projection. Use
-  `dbglm_control(projection_method = "sql")` to select that path directly.
-  Databricks requires a session-preserving native-query DBI connection and
-  physical temporary-table support. Bounded categorical FE problems use
-  parameter-space IRLS, grouped moment queries and compact global summaries.
-  Small dense FE dictionaries use coefficient arrays; large or sparse
-  dictionaries retain coefficient joins. Working states are inline SQL
-  expressions on the moments path, avoiding row-sized writes during IRLS.
-  Two-way categorical effects can also use the shared bounded sparse solver;
-  the SQL fallback reuses batched window AP with the same normalized tolerance.
-  `dbreg.spark_ap_chunk_cycles` controls its batch size (default three).
-  Databricks uses double-precision SUM and a bounded count histogram (at most
-  one million distinct counts) for the Poisson likelihood constant.
-  `options(dbreg.glm_databricks_materialize_intermediates = TRUE)` permits
-  diagnostic comparisons with fully materialized intermediates.
-  FE lookups use compact JSON arrays with 17-digit double serialization.
-  `options(dbreg.glm_databricks_lookup = "values")` selects SQL VALUES for
-  diagnostic comparisons; both representations retain the transfer caps.
+specification is fixed before IRLS, and rank decisions are held constant.
+Fits that fail convergence or reach the numerical mean boundary
+error rather than returning ordinary successful inference. These checks
+do not constitute a complete general separation detector. Absorbed fits
+support new-row prediction when fitted with \code{retain = "prediction"}.
+Unknown FE keys and combinations outside the identified training span return
+\code{NA}. The saved state survives serialization and database disconnection.
+Grouped binomial responses and categorical
+no-intercept models remain unsupported.
+For binomial models, \code{\link[=logLik]{logLik()}} follows the \code{fixest::feglm()} / R binomial
+AIC convention: original weights are rounded to integers (ties to even)
+when reporting the likelihood. Fitting, deviance and covariance always use
+the unrounded weights. Use \code{logLik(model, type = "weighted")} for the
+weighted Bernoulli objective actually optimized. For Poisson models and
+integer-weight binomial models the two likelihoods coincide.
+Gaussian models estimate dispersion using weighted RSS divided by model
+residual df. Their IID covariance and t tests follow \code{fixest::feglm()},
+including its additional IID SSC factor. Gaussian default likelihood uses
+R's Gaussian AIC convention (profile likelihood minus one); \code{type="weighted"}
+returns the profile likelihood. Likelihood df excludes the dispersion,
+matching fixest. These conventions differ from OLS \code{\link[=dbreg]{dbreg()}}.
+If all retained weights are below one, fitting rescales them by a power
+of two to avoid premature convergence and loss of precision for very small
+weights. The divisor is recorded in \code{weight_scale}. Likelihood, deviance
+and IID covariance are returned on the original weight scale; sandwich
+covariances are invariant to this rescaling. Score diagnostics use the
+internal scale. All families normalize uniformly large weights. Gaussian models
+combine dispersion and bread on the internal scale before restoring units.
+With absorbed effects, expanded regressor columns are centered internally
+before forming projection moments. Their slopes, units and covariance are
+unchanged; the retained column centers are recorded in \code{design_center}.
+Large two-way categorical FE problems use the shared bounded sparse
+projector when possible. It rebuilds weighted sufficient statistics at each
+IRLS step and certifies normalized group equations on the transformed rows.
+Transfer limits use \code{dbreg.duckdb_ap_max_edges} and
+\code{dbreg.duckdb_ap_max_entries}. Exceeding limits or numerical certification
+falls back to the existing SQL projection. Use
+\code{dbglm_control(projection_method = "sql")} to select that path directly.
+Databricks requires a session-preserving native-query DBI connection and
+physical temporary-table support. Bounded categorical FE problems use
+parameter-space IRLS, grouped moment queries and compact global summaries.
+Small dense FE dictionaries use coefficient arrays; large or sparse
+dictionaries retain coefficient joins. Working states are inline SQL
+expressions on the moments path, avoiding row-sized writes during IRLS.
+Two-way categorical effects can also use the shared bounded sparse solver;
+the SQL fallback reuses batched window AP with the same normalized tolerance.
+\code{dbreg.spark_ap_chunk_cycles} controls its batch size (default three).
+Databricks uses double-precision SUM and a bounded count histogram (at most
+one million distinct counts) for the Poisson likelihood constant.
+\code{options(dbreg.glm_databricks_materialize_intermediates = TRUE)} permits
+diagnostic comparisons with fully materialized intermediates.
+FE lookups use compact JSON arrays with 17-digit double serialization.
+\code{options(dbreg.glm_databricks_lookup = "values")} selects SQL VALUES for
+diagnostic comparisons; both representations retain the transfer caps.
 }
+\section{Optional null likelihood diagnostics}{
+
+\code{null_model = TRUE} stores \code{null_diagnostics}, a compact scalar record rather
+than a fitted model or retained rows. It uses the final full-model sample after
+subset, missing-value/positive-weight checks and recursive FE pruning. Removing
+regressors never restores excluded rows. This global null is distinct from an
+FE-only within-model baseline. A no-intercept model has only its fixed offset.
+
+Reported and original-weight likelihoods follow the same conventions as
+\code{\link[=logLik.dbglm]{logLik.dbglm()}}, including rounded fractional binomial weights and Gaussian
+reported likelihood minus one. Binomial outcomes remain binary; compressed
+fractional cell means never replace original outcomes in these diagnostics.
+The separate pseudo likelihood ratios are \code{1 - full / null}; these are not ordinary
+variance-explained R squared, are not clamped, and can be negative. Ratios with
+zero/nonfinite denominators or nonfinite full MLEs are unavailable explicitly.
+
+Null scalar optimization uses \code{control} iteration/step-halving limits. Some
+cases use analytic constants; offset binary models may need repeated aggregate
+evaluations. Failure warns and stores an unavailable reason, preserving the
+valid full fit. \code{print}, \code{gof}, and \code{glance} read only this stored record, even
+after \code{close()}. Default output fields remain unchanged. Requested \code{gof} stays
+numeric, adds availability flags, and carries the record as an attribute;
+\code{glance} also exposes reason columns. No diagnostic triggers lazy queries.
+}
+
 \examples{
 d = data.frame(y = c(0, 1, 0, 0, 1, 1), x = c(-2, -1, 0, 1, 2, 3))
 m = dbglm(y ~ x, data = d, family = binomial("logit"))
 coef(m)
 predict(m, newdata = d, type = "response")
-}
-
-\section{Optional null likelihood diagnostics}{
-\code{null_model = TRUE} stores \code{null_diagnostics}, a compact scalar record,
-not a fitted null model or retained rows. It uses the exact final estimation sample,
-including subset, missing values, positive weights and recursive FE pruning; no
-excluded observations return when regressors are removed. The global null removes
-all ordinary regressors and FE. It keeps the fixed offset and a constant only when
-the fitted specification contains an ordinary or FE intercept; a no-intercept null
-has only its offset. This differs from an FE-only within-model baseline.
-
-Reported and original-weight likelihoods follow \code{logLik.dbglm}, including
-rounded fractional binomial weights and Gaussian reported likelihood minus one.
-Binomial outcomes remain binary; compressed fractional cell means never replace
-original outcomes in these diagnostics. The separate ratios \code{1-full/null}
-are pseudo likelihood ratios, not ordinary variance-explained R squared. They are
-not clamped and may be negative. Zero/nonfinite denominators and nonfinite full
-MLEs have explicit unavailable reasons.
-
-Optional scalar optimization uses the existing iteration/step-halving controls.
-Offset binary models can require repeated aggregate evaluations. Failure warns
-and stores an unavailable result without replacing the valid full fit. Consumers
-read only the stored record after fitting and after \code{close()}. Default output
-fields remain unchanged. Requested \code{gof} is numeric with availability flags
-and the record attribute; \code{glance} also supplies reason columns. No lazy query
-or refit is performed by these consumers.
 }

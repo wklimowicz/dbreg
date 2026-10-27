@@ -1,5 +1,25 @@
 # dbreg (development version)
 
+- HC1 score queries project residual and regressor expressions once, reducing
+  repeated SQL while preserving the covariance multiplication order.
+- Coefficient labels come from fitted source and basis identities. Literal
+  `_x_` text in names or factor levels stays unchanged; products use `:`.
+- A categorical level named `_constant` remains distinct from the compiler's
+  synthetic constant column.
+- Generated SQL design columns avoid outcome, regressor, weight, offset and
+  cluster names, including across IV blocks. Distinct interaction and `i()`
+  columns retain separate coordinates when their initial aliases collide.
+- SQL builders emit backend-specific text casts and column exclusions directly;
+  complete statements no longer pass through a global token rewriter.
+- Spark AP and fitted-table creation validate physical-table capabilities before
+  acquiring resources. Read-only fitting remains available without native mode.
+- Fixed-effect coefficient summaries and covariance corrections preserve distinct
+  fitted columns with the same public label, including a factor dummy and a raw
+  regressor whose names coincide.
+- `dbglm(null_model = TRUE)` optionally stores global null likelihood diagnostics
+  using the final estimation sample, weights and offset. The default performs no
+  null-model queries; printed and extracted diagnostics use saved scalar results.
+
 - FE binscatter keeps explicit level coefficients and covariance under automatic
   strategy selection. Generated bin and spline names avoid source columns,
   including after restoring public coefficient names.

@@ -38,6 +38,8 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 
 #' Fit a binomial, Poisson or Gaussian GLM on a database relation
 #'
+#' @md
+#' @description
 #' Fits binomial logit, probit, complementary-log-log and log-link Poisson models
 #' using SQL-backed IRLS. Gaussian identity models use one certified WLS update.
 #' Only bounded sufficient statistics are transferred to R.

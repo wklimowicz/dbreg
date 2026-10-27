@@ -69,6 +69,7 @@ fit_table_manager = function(conn, resources, backend_info = detect_backend(conn
     view = isTRUE(backend_info[["is_databricks"]]) && !materialize &&
       !isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))
     if (view) return(paste0("(", sql, ")"))
+    if (identical(backend_info[["name"]], "spark")) validate_databricks_ap_backend(backend_info)
     if (!is.null(target) && isTRUE(backend_info[["is_databricks"]])) {
       DBI::dbExecute(conn, paste("CREATE OR REPLACE TEMP TABLE", target, "AS", sql))
       return(target)

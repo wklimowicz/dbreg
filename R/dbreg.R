@@ -942,6 +942,8 @@ dbreg_alternating_projections = function(
   if (!positive(tol)) {
     stop("[dbreg] dbreg.ap_tol must be a positive number.", call. = FALSE)
   }
+  backend_info = detect_backend(conn)
+  if (identical(backend_info[["name"]], "spark")) validate_databricks_ap_backend(backend_info)
   if (length(unlist(inputs[["fe_slopes"]]))) {
     return(dbreg_varying_projections(inputs, xvars_sql, xvar_names, max_iter, tol))
   }
@@ -950,7 +952,7 @@ dbreg_alternating_projections = function(
     !solver %in% c("auto", "moments", "iterative")) {
     stop("`dbreg.ap_solver` must be \"auto\", \"moments\" or \"iterative\".", call. = FALSE)
   }
-  backend = detect_backend(conn)[["name"]]
+  backend = backend_info[["name"]]
   inputs[["projection_limits"]] = projection_limits()
   if (backend == "duckdb") {
     method = getOption("dbreg.duckdb_ap_method", "join")

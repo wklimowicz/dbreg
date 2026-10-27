@@ -1272,7 +1272,9 @@ create_temp_table_as = function(conn, table_name, select_sql, backend) {
   } else if (backend == "spark") {
     # Databricks has session temporary tables. OSS Spark uses owned managed
     # Parquet tables so repeated AP sweeps do not accumulate a lazy view plan.
-    sql = if (isTRUE(detect_backend(conn)[["is_databricks"]]))
+    backend_info = detect_backend(conn)
+    validate_databricks_ap_backend(backend_info)
+    sql = if (isTRUE(backend_info[["is_databricks"]]))
       glue("CREATE OR REPLACE TEMPORARY TABLE {table_name} AS {select_sql}") else
       glue("CREATE TABLE {table_name} USING PARQUET AS {select_sql}")
     dbExecute(conn, sql)

@@ -331,14 +331,14 @@ fe_solver = function(sys, cache, retain_null = FALSE) {
 # GROUPING SETS would evaluate every aggregate for every set.
 fe_moments_sql = function(conn, source, fe, value_terms, global_terms = character(), limit = NULL, compact = FALSE, text_keys = FALSE) {
   if (identical(detect_backend(conn)[["name"]], "spark")) {
-    sql = dbglm_databricks_moments_sql(source, fe, value_terms, global_terms, limit, text_keys = text_keys)
+    sql = dbglm_databricks_moments_sql(source, fe, value_terms, global_terms, limit, text_keys = text_keys, conn = conn)
     if (!is.null(sql)) return(if (compact) pack_fe_moments_sql(conn, sql, length(fe), value_terms, global_terms, globals_packed = TRUE) else sql)
   }
   K = length(fe)
   pairs = utils::combn(K, 2L, simplify = FALSE)
   alias = function(terms) sub(".* AS ([A-Za-z_0-9]+)$", "\\1", terms)
   null = function(terms) if (length(terms)) paste0("CAST(NULL AS DOUBLE) AS ", alias(terms)) else character()
-  id_type = if (text_keys) "VARCHAR" else "BIGINT"
+  id_type = if (text_keys) sql_text_type(conn) else "BIGINT"
   id = function(f) if (is.null(f)) paste0("CAST(NULL AS ", id_type, ")") else paste0("CAST(", f, " AS ", id_type, ")")
   branch = function(set, i, j, columns, group) paste0(
     "SELECT ", set, " AS __set,", id(i), " AS __i,", id(j), " AS __j,",
@@ -369,7 +369,7 @@ pack_fe_moments_sql = function(conn, sql, K, value_terms, global_terms = charact
     "CASE WHEN __set BETWEEN 1 AND ", K,
     " THEN ", if (native) "to_json(array(" else "list_value(", paste(values, collapse = ","),
     if (native) ")) END" else ") END"
-  ) else if (native) "CAST(NULL AS VARCHAR)" else "CAST(NULL AS DOUBLE[])"
+  ) else if (native) sql_cast_text(conn, "NULL") else "CAST(NULL AS DOUBLE[])"
   fields = c("__set", "__i", "__j", "__h", paste(payload, "AS __values"))
   if (length(global_terms)) {
     globals = alias(global_terms)
@@ -628,7 +628,7 @@ project_fe_moments = function(conn, table, columns, identifiers, ops, scales, ta
   text_keys = is.character(frame[["__glm_group"]])
   joins = vapply(seq_along(ops), function(i) {
     key = paste0("s.", ops[[i]][["f"]])
-    if (text_keys) key = paste0("CAST(", key, " AS VARCHAR)")
+    if (text_keys) key = sql_cast_text(conn, key, backend_info)
     paste0(" LEFT JOIN proj_g", i, " ON ", key, "=proj_g", i, ".__glm_group")
   }, character(1))
   broadcast = if (is_dbx) paste0("/*+ BROADCAST(", paste0("proj_g", seq_along(ops), collapse = ","), ") */ ") else ""
@@ -749,7 +749,7 @@ dbreg_duckdb_cg_projections = function(
   limits = projection_limits()
   width = length(vars) + length(extra_sums)
   key_bytes = function(f) {
-    value = paste0("CAST(", f, " AS VARCHAR)")
+    value = sql_cast_text(conn, f, backend_info)
     if (backend_info[["name"]] == "duckdb") paste0("OCTET_LENGTH(encode(", value, "))") else
       paste0("OCTET_LENGTH(", value, ")")
   }
@@ -827,7 +827,7 @@ dbreg_duckdb_cg_projections = function(
   w = if (is.null(weights)) "1.0" else weights
   # String keys preserve BIGINT identifiers beyond R's exact double range.
   keys = c("dbreg_cg_key_1", "dbreg_cg_key_2")
-  key_sql = sprintf("CAST(%s AS VARCHAR)", fe)
+  key_sql = sql_cast_text(conn, fe, backend_info)
   sum_terms = c(
     paste(aggregate_sql(sprintf("(%s) * (%s)", w, vars_sql)), "AS", paste0("s", seq_along(vars))),
     if (length(extra_sums)) paste(aggregate_sql(extra_sums), "AS", paste0("ex", seq_along(extra_sums)))
@@ -1003,8 +1003,8 @@ dbreg_duckdb_cg_projections = function(
         sprintf("(%s) - a.a%d - b.a%d AS %s_tilde", vars_sql, seq_along(vars), seq_along(vars), vars)
       ), collapse = ", "),
       " FROM (SELECT * ", from_statement, ") s JOIN (", lookup_sqls[1],
-      ") a ON CAST(s.", fe[1], " AS VARCHAR) = a.", keys[1],
-      " JOIN (", lookup_sqls[2], ") b ON CAST(s.", fe[2], " AS VARCHAR) = b.", keys[2], ")"
+      ") a ON ", sql_cast_text(conn, paste0("s.", fe[1]), backend_info), " = a.", keys[1],
+      " JOIN (", lookup_sqls[2], ") b ON ", sql_cast_text(conn, paste0("s.", fe[2]), backend_info), " = b.", keys[2], ")"
     )
     success = TRUE
     return(list(
@@ -1036,8 +1036,8 @@ dbreg_duckdb_cg_projections = function(
       sprintf("(%s) - a.a%d - b.a%d AS %s_tilde", vars_sql, seq_along(vars), seq_along(vars), vars)
     ), collapse = ", "),
     " FROM (SELECT * ", from_statement, ") s JOIN ", tables[["a"]],
-    " a ON CAST(s.", fe[1], " AS VARCHAR) = a.", keys[1],
-    " JOIN ", tables[["b"]], " b ON CAST(s.", fe[2], " AS VARCHAR) = b.", keys[2]
+    " a ON ", sql_cast_text(conn, paste0("s.", fe[1]), backend_info), " = a.", keys[1],
+    " JOIN ", tables[["b"]], " b ON ", sql_cast_text(conn, paste0("s.", fe[2]), backend_info), " = b.", keys[2]
   ))
   if (!isTRUE(backend_info[["is_databricks"]]) || isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) {
     checks = vapply(fe, function(f) {
@@ -1621,7 +1621,7 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
           name, " - ", prev, "*COALESCE(SUM(w*", prev, "*", name, ")", partition,
           "/NULLIF(SUM(w*", prev, "*", prev, ")", partition, ",0),0)"
         )
-        next_projection = create(paste("SELECT * EXCLUDE(", name, "),", adjustment, "AS", name, "FROM", projection))
+        next_projection = create(paste("SELECT ", sql_select_except(conn, name, backend_info), ",", adjustment, "AS", name, "FROM", projection))
         drop(projection)
         projection = next_projection
       }
@@ -1805,7 +1805,7 @@ dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, targ
       new_rr = as.numeric(backend_get_query(conn, paste("SELECT", paste(paste(sum_sql(sprintf("%1$s*%1$s", r)), "AS", paste0("r", index)), collapse = ","), "FROM", state))[1, ])
       beta = ifelse(active & rr > floor_rr, new_rr / rr, 0)
       next_state = create(paste(
-        "SELECT * EXCLUDE(", paste(d, collapse = ","), "),",
+        "SELECT ", sql_select_except(conn, d, backend_info), ",",
         paste(sprintf("((%s)*%s+(%s)*%s) AS %s", dbglm_number(as.numeric(active)), r, dbglm_number(beta), d, d), collapse = ","), "FROM", state
       ))
       drop(state)

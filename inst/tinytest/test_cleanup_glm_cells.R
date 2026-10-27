@@ -37,7 +37,7 @@ local({
       "FSUM(score) AS s1", "FSUM(x*score) AS s2", "FSUM(score_sq) AS m11",
       "FSUM(x*score_sq) AS m12", "FSUM(x*x*score_sq) AS m22")
     sql = paste0(dbreg:::dbglm_working_sql(cells, c("__dbglm_intercept", "x"),
-      c(0, 0.3), family[["link"]], cell = TRUE), " SELECT ", paste(terms, collapse = ","), " FROM working")
+      c(0, 0.3), family[["link"]], cell = TRUE, conn = conn), " SELECT ", paste(terms, collapse = ","), " FROM working")
     row = dbreg:::backend_get_query(conn, sql)
     expect_equal(unname(dbreg:::dbglm_read_information(row, 2L)), unname(crossprod(X, w * X)), tolerance = 1e-11)
     expect_equal(as.numeric(row[1L, c("b1", "b2")]), as.numeric(crossprod(X, w * z)), tolerance = 1e-11)

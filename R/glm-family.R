@@ -147,18 +147,19 @@ dbglm_family_sql = function(link, eta = "eta", a = NULL, exp_half = NULL) {
   list(mu = mu, derivative = derivative)
 }
 
-dbglm_working_sql = function(table, x, beta, link, eta = NULL, cell = FALSE) {
-  if (!cell) return(dbglm_working_rows_sql(table, x, beta, link, eta))
-  rows = dbglm_working_rows_sql(table, x, beta, link, eta, working_name = "dbglm_cell_working")
+dbglm_working_sql = function(table, x, beta, link, eta = NULL, cell = FALSE, conn) {
+  backend_info = detect_backend(conn)
+  if (!cell) return(dbglm_working_rows_sql(table, x, beta, link, eta, conn = conn, backend_info = backend_info))
+  rows = dbglm_working_rows_sql(table, x, beta, link, eta, working_name = "dbglm_cell_working", conn = conn, backend_info = backend_info)
   deviance = if (link %in% c("identity", "log")) "dev+__dbglm_dev_const" else
     "-2.0*__dbglm_a*(__dbglm_y*LN(mu)+(1.0-__dbglm_y)*LN(1.0-mu))"
   paste0(
-    rows, ", working AS (SELECT * EXCLUDE(dev),", deviance, " AS dev,",
+    rows, ", working AS (SELECT ", sql_select_except(conn, "dev", backend_info), ",", deviance, " AS dev,",
     dbglm_cell_score_square(link), " AS score_sq FROM dbglm_cell_working) "
   )
 }
 
-dbglm_working_rows_sql = function(table, x, beta, link, eta = NULL, working_name = "working") {
+dbglm_working_rows_sql = function(table, x, beta, link, eta = NULL, working_name = "working", conn, backend_info = detect_backend(conn)) {
   if (is.null(eta)) eta = paste(c("__dbglm_o", sprintf("(%s)*(%s)", dbglm_number(beta), x)), collapse = " + ")
   if (link == "identity") return(paste0(
     "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
@@ -182,7 +183,7 @@ dbglm_working_rows_sql = function(table, x, beta, link, eta = NULL, working_name
     return(paste0(
       "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
       "prep AS (SELECT *, ABS(eta) AS __dbglm_abs_eta, EXP(-0.5*POWER(eta,2)) AS __dbglm_eh FROM predictor), ",
-      "means AS (SELECT * EXCLUDE (__dbglm_abs_eta, __dbglm_eh), ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM prep), ",
+      "means AS (SELECT ", sql_select_except(conn, c("__dbglm_abs_eta", "__dbglm_eh"), backend_info), ", ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM prep), ",
       dbglm_binomial_working_cte(working_name)
     ))
   }
@@ -191,7 +192,7 @@ dbglm_working_rows_sql = function(table, x, beta, link, eta = NULL, working_name
     return(paste0(
       "WITH predictor AS (SELECT *, CAST((", eta, ") AS DOUBLE) AS eta FROM ", table, "), ",
       "prep AS (SELECT *, EXP(LEAST(eta, 700.0)) AS __dbglm_eh FROM predictor), ",
-      "means AS (SELECT * EXCLUDE (__dbglm_eh), ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM prep), ",
+      "means AS (SELECT ", sql_select_except(conn, "__dbglm_eh", backend_info), ", ", kernel[["mu"]], " AS mu, ", kernel[["derivative"]], " AS d FROM prep), ",
       dbglm_binomial_working_cte(working_name)
     ))
   }

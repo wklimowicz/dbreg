@@ -760,10 +760,11 @@ prediction_key_metadata = function(conn, retained, components) {
 prediction_fe_dictionary = function(conn, retained, fe, components, limit, public_components = components) {
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
   metadata = prediction_key_metadata(conn, retained, components)
+  backend_info = detect_backend(conn)
   types = metadata[["types"]]
   fields = vapply(seq_along(components), function(i) {
     value = q(components[i])
-    if (types[i] == "integer") value = paste0("CAST(", value, " AS STRING)")
+    if (types[i] == "integer") value = sql_cast_text(conn, value, backend_info)
     paste(value, "AS", paste0("k", i))
   }, character(1))
   max_rows = floor(limit / (length(components) + 1L))
@@ -840,7 +841,7 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
     )
   }
   source = if (is.null(precomputed)) paste0("(", backend_sql(conn, paste0(
-    "SELECT * EXCLUDE(w), __dbglm_a AS w,",
+    "SELECT ", sql_select_except(conn, "w", backend_info), ", __dbglm_a AS w,",
     "(eta-__dbglm_o) AS __dbglm_prediction_target FROM ", working
   )), ")") else NULL
   columns = c(x, "__dbglm_prediction_target")
@@ -1190,7 +1191,7 @@ finalize_fwl_prediction = function(result, inputs) {
     dictionary = if (length(components[[i]]) == 1L) {
       fwl_prediction_dictionary(ids, moments[["types"]][[i]], public[[i]])
     } else {
-      key = paste0("CAST(", DBI::dbQuoteIdentifier(conn, inputs[["fe"]][[i]]), " AS VARCHAR)")
+      key = sql_cast_text(conn, DBI::dbQuoteIdentifier(conn, inputs[["fe"]][[i]]))
       dictionary = prediction_fe_dictionary(conn, source, key, components[[i]],
         floor(prediction_state_limit() / length(components)),
         public_components = public[[i]]
@@ -1757,7 +1758,7 @@ collect_sql_prediction = function(x, n = NULL) {
   fields = names(schema)
   select = q(fields)
   if (any(exact_text)) {
-    text = if (isTRUE(detect_backend(conn)[["is_databricks"]])) "STRING" else "VARCHAR"
+    text = sql_text_type(conn)
     index = match(keys[exact_text], fields)
     select[index] = paste0("CAST(", q(fields[index]), " AS ", text, ") AS ", q(fields[index]))
   }
@@ -1920,6 +1921,7 @@ prediction_portable_tables = function(context, conn, resources) {
   coefficients = state[["coefficients"]]
   operations = state[["specification"]][["operations"]]
   null = state[["prediction"]][["null_basis"]]
+  backend_info = detect_backend(conn)
   lapply(seq_along(dictionaries), function(i) {
     dictionary = dictionaries[[i]]
     frame = prediction_decode_keys(dictionary)
@@ -1928,7 +1930,7 @@ prediction_portable_tables = function(context, conn, resources) {
         integer = prediction_integer_sql_type(frame[[j]], conn),
         numeric = "DOUBLE",
         float = "REAL",
-        character = "STRING",
+        character = sql_text_type(conn, backend_info),
         logical = "BOOLEAN",
         date = "DATE"
       )
@@ -1978,7 +1980,7 @@ sql_prediction_key_cast = function(conn, value, type, sql_type, input_type = "ST
   if (type == "date" && grepl("^(varchar|char|string|enum)", tolower(input_type))) {
     # Date strings match the fitted textual date, rather than silently accepting
     # a timestamp or a differently formatted string for the same calendar day.
-    text = if (isTRUE(detect_backend(conn)[["is_databricks"]])) "STRING" else "VARCHAR"
+    text = sql_text_type(conn)
     valid = paste0(
       "((CAST(", cast, " AS ", text, ")=", value, " AND ", value,
       " NOT IN ('infinity','-infinity')) OR ", value, " IN ('Inf','-Inf'))"
@@ -2368,7 +2370,7 @@ sql_prediction_response = function(conn, table, row_id, prediction, link) {
     " AS __prediction_eta,CAST(0.0 AS DOUBLE) AS __dbglm_y,CAST(1.0 AS DOUBLE) AS __dbglm_a,",
     "CAST(0.0 AS DOUBLE) AS __dbglm_o FROM ", q(table), ")"
   )
-  working = dbglm_working_sql(mean_source, character(), numeric(), link, eta = "__prediction_eta")
+  working = dbglm_working_sql(mean_source, character(), numeric(), link, eta = "__prediction_eta", conn = conn)
   paste0(
     working, "SELECT ", paste(keys, "AS", q(row_id), collapse = ","),
     ",CASE WHEN __prediction_eta IS NULL OR isnan(__prediction_eta) THEN CAST(NULL AS DOUBLE) ELSE mu END AS ",
@@ -2377,9 +2379,11 @@ sql_prediction_response = function(conn, table, row_id, prediction, link) {
 }
 
 prediction_frame_types = function(frame, conn) {
-  native = isTRUE(detect_backend(conn)[["is_databricks"]])
+  backend_info = detect_backend(conn)
+  native = isTRUE(backend_info[["is_databricks"]])
+  text = sql_text_type(conn, backend_info)
   vapply(frame, function(value) {
-    if (inherits(value, "integer64")) "BIGINT" else if (inherits(value, "Date")) "DATE" else if (inherits(value, "POSIXct")) if (native) "TIMESTAMP" else "TIMESTAMPTZ" else if (is.factor(value) || is.character(value)) if (native) "STRING" else "VARCHAR" else if (is.logical(value)) "BOOLEAN" else if (is.integer(value)) "INTEGER" else if (is.numeric(value) && !is.complex(value)) "DOUBLE" else
+    if (inherits(value, "integer64")) "BIGINT" else if (inherits(value, "Date")) "DATE" else if (inherits(value, "POSIXct")) if (native) "TIMESTAMP" else "TIMESTAMPTZ" else if (is.factor(value) || is.character(value)) text else if (is.logical(value)) "BOOLEAN" else if (is.integer(value)) "INTEGER" else if (is.numeric(value) && !is.complex(value)) "DOUBLE" else
       stop("Unsupported prediction input column type: ", class(value)[[1L]], ".", call. = FALSE)
   }, character(1))
 }

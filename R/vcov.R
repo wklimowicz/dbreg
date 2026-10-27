@@ -539,7 +539,7 @@ dbglm_covariance = function(conn, table, x, fit, family, kind, ssc, n, cell = FA
     if (ssc[["K.adj"]]) V = V * (n - 1) / (n - p)
     return(list(matrix = V, clusters = NULL))
   }
-  cte = dbglm_working_sql(table, x, fit[["beta"]], family[["link"]], cell = cell)
+  cte = dbglm_working_sql(table, x, fit[["beta"]], family[["link"]], cell = cell, conn = conn)
   if (kind == "hc1") {
     row = backend_get_query(conn, paste0(
       cte, "SELECT ",

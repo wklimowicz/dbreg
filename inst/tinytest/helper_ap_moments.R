@@ -26,7 +26,7 @@ dbreg_test_ap_moments = function(conn, verbose = FALSE) {
     DBI::dbWriteTable(conn, table, d, temporary = TRUE)
   # IDs that collide if converted to R doubles must remain distinct SQL keys.
   DBI::dbExecute(conn, dbreg:::backend_sql(conn, paste0("CREATE TEMP TABLE ", big,
-    " AS SELECT * EXCLUDE(g),CAST(9007199254740992 AS BIGINT)+CAST(g AS BIGINT) AS g FROM ", table)))
+    " AS SELECT ", dbreg:::sql_select_except(conn, "g"), ",CAST(9007199254740992 AS BIGINT)+CAST(g AS BIGINT) AS g FROM ", table)))
 
   compare = function(fml, covariance, iv = FALSE, source = table) {
     if (verbose) message("[AP moments] ", paste(deparse(fml), collapse = ""), " ", deparse(covariance))

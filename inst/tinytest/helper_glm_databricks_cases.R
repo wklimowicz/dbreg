@@ -104,15 +104,15 @@ dbglm_test_databricks_cases = function(conn, verbose = FALSE) {
   ops = list(list(f = "f1", v = "1.0"), list(f = "f2", v = "v"))
   info = list(list(id = c(1, 3)), list(id = c(1, 2)))
   coefficients = c(.12345678901234567, -2.5, .7, -.1)
-  terms = dbreg:::dbglm_databricks_array_terms(ops, info, coefficients)
+  terms = dbreg:::dbglm_databricks_array_terms(ops, info, coefficients, conn = conn)
   value = DBI::dbGetQuery(conn, paste0("SELECT ", paste(terms, collapse = " + "), " AS eta FROM ", table, " s ORDER BY f1"))[["eta"]]
   expect_equal(value, c(coefficients[[1]] + 1.4, .1, -2.5 + .35), tolerance = 1e-14)
   sparse = info
   sparse[[1]][["id"]] = c(1, 1000001)
-  expect_null(dbreg:::dbglm_databricks_array_terms(ops, sparse, coefficients))
-  expect_null(dbreg:::dbglm_databricks_array_terms(ops, info, coefficients, max_bytes = 1))
-  expect_null(dbreg:::dbglm_databricks_array_terms(ops, info, coefficients, max_entries = 0))
-  expect_error(dbreg:::dbglm_databricks_array_terms(ops, info, c(NA, coefficients[-1])), "Nonfinite")
+  expect_null(dbreg:::dbglm_databricks_array_terms(ops, sparse, coefficients, conn = conn))
+  expect_null(dbreg:::dbglm_databricks_array_terms(ops, info, coefficients, max_bytes = 1, conn = conn))
+  expect_null(dbreg:::dbglm_databricks_array_terms(ops, info, coefficients, max_entries = 0, conn = conn))
+  expect_error(dbreg:::dbglm_databricks_array_terms(ops, info, c(NA, coefficients[-1]), conn = conn), "Nonfinite")
 
   # A bounded fused query must fall back to complete scalar diagnostics when
   # even the FE marginals cannot fit, never certify a truncated result.

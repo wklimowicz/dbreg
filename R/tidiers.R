@@ -285,12 +285,13 @@ fixef.dbreg = function(object, ...) {
   database = identical(state[["prediction"]][["storage"]], "database")
   if (database) {
     conn = fitted_resource_connection(object[["resource_state"]])
+    backend_info = detect_backend(conn)
     q = function(value) as.character(DBI::dbQuoteIdentifier(conn, value))
     values = lapply(dictionaries, function(dictionary) backend_get_query(
       conn,
       paste(
         "SELECT", paste(c(paste0(
-          "CAST(", q(dictionary[["keys"]]), " AS VARCHAR) AS ",
+          sql_cast_text(conn, q(dictionary[["keys"]]), backend_info), " AS ",
           paste0("k", seq_along(dictionary[["keys"]]))
         ), "gamma"), collapse = ","),
         "FROM", dictionary[["table"]], "ORDER BY id"

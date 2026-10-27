@@ -452,7 +452,7 @@ process_dbglm_inputs = function(inputs) {
     design_center[] = vapply(seq_along(x), function(i) as.numeric(row[[paste0("center_", i)]]), numeric(1))
     if (any(!is.finite(design_center))) stop("GLM design centering is nonfinite.", call. = FALSE)
     centered_sql = paste0(
-      "SELECT * EXCLUDE(", paste(x, collapse = ","), "),",
+      "SELECT ", sql_select_except(conn, x, backend_info), ",",
       paste(sprintf("(%s-(%s)) AS %s", x, dbglm_number(design_center), x), collapse = ","), " FROM ", base
     )
     base = if (isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) create(centered_sql) else
@@ -604,7 +604,7 @@ execute_dbglm_fit = function(inputs) {
   if (family[["family"]] == "binomial" && isTRUE(snap_info[["fractional_w"]] > 0)) {
     working = if (length(fe)) fit[["working"]] else paste0(
       "(",
-      dbglm_working_sql(base, x, fit[["beta"]], family[["link"]], cell = cell), "SELECT * FROM working)"
+      dbglm_working_sql(base, x, fit[["beta"]], family[["link"]], cell = cell, conn = conn), "SELECT * FROM working)"
     )
     reported_loglik = dbglm_binomial_loglik(conn, working, weight_scale, cell = cell)
   }
@@ -763,6 +763,7 @@ dbglm_prune = function(
   rounds = 0L
   counts = c(singleton = 0, infinite_coef = 0)
   if (!length(fe) || mode == "none") return(list(table = table, rounds = rounds, counts = counts))
+  backend_info = detect_backend(conn)
   repeat {
     # Per-FE group summaries are tiny; joining them avoids N-row window sorts.
     singleton = infinite = joins = character()
@@ -795,7 +796,7 @@ dbglm_prune = function(
     # Each round refers to its input once per FE. Inlining successive rounds
     # on Databricks grows the plan exponentially, even on a tiny sample.
     # Materialize only after a removal; the common no-pruning case adds no write.
-    next_table = create(paste0("SELECT * EXCLUDE (", paste(flags, collapse = ","), ") FROM ", flagged, " __dbglm_f WHERE NOT ", condition), materialize = TRUE)
+    next_table = create(paste0("SELECT ", sql_select_except(conn, flags, backend_info), " FROM ", flagged, " __dbglm_f WHERE NOT ", condition), materialize = TRUE)
     drop(table)
     table = next_table
     rounds = rounds + 1L

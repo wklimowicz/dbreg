@@ -16,6 +16,25 @@ backend_sql = function(conn, sql) {
   paste0(tokens, collapse = "")
 }
 
+# Text spelling stays at construction; generic dialects retain legacy VARCHAR.
+sql_text_type = function(conn, backend_info = detect_backend(conn)) {
+  if (identical(backend_info[["name"]], "spark")) "STRING" else "VARCHAR"
+}
+
+sql_cast_text = function(conn, expr, backend_info = detect_backend(conn)) {
+  if (!length(expr)) return(character())
+  paste0("CAST(", expr, " AS ", sql_text_type(conn, backend_info), ")")
+}
+
+# These feature paths already require native star exclusion. Never discover a
+# schema inside a working-state iteration to emulate an unsupported dialect.
+sql_select_except = function(conn, columns, backend_info = detect_backend(conn)) {
+  if (!length(columns)) return("*")
+  keyword = switch(backend_info[["name"]], duckdb = "EXCLUDE", spark = "EXCEPT",
+    stop("Column exclusion supports DuckDB and Spark only.", call. = FALSE))
+  paste0("* ", keyword, "(", paste(DBI::dbQuoteIdentifier(conn, columns), collapse = ","), ")")
+}
+
 # Ordinary generated aggregates preserve DuckDB compensation without changing
 # Spark's existing double-SUM semantics. Stable working sums remain separate.
 sql_sum = function(conn, expr, backend_info = detect_backend(conn)) {
@@ -66,8 +85,9 @@ sql_projection_mean = function(conn, expr) {
 }
 
 sql_text_bytes = function(conn, expr) {
-  value = paste0("CAST(", expr, " AS VARCHAR)")
-  if (identical(detect_backend(conn)[["name"]], "duckdb")) value = paste0("encode(", value, ")")
+  backend_info = detect_backend(conn)
+  value = sql_cast_text(conn, expr, backend_info)
+  if (identical(backend_info[["name"]], "duckdb")) value = paste0("encode(", value, ")")
   paste0("OCTET_LENGTH(", value, ")")
 }
 
@@ -83,6 +103,7 @@ sql_values_frame = function(conn, frame, max_bytes = 8 * 1024^2,
   if (any(vapply(frame, function(x) is.numeric(x) && any(!is.finite(x)), logical(1)))) {
     stop("Nonfinite projection coefficients.", call. = FALSE)
   }
+  backend_info = detect_backend(conn)
   if (format == "json") {
     # Arrays avoid repeating field names for every FE. Seventeen digits preserve
     # double round trips (digits=NA rounds some extremes to infinity). Base64
@@ -92,12 +113,12 @@ sql_values_frame = function(conn, frame, max_bytes = 8 * 1024^2,
     if (nchar(encoded, type = "bytes") + 1024 > max_bytes) return(NULL)
     fields = sprintf(
       "CAST(item[%d] AS %s) AS %s", seq_along(frame) - 1L,
-      ifelse(vapply(frame, is.numeric, logical(1)), "DOUBLE", "STRING"),
+      ifelse(vapply(frame, is.numeric, logical(1)), "DOUBLE", sql_text_type(conn, backend_info)),
       DBI::dbQuoteIdentifier(conn, names(frame))
     )
     return(paste0(
       "SELECT ", paste(fields, collapse = ","),
-      " FROM explode(from_json(CAST(unbase64('", encoded, "') AS STRING), ",
+      " FROM explode(from_json(", sql_cast_text(conn, paste0("unbase64('", encoded, "')"), backend_info), ", ",
       "'ARRAY<ARRAY<STRING>>')) AS lookup(item)"
     ))
   }
@@ -136,11 +157,12 @@ sql_value_literals = function(conn, values) {
     result[valid] = dbglm_number(values[valid])
     return(result)
   }
-  if (is.character(values) && isTRUE(detect_backend(conn)[["is_databricks"]])) {
+  backend_info = if (is.character(values)) detect_backend(conn) else NULL
+  if (is.character(values) && isTRUE(backend_info[["is_databricks"]])) {
     return(vapply(values, function(value) {
-      if (is.na(value)) return("CAST(NULL AS STRING)")
+      if (is.na(value)) return(sql_cast_text(conn, "NULL", backend_info))
       encoded = raw_to_base64(charToRaw(enc2utf8(value)))
-      paste0("CAST(unbase64('", encoded, "') AS STRING)")
+      sql_cast_text(conn, paste0("unbase64('", encoded, "')"), backend_info)
     }, character(1), USE.NAMES = FALSE))
   }
   as.character(DBI::dbQuoteLiteral(conn, values))

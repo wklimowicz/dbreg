@@ -875,7 +875,7 @@ retain_glm_score_frame = function(
   if (isFALSE(result[["finite_mle"]])) stop("Full inference retention requires a finite GLM fit.", call. = FALSE)
   prefix = ""
   if (!length(fe)) {
-    prefix = dbglm_working_sql(base, x, fit[["beta"]], result[["family"]][["link"]])
+    prefix = dbglm_working_sql(base, x, fit[["beta"]], result[["family"]][["link"]], conn = conn)
     from = "FROM working b"
     projected = paste0("b.", x)
   } else if (!is.null(fit[["raw_projected"]])) {
@@ -1060,7 +1060,7 @@ validate_source_row_id = function(conn, from_statement, row_id) {
   missing = paste0(quoted, " IS NULL")
   backend = detect_backend(conn)
   if (backend[["name"]] == "duckdb" || isTRUE(backend[["is_databricks"]])) {
-    text = if (isTRUE(backend[["is_databricks"]])) "STRING" else "VARCHAR"
+    text = sql_text_type(conn, backend)
     missing = c(missing, paste0(
       "(LOWER(typeof(", quoted, ")) IN ('double','float','real') AND LOWER(CAST(",
       quoted, " AS ", text, "))='nan')"

@@ -49,7 +49,7 @@ dbglm_solve = function(H, b = NULL) {
 dbglm_evaluate = function(conn, table, x, beta, link, cell = FALSE) {
   backend_info = detect_backend(conn)
   finite = sql_is_finite(conn, c("w", "eta"), backend_info)
-  cte = dbglm_working_sql(table, x, beta, link, cell = cell)
+  cte = dbglm_working_sql(table, x, beta, link, cell = cell, conn = conn)
   terms = dbglm_moment_terms(x, "w")
   terms = c(
     terms, sprintf("SUM(w*(%s)*z) AS b_%d", x, seq_along(x)),
@@ -125,6 +125,7 @@ dbglm_irls = function(conn, table, x, beta, family, control, verbose, separation
 
 # Fisher-scoring IRLS with absorbed fixed effects.
 dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, verbose, cache = NULL, ybar = NULL, vcov_type = "iid", cell = FALSE) {
+  backend_info = detect_backend(conn)
   if (is.null(ybar)) ybar = backend_get_query(conn, paste("SELECT SUM(__dbglm_a*__dbglm_y)/SUM(__dbglm_a) AS y FROM", base))[["y"]]
   intercept = family[["linkfun"]](ybar)
   slopes = attr(fe, "slopes")
@@ -248,8 +249,8 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
     } else {
       if (!is.null(projected[["raw_projected"]])) {
         residual = paste(c("z_tilde", sprintf("-(%s)*%s_tilde", dbglm_number(candidate), x)), collapse = " + ")
-        tilde_cols = paste(c("__w", paste0(c(x, "z"), "_tilde")), collapse = ",")
-        candidate_state = create(paste0("SELECT * EXCLUDE(", tilde_cols, "), (z - (", residual, ") + __dbglm_o) AS __dbglm_candidate FROM ", projected[["raw_projected"]]), materialize = FALSE)
+        tilde_cols = c("__w", paste0(c(x, "z"), "_tilde"))
+        candidate_state = create(paste0("SELECT ", sql_select_except(conn, tilde_cols, backend_info), ", (z - (", residual, ") + __dbglm_o) AS __dbglm_candidate FROM ", projected[["raw_projected"]]), materialize = FALSE)
       } else {
         residual = paste(c("p.z", sprintf("-(%s)*p.%s", dbglm_number(candidate), x)), collapse = " + ")
         candidate_state = create(paste0("SELECT b.*, (b.z - (", residual, ") + b.__dbglm_o) AS __dbglm_candidate FROM ", working, " b JOIN ", projected[["table"]], " p USING (__dbglm_key)"), materialize = FALSE)
@@ -258,8 +259,8 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
       accepted = FALSE
       for (halvings in 0:control[["step_max_halvings"]]) {
         next_state = create(paste0(
-          "SELECT * EXCLUDE(eta,mu,d,w,z,score,dev,__dbglm_eta,__dbglm_candidate",
-          if (cell) ",score_sq", "), ",
+          "SELECT ", sql_select_except(conn, c("eta", "mu", "d", "w", "z", "score", "dev", "__dbglm_eta", "__dbglm_candidate",
+            if (cell) "score_sq"), backend_info), ", ",
           "__dbglm_eta + ", dbglm_number(step), "*(__dbglm_candidate-__dbglm_eta) AS __dbglm_eta FROM ", candidate_state
         ), materialize = FALSE)
         next_working = dbglm_fe_working(conn, next_state, family[["link"]], create, target = alt_working, cell = cell)
@@ -378,7 +379,7 @@ dbglm_fe_state_builder = function(conn, base, x, link, create, cell = FALSE) {
            use_moments = FALSE, collect_fe_moments = FALSE) {
     lookup_sub = NULL
     array_terms = if (collect_fe_moments && isTRUE(backend_info[["is_databricks"]]) &&
-      !is.null(gamma_val) && !all(gamma_val == 0)) dbglm_databricks_array_terms(ops, info, gamma_val) else NULL
+      !is.null(gamma_val) && !all(gamma_val == 0)) dbglm_databricks_array_terms(ops, info, gamma_val, conn = conn) else NULL
     if (is.null(gamma_val) || all(gamma_val == 0)) {
       eta = paste(c("__dbglm_o", if (c_eta_val != 0) dbglm_number(c_eta_val), sprintf("(%s)*%s", dbglm_number(beta_val), x)), collapse = " + ")
       st = if (use_moments) inline_sql(paste("SELECT *,", eta, "AS __dbglm_eta FROM", base)) else
@@ -406,7 +407,7 @@ dbglm_fe_state_builder = function(conn, base, x, link, create, cell = FALSE) {
       broadcast = if (isTRUE(backend_info[["is_databricks"]])) paste0("/*+ BROADCAST(", paste0("eta_g", seq_along(ops), collapse = ","), ") */ ") else ""
       st = inline_sql(paste0("WITH ", paste(ctes, collapse = ","), " SELECT ", broadcast, "s.*, CAST((", paste(base_terms, collapse = " + "), ") AS DOUBLE) AS __dbglm_eta FROM ", base, " s", paste(joins, collapse = "")))
     }
-    wk = if (use_moments) inline_sql(paste0(dbglm_working_sql(st, character(), numeric(), link, eta = "__dbglm_eta", cell = cell), "SELECT * FROM working")) else
+    wk = if (use_moments) inline_sql(paste0(dbglm_working_sql(st, character(), numeric(), link, eta = "__dbglm_eta", cell = cell, conn = conn), "SELECT * FROM working")) else
       dbglm_fe_working(conn, st, link, create, cell = cell)
     list(state = st, working = wk, lookup = lookup_sub)
   }
@@ -414,7 +415,7 @@ dbglm_fe_state_builder = function(conn, base, x, link, create, cell = FALSE) {
 
 # Working-state construction and diagnostics for absorbed GLMs.
 dbglm_fe_working = function(conn, table, link, create, target = NULL, cell = FALSE) {
-  create(paste0(dbglm_working_sql(table, character(), numeric(), link, eta = "__dbglm_eta", cell = cell), "SELECT * FROM working"), target = target)
+  create(paste0(dbglm_working_sql(table, character(), numeric(), link, eta = "__dbglm_eta", cell = cell, conn = conn), "SELECT * FROM working"), target = target)
 }
 
 dbglm_fe_evaluate = function(conn, working, x, fe, collect_fe_moments = FALSE, moment_rows = NULL, fe_sizes = NULL, limits = projection_limits()) {
@@ -518,12 +519,12 @@ dbglm_fe_diagnostics = function(row, x, fe_score) {
 # Databricks inlines CTEs, so a UNION branch per FE pair repeatedly plans the
 # predictor. Keep three aggregation branches: globals, FE marginals and pairs.
 # Pairs need only their weight sum, not every diagnostic/score aggregate.
-dbglm_databricks_moments_sql = function(source, fe, value_terms, global_terms = character(), limit = NULL, text_keys = FALSE) {
+dbglm_databricks_moments_sql = function(source, fe, value_terms, global_terms = character(), limit = NULL, text_keys = FALSE, conn) {
   K = length(fe)
   # GROUPING_ID uses a signed BIGINT. Keep masks exactly representable in R.
   if (K < 2L || K > 30L) return(NULL)
   aliases = function(terms) sub(".* AS ([A-Za-z_0-9]+)$", "\\1", terms)
-  id_type = if (text_keys) "STRING" else "BIGINT"
+  id_type = if (text_keys) sql_text_type(conn) else "BIGINT"
   value_names = aliases(value_terms)
   global_names = aliases(global_terms)
   nulls = function(names) if (length(names)) paste0("CAST(NULL AS DOUBLE) AS ", names) else character()
@@ -578,8 +579,9 @@ dbglm_databricks_moments_sql = function(source, fe, value_terms, global_terms = 
 # These are FE-level values only; observation data never enter SQL literals.
 dbglm_databricks_array_terms = function(
   ops, info, coefficients,
-  max_entries = getOption("dbreg.glm_databricks_array_max_entries", 65536L), max_bytes = 512 * 1024
+  max_entries = getOption("dbreg.glm_databricks_array_max_entries", 65536L), max_bytes = 512 * 1024, conn
 ) {
+  backend_info = detect_backend(conn)
   if (!is.numeric(max_entries) || length(max_entries) != 1L || !is.finite(max_entries) ||
     max_entries < 0 || max_entries != floor(max_entries)) {
     stop("GLM coefficient array limit must be a nonnegative whole number.", call. = FALSE)
@@ -603,8 +605,8 @@ dbglm_databricks_array_terms = function(
     payload = paste0("[", paste(dbglm_number(values), collapse = ","), "]")
     encoded = raw_to_base64(charToRaw(enc2utf8(payload)))
     effect = paste0(
-      "COALESCE(element_at(from_json(CAST(unbase64('", encoded,
-      "') AS STRING),'ARRAY<DOUBLE>'),CAST(s.", ops[[i]][["f"]], " AS INT)),0.0)"
+      "COALESCE(element_at(from_json(", sql_cast_text(conn, paste0("unbase64('", encoded, "')"), backend_info),
+      ",'ARRAY<DOUBLE>'),CAST(s.", ops[[i]][["f"]], " AS INT)),0.0)"
     )
     v = ops[[i]][["v"]]
     terms[[i]] = if (v == "1.0") effect else paste0("s.", v, "*(", effect, ")")

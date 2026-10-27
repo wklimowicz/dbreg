@@ -646,6 +646,7 @@ evaluate_i_spec = function(spec, first, second = NULL) {
 i_dictionaries = function(conn, from_sql, declarations, classes, intercept) {
   result = list()
   if (!length(declarations)) return(result)
+  backend_info = detect_backend(conn)
   limit = i_column_limit()
   source = sub("^FROM\\s+", "", from_sql, ignore.case = TRUE)
   for (declaration in declarations) {
@@ -653,7 +654,7 @@ i_dictionaries = function(conn, from_sql, declarations, classes, intercept) {
     metadata = prediction_key_metadata(conn, source, first)
     type = metadata[["types"]][[1L]]
     if (type == "float") stop("i() floating-point categories require a DOUBLE source column.", call. = FALSE)
-    value = if (type == "integer") paste0("CAST(", first, " AS STRING)") else first
+    value = if (type == "integer") sql_cast_text(conn, first, backend_info) else first
     # Group by the original typed value; textual ordering would put 10 before 2.
     keys = backend_get_query(conn, paste0(
       "SELECT ", value, " AS value ", from_sql, " GROUP BY ", first,
@@ -1018,7 +1019,7 @@ read_compressed_frame = function(inputs, sql, from_statement = inputs[["from_sta
       ))
       integers = risky[vapply(types, function(type) grepl("^(u?(bigint|hugeint)|decimal\\([0-9]+,0\\))$", tolower(type[[1]])), logical(1))]
       if (length(integers)) {
-        cast = if (backend[["name"]] == "duckdb") "VARCHAR" else "STRING"
+        cast = sql_text_type(conn, backend)
         fields = c(q(setdiff(names(data), integers)), paste0("CAST(", q(integers), " AS ", cast, ") AS ", q(integers)))
         sql = paste0("SELECT ", paste(fields, collapse = ","), " FROM (", sql, ") dbreg_exact_cells")
         data = DBI::dbGetQuery(conn, sql)

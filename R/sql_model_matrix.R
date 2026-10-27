@@ -60,7 +60,26 @@ sql_model_matrix = function(
   intercept = TRUE,
   factor_refs = NULL
 ) {
+  result = sql_model_matrix_internal(formula, conn, table, expand, sep, fe_vars,
+    intercept, factor_refs)
+  attr(result, "sql_level_rows") = NULL
+  result
+}
+
+# Internal callers additionally reserve source roles outside the RHS.
+sql_model_matrix_internal = function(
+  formula,
+  conn,
+  table,
+  expand = c("all", "interactions"),
+  sep = "_x_",
+  fe_vars = character(),
+  intercept = TRUE,
+  factor_refs = NULL,
+  reserved_names = character()
+) {
   expand = match.arg(expand)
+  reserved_names = unique(c(reserved_names, model_vars(formula), fe_vars))
 
   # Extract terms from formula (handles Formula objects too)
   if (inherits(formula, "Formula")) {
@@ -102,7 +121,7 @@ sql_model_matrix = function(
   }
 
   result = sql_model_matrix_from_info(term_labels, col_info, expand, sep, fe_vars, intercept,
-    fold_case = folds_identifier_case(conn), i_specs = i_specs
+    fold_case = folds_identifier_case(conn), i_specs = i_specs, reserved_names = reserved_names
   )
   ordinary = term_labels[vapply(i_specs, is.null, logical(1))]
   result[["ordinary_rhs"]] = stats::reformulate(if (length(ordinary)) ordinary else "1",
@@ -114,12 +133,13 @@ sql_model_matrix = function(
 # The fitted-design path supplies saved levels instead of discovering them from
 # newdata. Both paths use exactly the same expansion and reference decisions.
 sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep = "_x_",
-                                      fe_vars = character(), intercept = TRUE, fold_case = FALSE, i_specs = lapply(term_labels, parse_sql_i_term, env = baseenv())) {
+                                      fe_vars = character(), intercept = TRUE, fold_case = FALSE, i_specs = lapply(term_labels, parse_sql_i_term, env = baseenv()), reserved_names = character()) {
   col_info = explicit_factor_info(term_labels, col_info)
   # SQL-safe aliases for factor dummies, one per (variable, level), computed
   # once so that every term uses the same alias. They avoid the model's
   # variable names and each other, and follow the backend's case rules.
-  taken = names(col_info[["types"]])
+  source_names = unique(c(names(col_info[["types"]]), fe_vars, reserved_names))
+  taken = source_names
   level_aliases = list()
   for (v in names(col_info[["levels"]])) {
     lvls = c(as.character(col_info[["levels"]][[v]]), "_constant")
@@ -152,10 +172,13 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
     term_labels[is_factor_main][1]
   }
   i_columns = empty_i_columns()
+  i_positions = integer()
+  level_rows = integer()
   for (k in seq_along(term_labels)) {
     term = term_labels[k]
     if (!is.null(i_specs[[k]])) {
       expanded = expand_i_term(i_specs[[k]], col_info, k, keep_all_levels = identical(term, full_factor))
+      i_positions = c(i_positions, length(result[["aliases"]]) + seq_along(expanded[["alias"]]))
       i_columns = rbind(i_columns, expanded[["columns"]])
     } else {
       expanded = expand_term(
@@ -165,6 +188,7 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
         keep_all_levels = identical(term, full_factor)
       )
     }
+    level_rows = c(level_rows, if (is.null(expanded[["level_row"]])) rep(NA_integer_, length(expanded[["alias"]])) else expanded[["level_row"]])
     result[["select_exprs"]] = c(result[["select_exprs"]], expanded[["sql"]])
     result[["col_names"]] = c(result[["col_names"]], expanded[["name"]])
     result[["aliases"]] = c(result[["aliases"]], expanded[["alias"]])
@@ -180,17 +204,52 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
     }
   }
 
+  # Allocate targets only after the whole expansion is known, before any SQL
+  # projection. Source expressions and display labels remain untouched.
+  generated = vapply(result[["columns"]][["recipe"]], function(recipe) {
+    !recipe[["kind"]] %in% c("raw", "numeric")
+  }, logical(1))
+  result[["aliases"]] = allocate_sql_aliases(result[["aliases"]], generated,
+    source_names, fold_case)
+  result[["columns"]][["alias"]] = result[["aliases"]]
+  i_columns[["alias"]] = result[["aliases"]][i_positions]
+  present = which(!is.na(level_rows))
+  level_aliases[["alias"]][level_rows[present]] = result[["aliases"]][present]
+
   result[["factor_levels"]] = col_info[["levels"]]
   result[["factor_classes"]] = col_info[["factor_classes"]]
   result[["level_aliases"]] = level_aliases
   result[["i_columns"]] = i_columns
   result[["coef_names"]] = standardize_coef_names(result[["col_names"]])
   result[["source_classes"]] = col_info[["classes"]]
+  attr(result, "sql_level_rows") = level_rows
   result[["i_specs"]] = lapply(col_info[["i_specs"]], function(spec) {
     spec[["source_type"]] = col_info[["types"]][[spec[["first"]]]]
     spec
   })
   result
+}
+
+# One allocator for generated SQL targets. Raw passthroughs retain their names;
+# generated targets reserve every source role and every other generated target.
+allocate_sql_aliases = function(aliases, generated, reserved_names = character(), fold_case = FALSE) {
+  reserved = unique(c(reserved_names, aliases[!generated]))
+  positions = which(generated)
+  conflicts = tolower(aliases[positions]) %in% tolower(reserved) |
+    duplicated(tolower(aliases[positions]))
+  changed = positions[conflicts]
+  aliases[changed] = safe_identifiers(aliases[changed],
+    taken = c(reserved, aliases[setdiff(seq_along(aliases), changed)]), fold_case = fold_case)
+  aliases
+}
+
+# These names may be projected beside the design, even when absent from its RHS.
+sql_design_reserved = function(inputs) {
+  unique(c(model_vars(inputs[["fml"]]), inputs[["yvar"]], inputs[["xvars"]],
+    inputs[["fe"]], unlist(inputs[["fe_slopes"]], use.names = FALSE),
+    inputs[["weights"]], inputs[["offset"]], inputs[["cluster_var"]],
+    inputs[["retained_key_safe"]], inputs[["row_id_safe"]], inputs[["row_id"]],
+    unlist(inputs[["composite_fes"]], use.names = FALSE)))
 }
 
 #' Get column types and factor levels from database
@@ -314,7 +373,8 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
   la = la[la[["var"]] == var, , drop = FALSE]
   if (length(lvls) < 2) {
     return(list(sql = "1", name = paste0(var, "_constant"), alias = la[["alias"]][la[["level"]] == "_constant"],
-      recipe = list(list(kind = "constant"))))
+      recipe = list(list(kind = "constant")),
+      level_row = which(col_info[["level_aliases"]][["var"]] == var & col_info[["level_aliases"]][["level"]] == "_constant")))
   }
   # Drop first level (reference) only if appropriate
   if (drop_ref) {
@@ -328,6 +388,7 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
     ),
     name = paste0(var, lvls),
     alias = la[["alias"]][match(lvls, la[["level"]])],
+    level_row = which(col_info[["level_aliases"]][["var"]] == var)[match(lvls, la[["level"]])],
     recipe = lapply(seq_along(lvls), function(i) list(kind = "indicator",
       variable = if (forced) unname(explicit_factor_sources(var)) else var,
       value = lvls[i]))
@@ -752,7 +813,7 @@ fitted_model_matrix = function(formula, data) {
 # A single GLM design specification shared by SQL fitting and R prediction.
 build_model_spec = function(formula, conn, table, fe_vars = character(),
                             factor_refs = NULL, reserved_names = character(), absorbed = FALSE) {
-  design = sql_model_matrix(
+  design = sql_model_matrix_internal(
     formula = formula,
     conn = conn,
     table = table,
@@ -760,6 +821,7 @@ build_model_spec = function(formula, conn, table, fe_vars = character(),
     sep = "_x_",
     fe_vars = fe_vars,
     factor_refs = factor_refs,
+    reserved_names = reserved_names,
     intercept = attr(stats::terms(stats::formula(formula, lhs = 0, rhs = 1)), "intercept") == 1L || absorbed
   )
   # Prediction labels are distinct from typed SQL comparison values. Adjacent

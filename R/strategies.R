@@ -17,14 +17,15 @@ execute_moments_strategy = function(inputs) {
   # Expand factors and interactions to SQL expressions (numeric terms pass
   # through unchanged)
   table_ref = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
-  sql_design = sql_model_matrix(
+  sql_design = sql_model_matrix_internal(
     fml,
     conn,
     table_ref,
     expand = "all",
     fe_vars = fe,
     intercept = intercept,
-    factor_refs = inputs[["factor_refs"]]
+    factor_refs = inputs[["factor_refs"]],
+    reserved_names = sql_design_reserved(inputs)
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
@@ -112,13 +113,14 @@ execute_demean_strategy = function(inputs) {
   # Expand factors and interactions to SQL expressions (numeric terms pass
   # through unchanged)
   table_ref = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
-  sql_design = sql_model_matrix(
+  sql_design = sql_model_matrix_internal(
     fml,
     conn,
     table_ref,
     expand = "all",
     fe_vars = fe,
-    factor_refs = inputs[["factor_refs"]]
+    factor_refs = inputs[["factor_refs"]],
+    reserved_names = sql_design_reserved(inputs)
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
@@ -230,13 +232,14 @@ execute_mundlak_strategy = function(inputs) {
   # Expand factors and interactions to SQL expressions (numeric terms pass
   # through unchanged)
   table_ref = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
-  sql_design = sql_model_matrix(
+  sql_design = sql_model_matrix_internal(
     fml,
     conn,
     table_ref,
     expand = "all",
     fe_vars = fe,
-    factor_refs = inputs[["factor_refs"]]
+    factor_refs = inputs[["factor_refs"]],
+    reserved_names = sql_design_reserved(inputs)
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
@@ -440,14 +443,15 @@ execute_compress_strategy = function(inputs) {
     table_ref = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
 
     # Get SQL expansions for RHS terms (expand interactions only, keep main effects as-is)
-    sql_design = sql_model_matrix(
+    sql_design = sql_model_matrix_internal(
       fml,
       conn,
       table_ref,
       expand = "interactions",
       fe_vars = fe,
       intercept = intercept,
-      factor_refs = inputs[["factor_refs"]]
+      factor_refs = inputs[["factor_refs"]],
+      reserved_names = c(sql_design_reserved(inputs), trend_aliases)
     )
 
     # Build SELECT expressions with aliases

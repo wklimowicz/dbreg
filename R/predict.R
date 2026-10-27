@@ -1066,8 +1066,9 @@ finalize_linear_prediction = function(result, inputs) {
   from = inputs[["from_statement"]]
   source = paste0("(SELECT * ", from, ")")
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
-  design = sql_model_matrix(inputs[["fml"]], conn, sub("^FROM\\s+", "", from, ignore.case = TRUE),
-    expand = "all", fe_vars = inputs[["fe"]], intercept = inputs[["intercept"]], factor_refs = inputs[["factor_refs"]]
+  design = sql_model_matrix_internal(inputs[["fml"]], conn, sub("^FROM\\s+", "", from, ignore.case = TRUE),
+    expand = "all", fe_vars = inputs[["fe"]], intercept = inputs[["intercept"]], factor_refs = inputs[["factor_refs"]],
+    reserved_names = sql_design_reserved(inputs)
   )
   register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]], design[["col_names"]], design[["aliases"]], factor_classes = design[["factor_classes"]])
   map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])

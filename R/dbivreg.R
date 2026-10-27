@@ -253,11 +253,13 @@ process_dbivreg_inputs = function(inputs) {
 
   design_source = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
   intercept = parsed_fml[["intercept"]]
-  designs = dbivreg_shared_i_aliases(list(
-    dbivreg_expand_block(parsed_fml[["exog_rhs"]], conn, design_source, fe, intercept),
-    dbivreg_expand_block(parsed_fml[["endog_rhs"]], conn, design_source, fe),
-    dbivreg_expand_block(parsed_fml[["instr_rhs"]], conn, design_source, fe)
-  ))
+  reserved_names = unique(c(sql_design_reserved(inputs), yvar, raw_vars, fe,
+    weights, cluster_var, src[["to_safe"]](inputs[["offset"]])))
+  designs = dbivreg_shared_aliases(list(
+    dbivreg_expand_block(parsed_fml[["exog_rhs"]], conn, design_source, fe, intercept, reserved_names),
+    dbivreg_expand_block(parsed_fml[["endog_rhs"]], conn, design_source, fe, reserved_names = reserved_names),
+    dbivreg_expand_block(parsed_fml[["instr_rhs"]], conn, design_source, fe, reserved_names = reserved_names)
+  ), reserved_names = reserved_names, fold_case = folds_identifier_case(conn))
   exog_design = designs[[1]]
   endog_design = designs[[2]]
   instr_design = designs[[3]]
@@ -265,6 +267,8 @@ process_dbivreg_inputs = function(inputs) {
     inputs,
     c(exog_design[["factor_levels"]], endog_design[["factor_levels"]], instr_design[["factor_levels"]]),
     rbind(exog_design[["level_aliases"]], endog_design[["level_aliases"]], instr_design[["level_aliases"]]),
+    col_names = c(exog_design[["columns"]][["label"]], endog_design[["columns"]][["label"]], instr_design[["columns"]][["label"]]),
+    aliases = c(exog_design[["names"]], endog_design[["names"]], instr_design[["names"]]),
     i_columns = rbind(exog_design[["i_columns"]], endog_design[["i_columns"]], instr_design[["i_columns"]]),
     i_specs = c(exog_design[["i_specs"]], endog_design[["i_specs"]], instr_design[["i_specs"]])
   )
@@ -309,6 +313,10 @@ process_dbivreg_inputs = function(inputs) {
       display(overlap_exog_iv)
     )
     keep_iv = !instr_design[["names"]] %in% overlap_exog_iv
+    i_positions = which(vapply(instr_design[["columns"]][["recipe"]], function(recipe) identical(recipe[["kind"]], "i"), logical(1)))
+    instr_design[["i_columns"]] = instr_design[["i_columns"]][keep_iv[i_positions], , drop = FALSE]
+    instr_design[["columns"]] = instr_design[["columns"]][keep_iv, , drop = FALSE]
+    instr_design[["level_rows"]] = instr_design[["level_rows"]][keep_iv]
     instr_design[["sql"]] = instr_design[["sql"]][keep_iv]
     instr_design[["names"]] = instr_design[["names"]][keep_iv]
   }
@@ -741,17 +749,18 @@ dbivreg_parse_formula = function(fml) {
 
 #' @keywords internal
 #' Expands the right-hand side of the structural formula into SQL expressions for the design matrix, including fixed effects if specified.
-dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(), intercept = TRUE) {
+dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(), intercept = TRUE, reserved_names = character()) {
   if (is.null(fe_vars)) {
     fe_vars = character()
   }
-  sql_design = sql_model_matrix(
+  sql_design = sql_model_matrix_internal(
     rhs_formula,
     conn,
     table,
     expand = "all",
     fe_vars = fe_vars,
-    intercept = intercept
+    intercept = intercept,
+    reserved_names = reserved_names
   )
   if (anyDuplicated(sql_design[["aliases"]]) > 0) {
     dupes = unique(sql_design[["aliases"]][duplicated(sql_design[["aliases"]])])
@@ -766,30 +775,60 @@ dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(),
     factor_levels = sql_design[["factor_levels"]],
     level_aliases = sql_design[["level_aliases"]],
     i_columns = sql_design[["i_columns"]],
+    columns = sql_design[["columns"]],
+    level_rows = attr(sql_design, "sql_level_rows"),
     i_specs = sql_design[["i_specs"]],
     vars = model_vars(rhs_formula),
     term_labels = attr(terms(rhs_formula), "term.labels")
   )
 }
 
-#' Give `i()` columns the same alias in every IV block
+#' Reconcile generated targets before the IV blocks share a SQL projection
 #'
 #' [sql_model_matrix()] numbers `i()` aliases per call, so blocks expanded
 #' separately could reuse an alias for different columns. Re-alias them by
 #' their SQL instead: identical columns share an alias, which keeps the
-#' name-based overlap checks between blocks working.
+#' name-based overlap checks between blocks working. Other generated columns
+#' share a target only when both their requested aliases and constructed SQL
+#' expressions are identical; distinct unambiguous targets retain their names.
 #' @param designs List of [dbivreg_expand_block()] results.
+#' @param reserved_names Source-role names reserved beside the design.
+#' @param fold_case Whether generated aliases must fold identifier case.
 #' @keywords internal
-dbivreg_shared_i_aliases = function(designs) {
-  is_i = lapply(designs, function(d) d[["names"]] %in% d[["i_columns"]][["alias"]])
-  i_sql = unique(unlist(Map(function(d, i) d[["sql"]][i], designs, is_i)))
-  Map(function(d, i) {
-    old = d[["names"]][i]
-    new = paste0("dbreg_i", match(d[["sql"]][i], i_sql))
-    d[["names"]][i] = new
-    d[["i_columns"]][["alias"]] = new[match(d[["i_columns"]][["alias"]], old)]
+dbivreg_shared_aliases = function(designs, reserved_names = character(), fold_case = FALSE) {
+  i_positions = lapply(designs, function(d) which(vapply(d[["columns"]][["recipe"]],
+    function(recipe) identical(recipe[["kind"]], "i"), logical(1))))
+  generated = lapply(designs, function(d) which(vapply(d[["columns"]][["recipe"]],
+    function(recipe) !recipe[["kind"]] %in% c("raw", "numeric"), logical(1))))
+  i_sql = unique(unlist(Map(function(d, i) d[["sql"]][i], designs, i_positions)))
+  # Retain the established cross-block i() names before resolving collisions.
+  desired = Map(function(d, i) {
+    names = d[["names"]]
+    if (length(i)) names[i] = paste0("dbreg_i", match(d[["sql"]][i], i_sql))
+    names
+  }, designs, i_positions)
+  expressions = unlist(Map(function(d, i) d[["sql"]][i], designs, generated))
+  candidates = unlist(Map(function(names, i) names[i], desired, generated))
+  # Distinct, already unambiguous declared targets retain their identity even
+  # when their SQL agrees (e.g. factor(f) and i(f)). Integer pairs encode exact
+  # requested-target/expression identity without interpreting either string.
+  keys = paste(match(candidates, unique(candidates)),
+    match(expressions, unique(expressions)), sep = ":")
+  first = !duplicated(keys)
+  targets = unique(keys)
+  aliases_requested = candidates[first]
+  raw_names = unlist(Map(function(d, i) d[["names"]][setdiff(seq_along(d[["names"]]), i)], designs, generated))
+  aliases = allocate_sql_aliases(aliases_requested, rep(TRUE, length(aliases_requested)),
+    c(reserved_names, raw_names), fold_case)
+  groups = split(match(keys, targets), rep(seq_along(designs), lengths(generated)))
+  Map(function(d, generated, i, group) {
+    d[["names"]][generated] = aliases[group]
+    d[["columns"]][["alias"]] = d[["names"]]
+    d[["i_columns"]][["alias"]] = d[["names"]][i]
+    positions = which(!is.na(d[["level_rows"]]))
+    d[["level_aliases"]][["alias"]][d[["level_rows"]][positions]] = d[["names"]][positions]
     d
-  }, designs, is_i)
+  }, designs, generated, i_positions, lapply(seq_along(designs), function(k) groups[[as.character(k)]]))
 }
 
 #' @keywords internal

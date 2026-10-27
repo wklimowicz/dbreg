@@ -126,7 +126,7 @@ local({
   expected = outer(data[["key"]], unique(data[["key"]]), `==`) * data[["flag"]]
   expect_equal(unname(as.matrix(actual)), unname(expected))
   expect_equal(unname(dbreg:::evaluate_i_spec(info[["i_specs"]][[1L]], data[["key"]], data[["flag"]])), unname(expected))
-  expect_true(any(grepl("SELECT TOP 1002 CAST([key] AS VARCHAR(MAX))", state[["sql"]], fixed = TRUE)))
+  expect_true(any(grepl("SELECT TOP 1002 CAST(dbreg_i_levels.[dbreg_i_key__] AS VARCHAR(MAX))", state[["sql"]], fixed = TRUE)))
   expect_false(any(grepl("LIMIT", state[["sql"]], fixed = TRUE)))
 
   # SQL prediction recompilation must retain BIT predicates and frozen levels.

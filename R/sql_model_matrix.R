@@ -783,11 +783,15 @@ i_dictionaries = function(conn, from_sql, declarations, classes, intercept, nati
     type = metadata[["types"]][[1L]]
     if (type == "float") stop("i() floating-point categories require a DOUBLE source column.", call. = FALSE)
     column = if (adapter) as.character(DBI::dbQuoteIdentifier(conn, first)) else first
-    value = if (type == "integer") sql_cast_text(conn, column, backend_info) else column
-    # Group by the original typed value; textual ordering would put 10 before 2.
+    private_key = as.character(DBI::dbQuoteIdentifier(conn, "dbreg_i_key__"))
+    key_sql = paste0("dbreg_i_levels.", private_key)
+    value = if (type == "integer") sql_cast_text(conn, key_sql, backend_info) else key_sql
+    # Qualify the native key so a textual output alias cannot change its order.
+    # The one-column source filters missing levels without appending to a WHERE.
     keys = DBI::dbGetQuery(conn, sql_limit(paste0(
-      "SELECT ", value, " AS value ", from_sql, " GROUP BY ", column,
-      " ORDER BY ", column
+      "SELECT ", value, " AS value FROM (SELECT ", column, " AS ", private_key,
+      " ", from_sql, ") dbreg_i_levels WHERE ", key_sql, " IS NOT NULL GROUP BY ", key_sql,
+      " ORDER BY ", key_sql
     ), sprintf("%.0f", limit + 2L), backend_info[["name"]]))[[1L]]
     if (adapter && type == "logical" && !is.logical(keys)) {
       if (!is.numeric(keys) || anyNA(keys) || any(!keys %in% c(0, 1))) {

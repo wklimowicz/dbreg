@@ -151,16 +151,32 @@ compute_score_meat = function(
   pairs = which(upper.tri(diag(length(idx)), diag = TRUE), arr.ind = TRUE)
   if (vcov_type == "hc1") {
     w_sq = if (is.null(weights_expr)) NULL else as_double(sprintf("(%s) * (%s)", weights_expr, weights_expr))
+    # Project each expression once instead of repeating the full predictor in
+    # every covariance entry. No source columns pass through this private scope.
+    resid_alias = paste0("__dbreg_hc1_r", seq_along(resid))
+    score_alias = rep(NA_character_, length(s_term))
+    score_present = which(!is.na(s_term))
+    score_alias[score_present] = paste0("__dbreg_hc1_s", score_present)
+    weight_alias = if (is.null(w_sq)) NULL else "__dbreg_hc1_w_sq"
+    row_terms = c(
+      paste(resid, "AS", resid_alias),
+      if (length(score_present)) paste(s_term[score_present], "AS", score_alias[score_present]),
+      if (!is.null(w_sq)) paste(w_sq, "AS", weight_alias)
+    )
     terms = unlist(lapply(seq_along(resid), function(r) {
       sprintf(
         "SUM(%s) AS meat_%d_%d_%d",
         vapply(seq_len(nrow(pairs)), function(k) {
-          sql_prod(resid[r], resid[r], s_term[pairs[k, 1]], s_term[pairs[k, 2]], w_sq)
+          # Keep the existing multiplication order, including constant omission.
+          sql_prod(resid_alias[r], resid_alias[r], score_alias[pairs[k, 1]], score_alias[pairs[k, 2]], weight_alias)
         }, character(1)),
         r, pairs[, 1], pairs[, 2]
       )
     }))
-    sql = paste0(cte_sql, ",\nmeat AS (SELECT ", paste(terms, collapse = ", "), " FROM ", cte_name, ")\nSELECT * FROM meat")
+    sql = paste0(
+      cte_sql, ",\ndbreg_hc1_rows AS (SELECT ", paste(row_terms, collapse = ", "), " FROM ", cte_name, "),",
+      "\nmeat AS (SELECT ", paste(terms, collapse = ", "), " FROM dbreg_hc1_rows)\nSELECT * FROM meat"
+    )
   } else {
     w = if (is.null(weights_expr)) NULL else as_double(weights_expr)
     terms = unlist(lapply(seq_along(resid), function(r) {

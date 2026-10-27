@@ -644,17 +644,26 @@ dbbinsreg = function(
       fit = restore_result_names(fit, list(name_map = name_map, source_map = name_map))
       if (!is.null(fit[["linear_design"]])) {
         fit[["linear_design"]] = restore_native_linear_layout(fit[["linear_design"]],
-          name_map, name_map, rownames(fit[["coeftable"]]))
+          name_map, fit[["i_specs"]])
       }
       fit[["fe_labels"]] = restore_names(fit[["fe_labels"]], name_map)
+      fit[["i_specs"]] = restore_i_sources(fit[["i_specs"]], name_map)
+      if (NROW(fit[["i_columns"]])) {
+        for (field in c("var", "by")) fit[["i_columns"]][[field]] = restore_coefficient_names(fit[["i_columns"]][[field]], name_map)
+        columns = fit[["i_columns"]]
+        fit[["i_columns"]][["name"]] = paste0(columns[["var"]], "::", columns[["level"]],
+          ifelse(is.na(columns[["by"]]), "", paste0(":", columns[["by"]])))
+      }
       for (field in c("factor_levels", "factor_classes")) {
-        if (length(fit[[field]])) names(fit[[field]]) = restore_names(names(fit[[field]]), name_map)
+        if (length(fit[[field]])) names(fit[[field]]) = restore_term_names(names(fit[[field]]), name_map)
       }
       design = fit[["compressed_design"]]
       if (!is.null(design)) {
-        names(design[["source_names"]]) = restore_names(names(design[["source_names"]]), name_map)
-        design[["columns"]] = restore_names(design[["columns"]],
-          stats::setNames(rownames(fit[["coeftable"]]), coefficient_names))
+        names(design[["source_names"]]) = restore_coefficient_names(names(design[["source_names"]]), name_map)
+        if (!is.null(fit[["linear_design"]])) {
+          layout = fit[["linear_design"]]
+          design[["columns"]] = stats::setNames(layout[["columns"]][["label"]][match(layout[["fitted_ids"]], layout[["columns"]][["id"]])], names(design[["columns"]]))
+        } else design[["columns"]] = restore_coefficient_names(design[["columns"]], stats::setNames(rownames(fit[["coeftable"]]), coefficient_names))
         fit[["compressed_design"]] = design
       }
       fit

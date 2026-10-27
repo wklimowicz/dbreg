@@ -801,7 +801,8 @@ finalize_linear_inference = function(result, inputs) {
     state[["coefficient_ids"]] = layout[["columns"]][["id"]][positions]
   }
   map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])
-  names = standardize_coef_names(restore_names(state[["coefficient_names"]], map))
+  names = if (is.null(state[["coefficient_names"]])) character() else
+    restore_coefficient_names(state[["coefficient_names"]], map)
   public_names = if (!is.null(state[["coefficient_ids"]])) {
     names(linear_coefficients_for_ids(result, state[["coefficient_ids"]]))
   } else names(coef.dbreg(result))

@@ -43,7 +43,10 @@ keeps all of its levels (no reference level is dropped).}
 \value{
 List with:
   - `select_exprs`: character vector of SQL expressions
-  - `col_names`: corresponding column names
+  - `col_names`: expanded column names using `sep` (kept independently of
+    public coefficient labels)
+  - `coef_names`: coefficient labels from fitted source and basis identities;
+    generated interactions use `:`, while source names and level text stay literal
   - `aliases`: SQL-safe versions of `col_names` (identical unless, e.g.,
     factor levels contain spaces or other special characters)
   - `level_aliases`: data frame mapping each factor dummy `alias` to its

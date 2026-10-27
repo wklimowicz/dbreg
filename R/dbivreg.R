@@ -269,6 +269,7 @@ process_dbivreg_inputs = function(inputs) {
     rbind(exog_design[["level_aliases"]], endog_design[["level_aliases"]], instr_design[["level_aliases"]]),
     col_names = c(exog_design[["columns"]][["label"]], endog_design[["columns"]][["label"]], instr_design[["columns"]][["label"]]),
     aliases = c(exog_design[["names"]], endog_design[["names"]], instr_design[["names"]]),
+    columns = rbind(exog_design[["columns"]], endog_design[["columns"]], instr_design[["columns"]]),
     i_columns = rbind(exog_design[["i_columns"]], endog_design[["i_columns"]], instr_design[["i_columns"]]),
     i_specs = c(exog_design[["i_specs"]], endog_design[["i_specs"]], instr_design[["i_specs"]])
   )
@@ -288,7 +289,7 @@ process_dbivreg_inputs = function(inputs) {
     stop("At least one excluded instrument is required in the IV block.")
   }
 
-  display = function(x) paste(standardize_coef_names(restore_names(x, inputs[["name_map"]])), collapse = ", ")
+  display = function(x) paste(restore_coefficient_names(x, coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])), collapse = ", ")
   overlap_x_endog = intersect(exog_design[["names"]], endog_design[["names"]])
   if (length(overlap_x_endog) > 0) {
     stop(
@@ -349,8 +350,8 @@ process_dbivreg_inputs = function(inputs) {
   endog_sql = endog_design[["sql"]]
   instr_names = instr_design[["names"]]
   instr_sql = instr_design[["sql"]]
-  endog_vars = standardize_coef_names(endog_names)
-  instr_vars = standardize_coef_names(instr_names)
+  endog_vars = endog_names
+  instr_vars = instr_names
   xvars = raw_vars
   compress_ratio = resolve_compress_ratio(compress_ratio, fe)
   is_balanced = NULL
@@ -632,7 +633,7 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
     vcov = vcov_mat,
     fml = structural_fml,
     yvar = yvar,
-    xvars = standardize_coef_names(x_names_full[x_names_full != "(Intercept)"]),
+    xvars = x_names_full[x_names_full != "(Intercept)"],
     fe = fe,
     weights = weights,
     query_string = query_string,
@@ -766,7 +767,7 @@ dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(),
     dupes = unique(sql_design[["aliases"]][duplicated(sql_design[["aliases"]])])
     stop(
       "IV design matrix contains duplicate column names: ",
-      paste(standardize_coef_names(dupes), collapse = ", ")
+      paste(dupes, collapse = ", ")
     )
   }
   list(
@@ -882,7 +883,7 @@ compute_dbivreg_first_stage_f = function(inputs, S, n_total, df_fe, has_intercep
     stat = max(((rss_r - rss_u) / q) / (rss_u / df2), 0)
     list(stat = stat, p = stats::pf(stat, q, df2, lower.tail = FALSE), df1 = q, df2 = df2)
   })
-  names(out) = standardize_coef_names(endogenous)
+  names(out) = endogenous
   out
 }
 
@@ -942,7 +943,7 @@ compute_dbivreg_first_stage_wald = function(
       vcov = format_vcov_label(vcov_type, attr(vcov_u, "n_clusters"))
     )
   }, fs_fits, fs_meats)
-  names(out) = standardize_coef_names(endogenous)
+  names(out) = endogenous
   out
 }
 

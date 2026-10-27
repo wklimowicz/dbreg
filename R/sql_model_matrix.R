@@ -30,7 +30,10 @@
 #' @param factor_refs Optional named reference levels for categorical regressors.
 #' @return List with:
 #'   - `select_exprs`: character vector of SQL expressions
-#'   - `col_names`: corresponding column names
+#'   - `col_names`: expanded column names using `sep` (kept independently of
+#'     public coefficient labels)
+#'   - `coef_names`: coefficient labels from fitted source and basis identities;
+#'     generated interactions use `:`, while source names and level text stay literal
 #'   - `aliases`: SQL-safe versions of `col_names` (identical unless, e.g.,
 #'     factor levels contain spaces or other special characters)
 #'   - `level_aliases`: data frame mapping each factor dummy `alias` to its
@@ -227,7 +230,8 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
   result[["factor_classes"]] = col_info[["factor_classes"]]
   result[["level_aliases"]] = level_aliases
   result[["i_columns"]] = i_columns
-  result[["coef_names"]] = standardize_coef_names(result[["col_names"]])
+  result[["columns"]][["label"]] = linear_column_labels(result[["columns"]], i_specs = col_info[["i_specs"]])
+  result[["coef_names"]] = result[["columns"]][["label"]]
   result[["source_classes"]] = col_info[["classes"]]
   attr(result, "sql_level_rows") = level_rows
   result[["i_specs"]] = lapply(col_info[["i_specs"]], function(spec) {
@@ -331,7 +335,7 @@ expand_term = function(term, col_info, expand, sep = "_x_", all_terms = characte
   if (!is_interaction && expand == "interactions" && is.null(parse_power_term(term)) &&
     is.null(col_info[["factor_sources"]][[term]])) {
     # Main effect, only expanding interactions: return as-is
-    return(list(sql = term, name = term, alias = term, recipe = list(list(kind = "raw", variable = term))))
+    return(list(sql = term, name = term, alias = term, recipe = list(list(kind = "raw", variable = model_vars(str2lang(term))[[1L]]))))
   }
 
   # Formula term ordering is not a canonical interaction ordering. Compare
@@ -371,7 +375,7 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
     sql = if (!is_factor) col_info[["numeric_sql"]][[var]] else NULL
     if (is.null(sql)) sql = var
     return(list(sql = sql, name = var, alias = var,
-      recipe = list(list(kind = if (is_factor) "raw" else "numeric", variable = var))))
+      recipe = list(list(kind = if (is_factor) "raw" else "numeric", variable = model_vars(str2lang(var))[[1L]]))))
   }
   lvls = col_info[["levels"]][[var]]
   level_sql = col_info[["level_sql"]][[var]]
@@ -381,7 +385,7 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
   if (length(lvls) < 2) {
     constant_row = col_info[["constant_rows"]][[var]]
     return(list(sql = "1", name = paste0(var, "_constant"), alias = col_info[["level_aliases"]][["alias"]][constant_row],
-      recipe = list(list(kind = "constant")),
+      recipe = list(list(kind = "constant", variable = if (forced) unname(explicit_factor_sources(var)) else model_vars(str2lang(var))[[1L]], factor = forced)),
       level_row = constant_row))
   }
   # Drop first level (reference) only if appropriate
@@ -398,8 +402,8 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
     alias = la[["alias"]][match(lvls, la[["level"]])],
     level_row = which(col_info[["level_aliases"]][["var"]] == var)[match(lvls, la[["level"]])],
     recipe = lapply(seq_along(lvls), function(i) list(kind = "indicator",
-      variable = if (forced) unname(explicit_factor_sources(var)) else var,
-      value = lvls[i]))
+      variable = if (forced) unname(explicit_factor_sources(var)) else model_vars(str2lang(var))[[1L]],
+      value = lvls[i], factor = forced))
   )
 }
 
@@ -1050,7 +1054,7 @@ read_compressed_frame = function(inputs, sql, from_statement = inputs[["from_sta
 finalize_linear_design = function(result, inputs) {
   if (!is.null(result[["linear_design"]])) {
     result[["linear_design"]] = restore_native_linear_layout(result[["linear_design"]],
-      inputs[["source_map"]], inputs[["name_map"]], rownames(result[["coeftable"]]))
+      inputs[["source_map"]], inputs[["i_specs"]])
   }
   result[["i_specs"]] = inputs[["i_specs"]]
   result[["offset"]] = inputs[["offset"]]
@@ -1076,7 +1080,7 @@ finalize_linear_design = function(result, inputs) {
   design = result[["compressed_design"]]
   if (!is.null(design)) {
     environment(design[["formula"]]) = baseenv()
-    design[["source_names"]] = setNames(design[["source_names"]], restore_names(design[["source_names"]], inputs[["name_map"]]))
+    design[["source_names"]] = setNames(design[["source_names"]], restore_coefficient_names(design[["source_names"]], inputs[["name_map"]]))
     design[["columns"]] = setNames(rownames(result[["coeftable"]]), design[["columns"]])
     if (length(design[["trend_sources"]])) {
       design[["prediction_trends"]] = stats::setNames(
@@ -1283,6 +1287,101 @@ compressed_trend_data = function(data, sources, centers = NULL) {
   data
 }
 
+# Render labels from fitted source/basis identities. Level text is opaque:
+# only product nodes introduce interaction separators.
+linear_recipe_label = function(recipe, source_map = character(), i_specs = list()) {
+  source = function(variable) {
+    if (!length(variable)) return(variable)
+    positions = match(variable, names(source_map))
+    found = !is.na(positions)
+    variable[found] = unname(source_map[positions[found]])
+    variable
+  }
+  variable_label = function(variable, forced = FALSE) {
+    label = coef_var_name(source(variable))
+    if (isTRUE(forced)) paste0("factor(", label, ")") else label
+  }
+  kind = recipe[["kind"]]
+  if (kind == "mean") return(paste0(linear_recipe_label(recipe[["source"]], source_map, i_specs),
+    "_bar_", source(recipe[["variable"]])))
+  if (kind == "product") return(paste0(
+    linear_recipe_label(recipe[["left"]], source_map, i_specs), ":",
+    linear_recipe_label(recipe[["right"]], source_map, i_specs)))
+  if (kind == "constant") {
+    if (is.null(recipe[["variable"]])) return("(Intercept)")
+    return(paste0(variable_label(recipe[["variable"]], recipe[["factor"]]), "_constant"))
+  }
+  if (kind %in% c("raw", "numeric")) return(variable_label(recipe[["variable"]]))
+  if (kind == "power") return(paste0("I(", variable_label(recipe[["variable"]]), "^", recipe[["exponent"]], ")"))
+  if (kind == "indicator") return(paste0(variable_label(recipe[["variable"]], recipe[["factor"]]), as.character(recipe[["value"]])))
+  if (kind == "i") {
+    term = restore_term_names(recipe[["term"]], source_map)
+    matches = vapply(i_specs, function(spec) identical(restore_term_names(spec[["term"]], source_map), term), logical(1))
+    if (!any(matches)) stop("Missing fitted indicator label dictionary.", call. = FALSE)
+    dictionary = i_specs[[which(matches)[[1L]]]]
+    return(paste0(source(recipe[["variable"]]), "::", dictionary[["labels"]][recipe[["level"]]],
+      if (!is.null(recipe[["second"]])) paste0(":", source(recipe[["second"]]))))
+  }
+  stop("Unsupported internal label recipe.", call. = FALSE)
+}
+
+linear_column_labels = function(columns, source_map = character(), i_specs = list()) {
+  vapply(columns[["recipe"]], linear_recipe_label, character(1), source_map = source_map, i_specs = i_specs)
+}
+
+# R's term factor codes distinguish treatment contrasts from full indicator
+# coding. Capture labels with the same assign/basis order as the actual X.
+model_matrix_recipes = function(X, formula, data, design = NULL, trend_sources = character()) {
+  tt = stats::terms(formula, data = data)
+  factors = attr(tt, "factors")
+  # model.matrix's no-intercept producer promotes its first categorical
+  # component to full indicators. Carry that actual coding decision into the
+  # label basis; terms() alone still describes treatment contrasts here.
+  if (identical(attr(tt, "intercept"), 0L)) {
+    promoted = FALSE
+    for (term in seq_len(ncol(factors))) {
+      for (variable in rownames(factors)) {
+        value = data[[variable]]
+        categorical = is.factor(value) || is.character(value) || is.logical(value)
+        levels = if (is.factor(value)) levels(value) else if (categorical) levels(factor(value)) else character()
+        if (factors[variable, term] != 0L && length(levels) > 1L) {
+          factors[variable, term] = 2L
+          promoted = TRUE
+          break
+        }
+      }
+      if (promoted) break
+    }
+  }
+  assignment = attr(X, "assign")
+  recipes = rep(list(list(kind = "constant")), ncol(X))
+  compiled = design[["columns"]]
+  for (term in seq_along(attr(tt, "term.labels"))) {
+    positions = which(assignment == term)
+    variables = rownames(factors)[factors[, term] != 0L]
+    parts = lapply(variables, function(variable) {
+      emitted = if (!is.null(compiled)) match(variable, compiled[["alias"]]) else NA_integer_
+      if (!is.na(emitted) && !identical(compiled[["recipe"]][[emitted]][["kind"]], "raw")) return(list(compiled[["recipe"]][[emitted]]))
+      value = data[[variable]]
+      actual = if (variable %in% names(trend_sources)) trend_sources[[variable]] else variable
+      if (is.factor(value) || is.character(value) || is.logical(value)) {
+        levels = if (is.factor(value)) levels(value) else levels(factor(value))
+        if (factors[variable, term] == 1L) levels = levels[-1L]
+        return(lapply(levels, function(level) list(kind = "indicator", variable = actual, value = level)))
+      }
+      list(list(kind = "numeric", variable = actual))
+    })
+    combinations = expand.grid(lapply(parts, seq_along), KEEP.OUT.ATTRS = FALSE)
+    if (nrow(combinations) != length(positions)) stop("Fitted matrix label basis does not match its term assignment.", call. = FALSE)
+    recipes[positions] = lapply(seq_len(nrow(combinations)), function(j) {
+      operands = lapply(seq_along(parts), function(k) parts[[k]][[combinations[j, k]]])
+      Reduce(function(left, right) list(kind = "product", left = left, right = right), operands)
+    })
+  }
+  recipes
+}
+
+
 # A column identity is compiler metadata, never a public coefficient label.
 empty_linear_columns = function() {
   columns = data.frame(id = character(), term = integer(), basis = integer(),
@@ -1316,11 +1415,14 @@ native_linear_layout = function(design, fitted, intercept) {
 # Capture the expansion actually emitted by the compressed matrix producer.
 # Its term assignment disambiguates a factor dummy from a same-labelled source.
 compressed_linear_layout = function(X, formula, data, design, original_formula, inputs,
-                                     roles = NULL) {
+                                     roles = NULL, trend_sources = character()) {
   assignment = attr(X, "assign")
   terms = attr(stats::terms(formula), "term.labels")
   original = attr(stats::terms(stats::formula(original_formula, lhs = 0, rhs = 1)), "term.labels")
   compiled = design[["columns"]]
+  label_recipes = model_matrix_recipes(X, formula, data, design, trend_sources)
+  public_labels = vapply(label_recipes, linear_recipe_label, character(1),
+    source_map = inputs[["source_map"]], i_specs = design[["i_specs"]])
   columns = empty_linear_columns()
   for (j in seq_len(ncol(X))) {
     term_id = assignment[[j]]
@@ -1334,7 +1436,7 @@ compressed_linear_layout = function(X, formula, data, design, original_formula, 
     } else if (role != "slope") {
       column = data.frame(id = paste0("n", term_id, "b", basis), term = term_id,
         basis = basis, alias = colnames(X)[[j]], label = colnames(X)[[j]], role = role, stringsAsFactors = FALSE)
-      column[["recipe"]] = list(NULL)
+      column[["recipe"]] = label_recipes[j]
     } else if (!is.na(emitted) && !identical(compiled[["recipe"]][[emitted]][["kind"]], "raw")) {
       column = compiled[emitted, , drop = FALSE]
     } else {
@@ -1372,8 +1474,8 @@ compressed_linear_layout = function(X, formula, data, design, original_formula, 
   positions = which(columns[["role"]] != "intercept")
   aliases[positions] = safe_identifiers(paste0("dbreg_linear_column", seq_along(positions), "__"),
     taken = c(names(data), names(inputs[["name_map"]])))
-  display = restore_names(standardize_coef_names(colnames(X)),
-    coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]]))
+  display = public_labels
+  columns[["label"]] = public_labels
   additions = stats::setNames(display[positions], aliases[positions])
   inputs[["name_map"]] = c(inputs[["name_map"]], additions)
   columns[["alias"]] = aliases
@@ -1382,9 +1484,10 @@ compressed_linear_layout = function(X, formula, data, design, original_formula, 
 
 restore_linear_recipe = function(recipe, map) {
   if (is.null(recipe)) return(NULL)
-  if (!is.null(recipe[["variable"]])) recipe[["variable"]] = restore_names(recipe[["variable"]], map)
-  if (!is.null(recipe[["second"]])) recipe[["second"]] = restore_names(recipe[["second"]], map)
+  if (!is.null(recipe[["variable"]])) recipe[["variable"]] = restore_coefficient_names(recipe[["variable"]], map)
+  if (!is.null(recipe[["second"]])) recipe[["second"]] = restore_coefficient_names(recipe[["second"]], map)
   if (!is.null(recipe[["term"]])) recipe[["term"]] = restore_term_names(recipe[["term"]], map)
+  if (!is.null(recipe[["source"]])) recipe[["source"]] = restore_linear_recipe(recipe[["source"]], map)
   if (!is.null(recipe[["left"]])) recipe[["left"]] = restore_linear_recipe(recipe[["left"]], map)
   if (!is.null(recipe[["right"]])) recipe[["right"]] = restore_linear_recipe(recipe[["right"]], map)
   recipe
@@ -1434,13 +1537,10 @@ native_linear_matrix = function(object, data, stored = FALSE) {
   out
 }
 
-restore_native_linear_layout = function(layout, source_map, name_map, fitted_labels) {
+restore_native_linear_layout = function(layout, source_map, i_specs = list()) {
+  layout[["columns"]][["label"]] = linear_column_labels(layout[["columns"]], source_map, i_specs)
   layout[["columns"]][["recipe"]] = lapply(layout[["columns"]][["recipe"]],
     restore_linear_recipe, map = source_map)
-  layout[["columns"]][["label"]] = standardize_coef_names(
-    restore_names(layout[["columns"]][["label"]], name_map))
-  positions = match(layout[["fitted_ids"]], layout[["columns"]][["id"]])
-  layout[["columns"]][["label"]][positions] = fitted_labels
   layout
 }
 

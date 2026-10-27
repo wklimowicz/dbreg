@@ -1366,7 +1366,7 @@ dbreg_ap_query_plan = function(inputs, x_sql, x_names) {
     strategy = "demean", backend = backend, method = method,
     tolerance = inputs[["fe_tol"]], max_iterations = inputs[["fe_max_iter"]],
     model_frame_sql = base, initialization_sql = initial,
-    design_matrix = data.frame(term = restore_names(standardize_coef_names(x_names), inputs[["name_map"]]), sql = x_sql),
+    design_matrix = data.frame(term = restore_coefficient_names(x_names, coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])), sql = x_sql),
     projection_sql = projection, convergence_sql = sql_ap_convergence("<ap_current>", vars, fe),
     original_scale_sql = sql_ap_original_scale("(<model_frame_sql>) dbreg_ap_original", vars, conn),
     residual_scale_sql = sql_ap_rms("<ap_current>", vars, conn),

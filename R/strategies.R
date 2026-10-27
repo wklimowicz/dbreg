@@ -29,7 +29,7 @@ execute_moments_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]])
 
   frame = build_base_frame(inputs, xvars_sql, xvar_names)
   moments_sql = frame_moments_sql(frame, yvar, xvar_names, conn)
@@ -82,7 +82,7 @@ execute_moments_strategy = function(inputs) {
     vcov = vcov_mat,
     fml = fml,
     yvar = yvar,
-    xvars = standardize_coef_names(xvars),
+    xvars = xvars,
     fe = NULL,
     weights = weights,
     query_string = moments_sql,
@@ -124,7 +124,7 @@ execute_demean_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]])
 
   frame = build_demean_frame(inputs, xvars_sql, xvar_names)
   if (inherits(frame, "dbreg_query_plan")) return(frame)
@@ -192,8 +192,8 @@ execute_demean_strategy = function(inputs) {
     vcov = vcov_mat,
     fml = fml,
     yvar = yvar,
-    xvars = standardize_coef_names(xvar_names_kept),
-    collin.var = standardize_coef_names(collin_vars),
+    xvars = xvar_names_kept,
+    collin.var = collin_vars,
     fe = fe,
     weights = weights,
     query_string = demean_sql,
@@ -244,7 +244,7 @@ execute_mundlak_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]])
 
   weights_expr_base = sql_weight_expr(weights)
   weights_expr_aug = if (is.null(weights)) NULL else sql_weight_expr("weights")
@@ -300,17 +300,22 @@ execute_mundlak_strategy = function(inputs) {
   }
   aug_select = paste(c(aug_select_parts, aug_bar_parts), collapse = ", ")
 
-  # Display names for the means: "<coef name>_bar_<fe>"
-  map = inputs[["name_map"]]
-  coef_map = coefficient_name_map(map, inputs[["source_map"]])
-  term_display = standardize_coef_names(restore_names(xvar_names, coef_map))
-  fe_display = restore_names(fe, map)
-  mundlak_means = data.frame(
-    term = rep(term_display, length(fe)),
-    fe = rep(fe_display, each = length(xvar_names)),
-    name = paste0(rep(term_display, length(fe)), "_bar_", rep(fe_display, each = length(xvar_names)))
-  )
-  inputs[["name_map"]] = c(map, setNames(mundlak_means[["name"]], xbar_all))
+  # Mean labels derive from a fitted source coordinate and the FE identity.
+  mean_columns = empty_linear_columns()
+  for (k in seq_along(fe)) {
+    columns = sql_design[["columns"]]
+    columns[["id"]] = paste0("m", k, "_", columns[["id"]])
+    columns[["alias"]] = xbar_all[(k - 1L) * length(xvar_names) + seq_along(xvar_names)]
+    columns[["role"]] = "mundlak_mean"
+    columns[["recipe"]] = lapply(columns[["recipe"]], function(recipe) list(kind = "mean", source = recipe, variable = fe[[k]]))
+    columns[["label"]] = linear_column_labels(columns, inputs[["source_map"]], sql_design[["i_specs"]])
+    mean_columns = rbind(mean_columns, columns)
+  }
+  term_display = linear_column_labels(sql_design[["columns"]], inputs[["source_map"]], sql_design[["i_specs"]])
+  fe_display = restore_coefficient_names(fe, inputs[["source_map"]])
+  mundlak_means = data.frame(term = rep(term_display, length(fe)),
+    fe = rep(fe_display, each = length(xvar_names)), name = mean_columns[["label"]])
+  inputs[["name_map"]] = c(inputs[["name_map"]], stats::setNames(mean_columns[["label"]], mean_columns[["alias"]]))
 
   # Regressors before means, so collinearity (e.g. a regressor that's constant
   # within groups) drops the mean and keeps the regressor, as in CRE
@@ -382,11 +387,12 @@ execute_mundlak_strategy = function(inputs) {
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
 
   list(
+    linear_design = native_linear_layout(list(columns = rbind(sql_design[["columns"]], mean_columns)), fit[["x"]], TRUE),
     coeftable = coeftable,
     vcov = vcov_mat,
     fml = fml,
     yvar = yvar,
-    xvars = standardize_coef_names(xvar_names),
+    xvars = xvar_names,
     collin.var = fit[["dropped"]],
     fe = fe,
     weights = weights,
@@ -459,7 +465,7 @@ execute_compress_strategy = function(inputs) {
     select_exprs = paste0(sql_design[["select_exprs"]], " AS ", sql_design[["aliases"]])
     xvars_sql = paste(select_exprs, collapse = ", ")
     xvar_names = sql_design[["aliases"]]
-    register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]])
+    register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]])
     # Both the compression and clustered score passes must read the expanded
     # columns. Aliases from a SELECT list do not exist in the original source.
     projection = frame_select(yvar, sql_design[["select_exprs"]], xvar_names,
@@ -588,7 +594,7 @@ execute_compress_strategy = function(inputs) {
       fe = match(fe, matrix_terms), fe_slope = which(vapply(matrix_terms, function(term) {
         any(vapply(nuisance, function(source) setequal(split_interaction_term(term),
           split_interaction_term(source)), logical(1)))
-      }, logical(1)))))
+      }, logical(1)))), trend_sources = trend_sources)
   colnames(X) = compressed_layout[["aliases"]]
   numeric_sql = if (length(trends)) stats::setNames(paste0(
     "(", sql_cast_double(trends, conn), "-(",
@@ -598,7 +604,7 @@ execute_compress_strategy = function(inputs) {
     conn, matrix_formula,
     matrix_data, X, c(compressed_classes, stats::setNames(rep("numeric", length(trends)), trend_aliases)), numeric_sql
   )
-  slope_names = standardize_coef_names(colnames(X)[attr(X, "assign") %in% slope_terms])
+  slope_names = colnames(X)[attr(X, "assign") %in% slope_terms]
   if (ncol(X) == 0) {
     stop("Design matrix has zero columns.")
   }
@@ -715,8 +721,8 @@ execute_compress_strategy = function(inputs) {
       vcov = vcov_mat,
       fml = fml,
       yvar = yvar,
-      xvars = standardize_coef_names(xvars),
-      collin.var = standardize_coef_names(collin_vars),
+      xvars = xvars,
+      collin.var = collin_vars,
       coef_names = coef_names,
       coef_names_all = slope_names,
       fe = fe,

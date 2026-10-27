@@ -16,10 +16,6 @@ env2env = function(source, target, keys = NULL) {
   }
 }
 
-#' Convert internal interaction notation to standard R notation
-#' @keywords internal
-standardize_coef_names = function(x) gsub("_x_", ":", x, fixed = TRUE)
-
 #' Format variance-covariance type labels for printing
 #' @keywords internal
 format_vcov_label = function(vcov_type, n_clusters = NULL) {
@@ -35,7 +31,7 @@ format_vcov_label = function(vcov_type, n_clusters = NULL) {
 #' @keywords internal
 gen_coeftable = function(betahat, vcov_mat, df_residual) {
   coefs = as.numeric(betahat)
-  names(coefs) = standardize_coef_names(rownames(betahat))
+  names(coefs) = rownames(betahat)
   ses = sqrt(Matrix::diag(vcov_mat))
   tstats = coefs / ses
   df = attr(vcov_mat, "df.t")
@@ -670,8 +666,9 @@ safe_source = function(conn, from_statement, vars, reserved = character()) {
 #'   `predict()`.
 #' @param factor_classes Optional named fitted source classes for factors.
 #' @param i_specs Typed fitted i() dictionaries shared by R and SQL prediction.
+#' @param columns Canonical fitted columns with typed source/basis recipes.
 #' @keywords internal
-register_factor_display = function(inputs, factor_levels = list(), level_aliases = NULL, col_names = NULL, aliases = NULL, factor_classes = NULL, i_columns = NULL, i_specs = list()) {
+register_factor_display = function(inputs, factor_levels = list(), level_aliases = NULL, col_names = NULL, aliases = NULL, factor_classes = NULL, i_columns = NULL, i_specs = list(), columns = NULL) {
   saved = inputs[["factor_levels"]]
   if (is.null(saved)) saved = list()
   for (nm in names(factor_levels)) saved[[nm]] = factor_levels[[nm]]
@@ -683,29 +680,29 @@ register_factor_display = function(inputs, factor_levels = list(), level_aliases
   map = inputs[["name_map"]]
   if (is.null(map)) map = setNames(character(), character())
   disp = function(v) vapply(v, function(term) {
-    if (length(explicit_factor_sources(term))) restore_term_names(term, inputs[["source_map"]]) else
-      coef_var_name(ifelse(term %in% names(map), map[term], term))
+    forced = explicit_factor_sources(term)
+    if (length(forced)) return(paste0("factor(", coef_var_name(restore_coefficient_names(unname(forced), inputs[["source_map"]])), ")"))
+    coef_var_name(restore_coefficient_names(term, inputs[["source_map"]]))
   }, character(1), USE.NAMES = FALSE)
   vars = rep(names(factor_levels), lengths(factor_levels))
   lvls = unlist(lapply(factor_levels, as.character), use.names = FALSE)
-  factor_display = setNames(paste0(disp(vars), lvls), paste0(vars, lvls))
-  col_names = vapply(col_names, function(nm) {
-    parts = strsplit(nm, "_x_", fixed = TRUE)[[1]]
-    parts = vapply(parts, function(part) {
-      if (part %in% names(factor_display)) return(factor_display[[part]])
-      if (part %in% names(map)) return(disp(part))
-      if (is.null(parse_power_term(part))) return(part)
-      paste(deparse(rename_expr_vars(str2lang(part), inputs[["source_map"]]), width.cutoff = 500L), collapse = "")
-    }, character(1))
-    paste(parts, collapse = "_x_")
-  }, character(1))
-  internal = c(paste0(vars, lvls), level_aliases[["alias"]], aliases)
-  display = c(paste0(disp(vars), lvls), paste0(disp(level_aliases[["var"]]), level_aliases[["level"]]), col_names)
-  new = setNames(display, internal)[internal != display]
-  new = new[!duplicated(names(new)) & !names(new) %in% names(map)]
+  if (!is.null(columns)) {
+    aliases = columns[["alias"]]
+    col_names = linear_column_labels(columns, inputs[["source_map"]], i_specs)
+  }
+  # Actual emitted coordinates outrank compatibility names. Preserve identity
+  # entries through de-duplication so a raw passthrough cannot acquire a dummy's
+  # label merely because both legacy spellings coincide.
+  internal = c(aliases, level_aliases[["alias"]], paste0(vars, lvls))
+  display = c(col_names, paste0(disp(level_aliases[["var"]]), level_aliases[["level"]]), paste0(disp(vars), lvls))
+  actual = seq_along(internal) <= length(aliases)
+  allowed = actual | !internal %in% sql_design_reserved(inputs)
+  new = setNames(display[allowed], internal[allowed])
+  new = new[!duplicated(names(new))]
+  new = new[names(new) != new & !names(new) %in% names(map)]
   if (NROW(i_columns)) {
     i_columns = i_columns[!duplicated(i_columns[["alias"]]), , drop = FALSE]
-    raw = function(v) ifelse(is.na(v), NA_character_, ifelse(v %in% names(map), map[v], v))
+    raw = function(v) restore_coefficient_names(v, inputs[["source_map"]])
     i_display = data.frame(
       name = paste0(raw(i_columns[["var"]]), "::", i_columns[["level"]], ifelse(is.na(i_columns[["by"]]), "", paste0(":", raw(i_columns[["by"]])))),
       var = raw(i_columns[["var"]]),
@@ -719,17 +716,7 @@ register_factor_display = function(inputs, factor_levels = list(), level_aliases
     inputs[["i_columns"]] = i_display[!duplicated(i_display[["name"]]), , drop = FALSE]
   }
   if (length(i_specs)) {
-    public = function(value) restore_names(value, inputs[["source_map"]])
-    specs = lapply(i_specs, function(spec) {
-      spec[["first"]] = public(spec[["first"]])
-      spec[["second"]] = public(spec[["second"]])
-      spec[["term"]] = restore_term_names(spec[["term"]], inputs[["source_map"]])
-      spec[["names"]] = if (!length(spec[["selected"]])) character() else paste0(
-        spec[["first"]], "::", spec[["labels"]][spec[["selected"]]],
-        if (!is.null(spec[["second"]])) paste0(":", spec[["second"]])
-      )
-      spec
-    })
+    specs = restore_i_sources(i_specs, inputs[["source_map"]])
     specs = c(inputs[["i_specs"]], specs)
     inputs[["i_specs"]] = specs[!duplicated(vapply(specs, `[[`, character(1), "term"))]
   }
@@ -763,6 +750,26 @@ restore_names = function(x, map) {
 # backtick names that aren't syntactic in R (e.g. `my grp`)
 coef_var_name = function(v) ifelse(make.names(v) == v, v, paste0("`", v, "`"))
 
+restore_coefficient_names = function(x, map) {
+  if (is.null(x) || !length(x) || !length(map)) return(x)
+  positions = match(x, names(map))
+  present = !is.na(positions)
+  x[present] = unname(map[positions[present]])
+  x
+}
+
+restore_i_sources = function(specs, map) {
+  lapply(specs, function(spec) {
+    spec[["first"]] = restore_coefficient_names(spec[["first"]], map)
+    spec[["second"]] = restore_coefficient_names(spec[["second"]], map)
+    spec[["term"]] = restore_term_names(spec[["term"]], map)
+    spec[["names"]] = if (!length(spec[["selected"]])) character() else paste0(
+      spec[["first"]], "::", spec[["labels"]][spec[["selected"]]],
+      if (!is.null(spec[["second"]])) paste0(":", spec[["second"]]))
+    spec
+  })
+}
+
 # Coefficient labels quote source variables while preserving expanded labels.
 coefficient_name_map = function(name_map, source_map) {
   variables = names(name_map) %in% names(source_map)
@@ -787,14 +794,31 @@ restore_result_names = function(result, inputs) {
     names(result) = restore_names(names(result), map)
     return(result)
   }
-  if (!is.null(result[["coeftable"]])) {
-    rownames(result[["coeftable"]]) = restore_names(rownames(result[["coeftable"]]), coef_map)
-  }
+  layout = result[["linear_design"]]
+  labels = if (!is.null(layout)) linear_column_labels(layout[["columns"]], inputs[["source_map"]],
+    if (!is.null(result[["i_specs"]])) result[["i_specs"]] else inputs[["i_specs"]]) else NULL
+  coordinates = if (!is.null(layout)) {
+    ids = attr(result[["coeftable"]], "dbreg_coefficient_ids")
+    if (is.null(ids)) ids = layout[["fitted_ids"]]
+    labels[match(ids, layout[["columns"]][["id"]])]
+  } else restore_coefficient_names(rownames(result[["coeftable"]]), coef_map)
+  if (!is.null(result[["coeftable"]])) rownames(result[["coeftable"]]) = coordinates
   if (is.null(result[["inference_result"]]) && !is.null(result[["vcov"]])) {
-    dimnames(result[["vcov"]]) = lapply(dimnames(result[["vcov"]]), restore_names, map = coef_map)
+    dimnames(result[["vcov"]]) = rep(list(coordinates), 2L)
   }
   for (f in c("xvars", "collin.var", "coef_names", "coef_names_all", "endogenous", "instruments")) {
-    if (!is.null(result[[f]])) result[[f]] = restore_names(result[[f]], coef_map)
+    if (!is.null(result[[f]])) result[[f]] = restore_coefficient_names(result[[f]], coef_map)
+  }
+  if (!is.null(layout)) {
+    active_slopes = layout[["slope_ids"]]
+    result[["coef_names"]] = labels[match(active_slopes, layout[["columns"]][["id"]])]
+    result[["coef_names_all"]] = labels[layout[["columns"]][["role"]] == "slope"]
+    dropped = setdiff(layout[["columns"]][["id"]], layout[["fitted_ids"]])
+    result[["collin.var"]] = labels[match(dropped, layout[["columns"]][["id"]])]
+    if (!is.null(result[["collin.coef"]])) names(result[["collin.coef"]]) = labels[match(c(layout[["fitted_ids"]], dropped), layout[["columns"]][["id"]])]
+    if (!is.null(result[["all_coefficients"]])) names(result[["all_coefficients"]]) = labels[match(layout[["fitted_ids"]], layout[["columns"]][["id"]])]
+    result[["linear_design"]][["columns"]][["label"]] = labels
+    if (isTRUE(result[["strategy"]] %in% c("demean", "mundlak"))) result[["xvars"]] = result[["coef_names"]]
   }
   for (f in c("yvar", "fe", "weights")) {
     if (!is.null(result[[f]])) result[[f]] = restore_names(result[[f]], map)
@@ -803,17 +827,17 @@ restore_result_names = function(result, inputs) {
     names(result[["n_fe_levels"]]) = restore_names(names(result[["n_fe_levels"]]), map)
   }
   if (is.data.frame(result[["data"]])) {
-    names(result[["data"]]) = restore_names(names(result[["data"]]), map)
+    names(result[["data"]]) = restore_coefficient_names(names(result[["data"]]), map)
   }
   for (d in c("first_stage_f", "first_stage_wald")) {
     if (!is.null(names(result[["diagnostics"]][[d]]))) {
-      names(result[["diagnostics"]][[d]]) = restore_names(names(result[["diagnostics"]][[d]]), coef_map)
+      names(result[["diagnostics"]][[d]]) = restore_coefficient_names(names(result[["diagnostics"]][[d]]), coef_map)
     }
   }
   # The user's own formula (IV results store the structural formula)
   if (!is.null(result[["fml"]])) {
     fml = if (inherits(result[["fml"]], "Formula")) formula(result[["fml"]]) else result[["fml"]]
-    result[["fml"]] = Formula(rename_expr_vars(fml, map))
+    result[["fml"]] = Formula(rename_expr_vars(fml, inputs[["source_map"]]))
   }
   inference = result[["inference_result"]]
   if (!is.null(inference)) {

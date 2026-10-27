@@ -1114,9 +1114,9 @@ finalize_linear_prediction = function(result, inputs) {
     expand = "all", fe_vars = inputs[["fe"]], intercept = inputs[["intercept"]], factor_refs = inputs[["factor_refs"]],
     reserved_names = sql_design_reserved(inputs)
   )
-  register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]], design[["col_names"]], design[["aliases"]], factor_classes = design[["factor_classes"]])
+  register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]], design[["col_names"]], design[["aliases"]], factor_classes = design[["factor_classes"]], columns = design[["columns"]], i_specs = design[["i_specs"]])
   map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])
-  design_names = standardize_coef_names(restore_names(design[["aliases"]], map))
+  design_names = restore_coefficient_names(design[["aliases"]], map)
   beta = coef.dbreg(result)
   full_beta = stats::setNames(rep(0, length(design_names)), design_names)
   if (!is.null(result[["linear_design"]])) {
@@ -1215,7 +1215,7 @@ finalize_fwl_prediction = function(result, inputs) {
   x = moments[["x"]]
   p = length(x)
   map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])
-  design_names = standardize_coef_names(restore_names(x, map))
+  design_names = restore_coefficient_names(x, map)
   fitted = coef.dbreg(result)
   beta = stats::setNames(rep(0, p), design_names)
   if (!is.null(result[["linear_design"]])) {
@@ -2159,10 +2159,10 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
     inputs[["name_map"]] = source_map
     register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]],
       design[["col_names"]], design[["aliases"]],
-      i_columns = design[["i_columns"]]
+      i_columns = design[["i_columns"]], i_specs = design[["i_specs"]], columns = design[["columns"]]
     )
     map = coefficient_name_map(inputs[["name_map"]], source_map)
-    names = standardize_coef_names(restore_names(design[["aliases"]], map))
+    names = restore_coefficient_names(design[["aliases"]], map)
     expressions = design[["select_exprs"]]
     intercept = intercept && !length(object[["fe"]])
   }

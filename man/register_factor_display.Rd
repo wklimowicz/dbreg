@@ -12,7 +12,8 @@ register_factor_display(
   aliases = NULL,
   factor_classes = NULL,
   i_columns = NULL,
-  i_specs = list()
+  i_specs = list(),
+  columns = NULL
 )
 }
 \arguments{
@@ -29,6 +30,8 @@ and `level` (the `level_aliases` element of [sql_model_matrix()]).}
 `predict()`.}
 
 \item{i_specs}{Typed fitted i() dictionaries shared by R and SQL prediction.}
+
+\item{columns}{Canonical fitted columns with typed source/basis recipes.}
 }
 \description{
 Adds entries to `inputs$name_map` so that factor dummies named after their

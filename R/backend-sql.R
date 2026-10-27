@@ -1,11 +1,19 @@
-# Text spelling stays at construction; generic dialects retain legacy VARCHAR.
+# Text spelling stays at construction; integer keys must cross DBI without loss.
 sql_text_type = function(conn, backend_info = detect_backend(conn)) {
-  if (identical(backend_info[["name"]], "spark")) "STRING" else "VARCHAR"
+  switch(backend_info[["name"]], spark = "STRING", mysql = "CHAR",
+    sqlserver = "VARCHAR(MAX)", "VARCHAR")
 }
 
 sql_cast_text = function(conn, expr, backend_info = detect_backend(conn)) {
   if (!length(expr)) return(character())
   paste0("CAST(", expr, " AS ", sql_text_type(conn, backend_info), ")")
+}
+
+# SQL Server BIT is a value, not a Boolean predicate. Other dialects retain
+# their existing logical expression; the fitted compiler uses the same mapping.
+sql_logical_columns = function(conn, columns, backend_info = detect_backend(conn)) {
+  if (!length(columns) || backend_info[["name"]] != "sqlserver") return(NULL)
+  stats::setNames(paste0(as.character(DBI::dbQuoteIdentifier(conn, columns)), " = 1"), columns)
 }
 
 # These feature paths already require native star exclusion. Never discover a
@@ -126,7 +134,9 @@ sql_value_literals = function(conn, values) {
   # ODBC can quote logicals as 1/0, which Spark cannot use as booleans.
   if (is.logical(values)) {
     result = rep("NULL", length(values))
-    result[!is.na(values)] = ifelse(values[!is.na(values)], "TRUE", "FALSE")
+    bit = identical(detect_backend(conn)[["name"]], "sqlserver")
+    result[!is.na(values)] = ifelse(values[!is.na(values)],
+      if (bit) "1" else "TRUE", if (bit) "0" else "FALSE")
     return(result)
   }
   if (is.factor(values)) values = as.character(values)
@@ -155,7 +165,7 @@ sql_factor_literals = function(conn, levels, classes = character()) {
     # numeric SQL type explicitly so comparison never promotes BIGINT to double.
     if (is.character(levels[[name]])) {
       type = switch(unname(classes[name]),
-        integer64 = "BIGINT",
+        integer64 = if (detect_backend(conn)[["name"]] == "mysql") "SIGNED" else "BIGINT",
         integer = "DOUBLE",
         numeric = "DOUBLE",
         logical = "BOOLEAN",

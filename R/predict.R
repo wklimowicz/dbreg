@@ -2077,6 +2077,8 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
       info[["level_sql"]][[name]] = sql_factor_literals(conn, values, classes)[[name]]
     }
     info[["classes"]] = specification[["source_classes"]]
+    info[["logical_sql"]] = sql_logical_columns(conn,
+      names(info[["classes"]])[info[["classes"]] == "logical"])
     info[["numeric_sql"]] = stats::setNames(sql_cast_double(aliases, conn), aliases)
     design = sql_model_matrix_from_info(attr(stats::terms(rhs), "term.labels"), info,
       intercept = attr(stats::terms(rhs), "intercept") == 1L || length(object[["fe"]]) > 0L
@@ -2144,8 +2146,10 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
       second = spec[["second"]]
       if (is.null(second)) next
       info[["classes"]][second] = spec[["second_class"]]
-      if (identical(spec[["second_class"]], "logical") && factor_labels) {
-        info[["logical_sql"]][[second]] = paste0(second, " = ", sql_value_literals(conn, "TRUE"))
+      if (identical(spec[["second_class"]], "logical")) {
+        predicate = sql_logical_columns(conn, second)
+        if (length(predicate)) info[["logical_sql"]][[second]] = predicate[[second]]
+        if (factor_labels) info[["logical_sql"]][[second]] = paste0(second, " = ", sql_value_literals(conn, "TRUE"))
       }
     }
     info[["factor_sources"]] = as.list(stats::setNames(as.character(DBI::dbQuoteIdentifier(conn, as.character(names(forced_safe)))), names(forced_safe)))

@@ -275,7 +275,21 @@ get_column_info = function(conn, table, vars, level_vars = character(), factor_r
   # (sql_limit() handles dialects without LIMIT, e.g. SQL Server's TOP)
   backend = detect_backend(conn)[["name"]]
   schema_query = sql_limit(glue("SELECT {paste(vars, collapse = ', ')} {from_sql}"), 0, backend)
-  schema = dbGetQuery(conn, schema_query)
+  declarations = Filter(Negate(is.null), i_declarations)
+  native_schema = NULL
+  if (length(declarations) && backend %in% c("sqlserver", "mysql")) {
+    native_schema = read_i_schema(conn, schema_query)
+    schema = native_schema[["schema"]]
+    # ODBC BIT may be fetched as integer; its native code establishes Boolean
+    # semantics for both category keys and the second i() argument.
+    if (backend == "sqlserver" && native_schema[["driver"]] == "odbc") {
+      columns = native_schema[["columns"]]
+      if (is.data.frame(columns) && all(c("name", "type") %in% names(columns))) {
+        bits = columns[["name"]][!is.na(columns[["type"]]) & columns[["type"]] == "-7"]
+        for (v in intersect(vars, bits)) schema[[v]] = logical()
+      }
+    }
+  } else schema = dbGetQuery(conn, schema_query)
 
   types = list()
   levels = list()
@@ -303,8 +317,7 @@ get_column_info = function(conn, table, vars, level_vars = character(), factor_r
   }
 
   classes = vapply(schema, function(column) class(column)[[1L]], character(1))
-  declarations = Filter(Negate(is.null), i_declarations)
-  specifications = i_dictionaries(conn, from_sql, declarations, classes, intercept)
+  specifications = i_dictionaries(conn, from_sql, declarations, classes, intercept, native_schema)
   for (spec in specifications) {
     first = spec[["first"]]
     levels[[first]] = spec[["values"]]
@@ -319,8 +332,109 @@ get_column_info = function(conn, table, vars, level_vars = character(), factor_r
   list(
     types = types, levels = levels, classes = classes, factor_classes = classes[names(levels)],
     numeric_sql = setNames(sql_cast_double(vars, conn), vars), i_specs = specifications,
-    level_sql = sql_factor_literals(conn, levels, classes)
+    level_sql = sql_factor_literals(conn, levels, classes),
+    logical_sql = sql_logical_columns(conn, names(classes)[classes == "logical"], list(name = backend))
   )
+}
+
+# DBI's generic type label describes R transport, not native precision. These
+# two drivers expose native types; keep that evidence scoped to this schema read.
+# Closing the result before the level query also supports single-result drivers.
+read_i_schema = function(conn, query) {
+  result = DBI::dbSendQuery(conn, query)
+  on.exit(DBI::dbClearResult(result))
+  columns = DBI::dbColumnInfo(result)
+  schema = DBI::dbFetch(result, n = 0)
+  driver = if (inherits(result, "OdbcResult")) "odbc" else
+    if (inherits(result, "MySQLResult")) "rmysql" else "unknown"
+  list(schema = schema, columns = columns, driver = driver)
+}
+
+# This record is for i() classification only. A DECIMAL with unknown precision
+# must never be substituted into retained FE prediction's typed-cast metadata.
+i_native_metadata = function(conn, source, column, schema, backend_info = detect_backend(conn)) {
+  q = as.character(DBI::dbQuoteIdentifier(conn, column))
+  if (is.null(schema)) {
+    schema = read_i_schema(conn, sql_limit(paste("SELECT", q, "FROM", source), 0, backend_info[["name"]]))
+  }
+  unavailable = function(detail) stop("Cannot preserve i() key `", column,
+    "` exactly: ", detail, ".", call. = FALSE)
+  info = schema[["columns"]]
+  if (!is.data.frame(info) || !all(c("name", "type") %in% names(info)) ||
+      sum(info[["name"]] == column, na.rm = TRUE) != 1L) unavailable("native column metadata is unavailable")
+  value = as.character(info[["type"]][match(column, info[["name"]])])
+  if (length(value) != 1L || is.na(value)) unavailable("native column type is unavailable")
+  backend = backend_info[["name"]]
+  driver = schema[["driver"]]
+  if (!is.character(driver) || length(driver) != 1L || is.na(driver)) driver = "unknown"
+  native_type = NULL
+  if (driver == "odbc" && backend %in% c("sqlserver", "mysql")) {
+    # SQL type constants exposed by odbc::dbColumnInfo(OdbcResult).
+    native_type = c("-6" = "TINYINT", "5" = "SMALLINT", "4" = "INTEGER", "-5" = "BIGINT",
+      "8" = "DOUBLE", "7" = "REAL", "6" = "FLOAT", "2" = "NUMERIC", "3" = "DECIMAL",
+      "-7" = "BIT", "91" = "DATE", "1" = "CHAR", "12" = "VARCHAR",
+      "-1" = "VARCHAR", "-8" = "CHAR", "-9" = "VARCHAR", "-10" = "VARCHAR")[value]
+  } else if (driver == "rmysql" && backend == "mysql") {
+    # RMySQL's public native labels omit NEWDECIMAL on some versions. Unknown
+    # labels stay unknown: the accompanying Sclass is not native type evidence.
+    labels = c("TINYINT", "SMALLINT", "MEDIUMINT", "INTEGER", "BIGINT", "DOUBLE", "FLOAT",
+      "DECIMAL", "DATE", "ENUM", "SET", "VAR_STRING", "STRING")
+    if (value %in% labels) native_type = value
+  }
+  if (is.null(native_type) || is.na(native_type)) unavailable(paste0(
+    "unsupported native metadata from ", driver, " (", value, ")"))
+  native_type = unname(native_type)
+  type = if (native_type %in% c("TINYINT", "SMALLINT", "MEDIUMINT", "INTEGER", "BIGINT")) "integer" else
+    if (native_type == "DOUBLE") "numeric" else
+    if (native_type %in% c("CHAR", "VARCHAR", "ENUM", "SET", "VAR_STRING", "STRING")) "character" else
+    if (native_type == "DATE") "date" else NA_character_
+  if (native_type == "BIT" && backend == "sqlserver") type = "logical"
+  if (backend == "sqlserver" && native_type %in% c("FLOAT", "NUMERIC", "DECIMAL")) {
+    # Only known numeric native families are variant-compatible. In particular,
+    # never apply this probe to (max) strings, XML, LOBs or mixed sql_variant.
+    property = function(name, cast) paste0("CAST(SQL_VARIANT_PROPERTY(CAST(", q,
+      " AS sql_variant), '", name, "') AS ", cast, ")")
+    query = paste0("SELECT ", property("BaseType", "VARCHAR(32)"), " AS base_type, ",
+      property("Precision", "INT"), " AS precision, ", property("Scale", "INT"), " AS scale",
+      " FROM (SELECT ", q, " FROM ", source, ") AS dbreg_key_source WHERE ", q, " IS NOT NULL")
+    metadata = DBI::dbGetQuery(conn, sql_limit(query, 1, backend))
+    if (nrow(metadata) != 1L || !all(c("base_type", "precision", "scale") %in% names(metadata))) {
+      unavailable("native numeric precision/scale is unavailable")
+    }
+    base = tolower(as.character(metadata[["base_type"]]))
+    precision = metadata[["precision"]]
+    scale = metadata[["scale"]]
+    if (anyNA(c(base, precision, scale)) || !is.numeric(precision) || !is.numeric(scale) ||
+        precision != floor(precision) || scale != floor(scale)) unavailable("invalid native numeric precision/scale")
+    if (native_type == "FLOAT" && base %in% c("float", "real") &&
+        precision %in% c(24, 53) && scale == 0) {
+      type = if (precision == 53) "numeric" else "float"
+      native_type = if (precision == 53) "DOUBLE" else "REAL"
+    } else if (native_type %in% c("NUMERIC", "DECIMAL") && base %in% c("numeric", "decimal") &&
+               precision >= 1 && precision <= 38 && scale >= 0 && scale <= precision) {
+      if (scale != 0) unavailable("fractional DECIMAL keys are unsupported")
+      type = "integer"
+      native_type = paste0("DECIMAL(", precision, ",0)")
+    } else unavailable("inconsistent native numeric precision/scale")
+  } else if (backend == "mysql" && native_type %in% c("NUMERIC", "DECIMAL")) {
+    # MySQL's native decimal CHAR representation preserves declared fractional
+    # width, even for zero/trailing zeros. This does not recover precision.
+    server = DBI::dbGetInfo(conn)[["dbms.name"]]
+    if (!length(server) || is.na(server[[1L]]) || !grepl("mysql", server[[1L]], ignore.case = TRUE) ||
+        grepl("mariadb", server[[1L]], ignore.case = TRUE)) {
+      unavailable("this server's native DECIMAL text-scale contract is unverified")
+    }
+    query = paste0("SELECT CAST(", q, " AS CHAR) AS native_decimal_text FROM (SELECT ",
+      q, " FROM ", source, ") AS dbreg_key_source WHERE ", q, " IS NOT NULL")
+    text = DBI::dbGetQuery(conn, sql_limit(query, 1, backend))
+    text = if (ncol(text) == 1L) text[[1L]] else NULL
+    if (!is.character(text) || length(text) != 1L || is.na(text) ||
+        !grepl("^[+-]?[0-9]+(\\.[0-9]+)?$", text)) unavailable("native DECIMAL text scale is unavailable")
+    if (grepl(".", text, fixed = TRUE)) unavailable("fractional DECIMAL keys are unsupported")
+    type = "integer"
+  } else if (native_type %in% c("FLOAT", "REAL")) type = "float"
+  if (is.na(type)) unavailable(paste0("unsupported native key type ", native_type))
+  list(types = type, sql_types = native_type)
 }
 
 #' Expand a single term into SQL expressions
@@ -655,7 +769,7 @@ evaluate_i_spec = function(spec, first, second = NULL) {
 
 # Only bounded, typed dictionaries cross the SQL/R boundary. Integer levels are
 # transferred as decimal strings, never through the driver's double conversion.
-i_dictionaries = function(conn, from_sql, declarations, classes, intercept) {
+i_dictionaries = function(conn, from_sql, declarations, classes, intercept, native_schema = NULL) {
   result = list()
   if (!length(declarations)) return(result)
   backend_info = detect_backend(conn)
@@ -663,19 +777,33 @@ i_dictionaries = function(conn, from_sql, declarations, classes, intercept) {
   source = sub("^FROM\\s+", "", from_sql, ignore.case = TRUE)
   for (declaration in declarations) {
     first = declaration[["first"]]
-    metadata = prediction_key_metadata(conn, source, first)
+    adapter = backend_info[["name"]] %in% c("sqlserver", "mysql")
+    metadata = if (adapter) i_native_metadata(conn, source, first, native_schema, backend_info) else
+      prediction_key_metadata(conn, source, first)
     type = metadata[["types"]][[1L]]
     if (type == "float") stop("i() floating-point categories require a DOUBLE source column.", call. = FALSE)
-    value = if (type == "integer") sql_cast_text(conn, first, backend_info) else first
+    column = if (adapter) as.character(DBI::dbQuoteIdentifier(conn, first)) else first
+    value = if (type == "integer") sql_cast_text(conn, column, backend_info) else column
     # Group by the original typed value; textual ordering would put 10 before 2.
-    keys = DBI::dbGetQuery(conn, paste0(
-      "SELECT ", value, " AS value ", from_sql, " GROUP BY ", first,
-      " ORDER BY ", first, " LIMIT ", sprintf("%.0f", limit + 2L)
-    ))[[1L]]
+    keys = DBI::dbGetQuery(conn, sql_limit(paste0(
+      "SELECT ", value, " AS value ", from_sql, " GROUP BY ", column,
+      " ORDER BY ", column
+    ), sprintf("%.0f", limit + 2L), backend_info[["name"]]))[[1L]]
+    if (adapter && type == "logical" && !is.logical(keys)) {
+      if (!is.numeric(keys) || anyNA(keys) || any(!keys %in% c(0, 1))) {
+        stop("Native BIT i() levels must be 0 or 1.", call. = FALSE)
+      }
+      keys = as.logical(keys)
+    }
     if (length(keys) > limit + 1L) stop("i() level dictionary exceeds dbreg.i_max_columns.", call. = FALSE)
-    # Match R/fixest character collation on this bounded dictionary. Preserve
-    # native enum order, numeric order and exact decimal integer text.
-    if (type == "character" && !startsWith(tolower(metadata[["sql_types"]][[1L]]), "enum")) keys = sort(keys)
+    if (adapter && type == "integer") {
+      if (!is.character(keys)) stop("Exact integer i() levels require native character transport.", call. = FALSE)
+      keys = sub("^[0-9]+:", "", prediction_key_part(keys, "integer"))
+      if (anyNA(keys)) stop("Could not preserve i() integer levels exactly.", call. = FALSE)
+    }
+    # All other backends keep their existing text collation. The two adapters
+    # retain native SQL order, including ENUMs whose driver flags are absent.
+    if (!adapter && type == "character" && !startsWith(tolower(metadata[["sql_types"]][[1L]]), "enum")) keys = sort(keys)
     if (type == "integer" && prediction_integer_sql_type(keys, conn) != "BIGINT") stop("i() integer levels must fit signed BIGINT.", call. = FALSE)
     second = declaration[["second"]]
     spec = make_i_spec(declaration, keys, type, if (!is.null(second)) classes[[second]], intercept || length(result) > 0L)

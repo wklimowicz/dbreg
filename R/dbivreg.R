@@ -260,6 +260,14 @@ process_dbivreg_inputs = function(inputs) {
     dbivreg_expand_block(parsed_fml[["endog_rhs"]], conn, design_source, fe, reserved_names = reserved_names),
     dbivreg_expand_block(parsed_fml[["instr_rhs"]], conn, design_source, fe, reserved_names = reserved_names)
   ), reserved_names = reserved_names, fold_case = folds_identifier_case(conn))
+  # Compiler IDs are local to each independently expanded block.
+  for (k in seq_along(designs)) {
+    if (nrow(designs[[k]][["columns"]])) {
+      designs[[k]][["columns"]][["id"]] = paste0(
+        c("iv:exog:", "iv:endog:", "iv:excluded:")[[k]],
+        designs[[k]][["columns"]][["id"]])
+    }
+  }
   exog_design = designs[[1]]
   endog_design = designs[[2]]
   instr_design = designs[[3]]
@@ -325,6 +333,11 @@ process_dbivreg_inputs = function(inputs) {
     stop("Need at least as many excluded instrument columns as endogenous regressor columns.")
   }
 
+  # Only structural recipes are needed by completed R prediction. Instrument
+  # columns and the X/Z projection stay in this fit's orchestration environment.
+  inputs[["iv_blocks"]] = list(exog = exog_design[["columns"]],
+    endog = endog_design[["columns"]], excluded = instr_design[["columns"]])
+  inputs[["i_specs"]] = c(exog_design[["i_specs"]], endog_design[["i_specs"]])
   x_all_sql = c(exog_design[["sql"]], endog_design[["sql"]])
   x_all_names = c(exog_design[["names"]], endog_design[["names"]])
   z_all_names = c(exog_design[["names"]], instr_design[["names"]])
@@ -517,6 +530,12 @@ execute_iv_compress_strategy = function(inputs) {
   if (intercept) {
     U = cbind("(Intercept)" = 1, U)
   }
+  axes = dbivreg_fit_axes(inputs, intercept)
+  structural_positions = match(axes[["structural"]][["alias"]], colnames(U))
+  score_positions = match(axes[["scores"]][["alias"]], colnames(U))
+  if (anyNA(c(structural_positions, score_positions))) {
+    stop("Compressed IV columns do not match their fitted block coordinates.", call. = FALSE)
+  }
   S = compressed_cross_moments(U, dat, yvar)
   weight_scale = attr(S, "weight_scale")
 
@@ -563,16 +582,34 @@ execute_iv_compress_strategy = function(inputs) {
   result
 }
 
+# Bind the actual block producers to structural and score axes. Only the
+# structural columns are installed in the completed model.
+dbivreg_fit_axes = function(inputs, intercept) {
+  blocks = inputs[["iv_blocks"]]
+  structural = rbind(blocks[["exog"]], blocks[["endog"]])
+  scores = rbind(blocks[["exog"]], blocks[["excluded"]])
+  if (intercept) {
+    column = linear_intercept_column()
+    column[["id"]] = "iv:intercept"
+    structural = rbind(column, structural)
+    scores = rbind(column, scores)
+  }
+  list(structural = structural, scores = scores,
+    exog_positions = seq_len(nrow(blocks[["exog"]])) + as.integer(intercept),
+    endog_positions = seq_len(nrow(blocks[["endog"]])) + nrow(blocks[["exog"]]) + as.integer(intercept),
+    excluded_positions = seq_len(nrow(blocks[["excluded"]])) + nrow(blocks[["exog"]]) + as.integer(intercept))
+}
+
 #' @keywords internal
 dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query_string) {
   env2env(inputs, environment(), c(
-    "x_all_names", "z_all_names", "vcov_type_req", "instr_names",
-    "endog_names", "structural_fml", "endog_vars", "instr_vars", "yvar", "fe",
+    "vcov_type_req", "structural_fml", "endog_vars", "instr_vars", "yvar", "fe",
     "weights", "ssc"
   ))
   has_intercept = "(Intercept)" %in% rownames(S)
-  x_names_full = c(if (has_intercept) "(Intercept)", x_all_names)
-  z_names_full = c(if (has_intercept) "(Intercept)", z_all_names)
+  axes = dbivreg_fit_axes(inputs, has_intercept)
+  x_names_full = axes[["structural"]][["alias"]]
+  z_names_full = axes[["scores"]][["alias"]]
   fit = fit_2sls(S, yvar, x_names_full, z_names_full)
   betahat = fit[["coef"]]
   rss = fit[["rss"]]
@@ -590,7 +627,8 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
   tss = moment_tss(S, yvar)
 
   # First stages: each endogenous regressor on the instruments
-  endog = if (length(instr_names)) endog_names else character(0)
+  endog = if (length(axes[["excluded_positions"]]))
+    axes[["structural"]][["alias"]][axes[["endog_positions"]]] else character(0)
   fs_fits = lapply(endog, function(y) fit_ols(S, y, z_names_full))
 
   # Score pass: residuals from the structural regressors (and the first
@@ -631,6 +669,10 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
   out = list(
     coeftable = coeftable,
     vcov = vcov_mat,
+    collin.coef = stats::setNames(as.numeric(betahat), rownames(betahat)),
+    linear_design = list(version = 1L, columns = axes[["structural"]],
+      fitted_ids = axes[["structural"]][["id"]],
+      slope_ids = axes[["structural"]][["id"]][axes[["structural"]][["role"]] == "slope"]),
     fml = structural_fml,
     yvar = yvar,
     xvars = x_names_full[x_names_full != "(Intercept)"],
@@ -866,15 +908,15 @@ compute_dbivreg_diagnostics = function(
 
 #' @keywords internal
 compute_dbivreg_first_stage_f = function(inputs, S, n_total, df_fe, has_intercept) {
-  env2env(inputs, environment(), c("instr_names", "endog_names", "exog_names"))
-  excluded = instr_names
-  endogenous = endog_names
+  axes = dbivreg_fit_axes(inputs, has_intercept)
+  excluded = axes[["scores"]][["alias"]][axes[["excluded_positions"]]]
+  endogenous = axes[["structural"]][["alias"]][axes[["endog_positions"]]]
   if (!length(excluded) || !length(endogenous)) {
     return(NULL)
   }
 
-  unrestricted = c(if (has_intercept) "(Intercept)", exog_names, excluded)
-  restricted = c(if (has_intercept) "(Intercept)", exog_names)
+  unrestricted = axes[["scores"]][["alias"]]
+  restricted = unrestricted[c(if (has_intercept) 1L, axes[["exog_positions"]])]
   q = length(excluded)
   df2 = max(n_total - length(unrestricted) - df_fe, 1)
   out = lapply(endogenous, function(y_name) {
@@ -897,19 +939,18 @@ compute_dbivreg_first_stage_wald = function(
   df_fe,
   nested_levels = 0L
 ) {
-  env2env(inputs, environment(), c(
-    "instr_names", "endog_names", "exog_names", "vcov_type_req"
-  ))
-  excluded = instr_names
-  endogenous = endog_names
+  axes = dbivreg_fit_axes(inputs, has_intercept)
+  excluded = axes[["scores"]][["alias"]][axes[["excluded_positions"]]]
+  endogenous = axes[["structural"]][["alias"]][axes[["endog_positions"]]]
   if (!length(excluded) || !length(endogenous)) {
     return(NULL)
   }
 
-  unrestricted = c(if (has_intercept) "(Intercept)", exog_names, excluded)
-  q = length(excluded)
+  unrestricted = axes[["scores"]][["alias"]]
+  excluded_positions = axes[["excluded_positions"]]
+  q = length(excluded_positions)
   df2 = max(n_total - length(unrestricted) - df_fe, 1)
-  vcov_type = vcov_type_req
+  vcov_type = inputs[["vcov_type_req"]]
   out = Map(function(fit_u, meat_u) {
     vcov_u = compute_vcov(
       ssc = inputs[["ssc"]],
@@ -924,8 +965,8 @@ compute_dbivreg_first_stage_wald = function(
         df_fe - if (vcov_type == "cluster") nested_levels else 0L,
       meat = meat_u
     )
-    beta_q = fit_u[["coef"]][excluded, , drop = FALSE]
-    vcov_q = as.matrix(vcov_u[excluded, excluded, drop = FALSE])
+    beta_q = fit_u[["coef"]][excluded_positions, , drop = FALSE]
+    vcov_q = as.matrix(vcov_u[excluded_positions, excluded_positions, drop = FALSE])
     stat = tryCatch(
       {
         if (qr(vcov_q, tol = 1e-10)[["rank"]] < q) {

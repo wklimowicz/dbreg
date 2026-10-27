@@ -1760,11 +1760,23 @@ validate_native_numeric_types = function(object, data, recipes) {
   invisible(NULL)
 }
 
-# During migration, a saved coordinate layout does not imply that FE, IV or
-# Mundlak raw/SQL prediction has its complete runtime adapter.
+# Completed no-FE IV layouts also have raw-data recipes. FE, learned-effect
+# and Mundlak runtimes retain their separate migration boundaries.
 native_linear_runtime = function(object) {
-  !is.null(object[["linear_design"]]) && !length(object[["fe"]]) &&
-    !inherits(object, "dbivreg") && object[["strategy"]] %in% c("moments", "compress")
+  layout = object[["linear_design"]]
+  active = !is.null(layout) && !length(object[["fe"]]) &&
+    object[["strategy"]] %in% c("moments", "compress")
+  if (active && inherits(object, "dbivreg")) {
+    columns = layout[["columns"]]
+    positions = match(layout[["fitted_ids"]], columns[["id"]])
+    if (anyNA(positions) || anyDuplicated(columns[["id"]]) ||
+        anyDuplicated(layout[["fitted_ids"]]) || length(columns[["recipe"]]) != nrow(columns) ||
+        length(positions) != nrow(object[["coeftable"]]) ||
+        any(vapply(columns[["recipe"]][positions], is.null, logical(1)))) {
+      stop("Fitted IV coordinates have no complete raw-data prediction adapter.", call. = FALSE)
+    }
+  }
+  active
 }
 
 linear_active_ids = function(object) {

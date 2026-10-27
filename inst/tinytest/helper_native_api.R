@@ -94,7 +94,7 @@ dbreg_test_native_api = function(conn) {
   schema = DBI::dbGetQuery(conn,paste("SELECT * FROM",table,"LIMIT 0"))
   for (predicate in list(~u>0,~u %in% c(NA,1),~u %in% c(NaN,1),~f %in% c("a","c"),~!(f=="b"),~keep==TRUE)) {
     where = dbreg:::sql_subset_predicate(conn,predicate,schema)
-    actual = dbreg:::backend_get_query(conn,paste("SELECT id FROM",table,"WHERE",where))[["id"]]
+    actual = DBI::dbGetQuery(conn,paste("SELECT id FROM",table,"WHERE",where))[["id"]]
     expected = eval(predicate[[2L]],d,baseenv())
     expected[is.na(expected)] = FALSE
     expect_equal(sort(actual),d[["id"]][expected])

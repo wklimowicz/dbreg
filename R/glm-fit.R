@@ -57,7 +57,7 @@ dbglm_evaluate = function(conn, table, x, beta, link, cell = FALSE) {
     dbglm_deviance_term(conn), "MIN(mu) AS mu_min", "MAX(mu) AS mu_max",
     paste0("SUM(CASE WHEN NOT ", finite[[1L]], " OR w <= 0 OR NOT ", finite[[2L]], " THEN 1 ELSE 0 END) AS bad")
   )
-  row = backend_get_query(conn, paste0(cte, "SELECT ", paste(terms, collapse = ", "), " FROM working"))
+  row = DBI::dbGetQuery(conn, paste0(cte, "SELECT ", paste(terms, collapse = ", "), " FROM working"))
   H = dbglm_read_information(row, length(x))
   b = vapply(seq_along(x), function(i) as.numeric(row[[paste0("b_", i)]]), numeric(1))
   score = vapply(seq_along(x), function(i) as.numeric(row[[paste0("s_", i)]]), numeric(1))
@@ -126,7 +126,7 @@ dbglm_irls = function(conn, table, x, beta, family, control, verbose, separation
 # Fisher-scoring IRLS with absorbed fixed effects.
 dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, verbose, cache = NULL, ybar = NULL, vcov_type = "iid", cell = FALSE) {
   backend_info = detect_backend(conn)
-  if (is.null(ybar)) ybar = backend_get_query(conn, paste("SELECT SUM(__dbglm_a*__dbglm_y)/SUM(__dbglm_a) AS y FROM", base))[["y"]]
+  if (is.null(ybar)) ybar = DBI::dbGetQuery(conn, paste("SELECT SUM(__dbglm_a*__dbglm_y)/SUM(__dbglm_a) AS y FROM", base))[["y"]]
   intercept = family[["linkfun"]](ybar)
   slopes = attr(fe, "slopes")
   if (is.null(cache)) cache = new.env(parent = emptyenv())
@@ -201,7 +201,7 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
         b_step = as.numeric(M_tilde[seq_len(p), p + 1L])
         candidate = dbglm_solve(H_step, b_step)[["beta"]]
       } else {
-        row = backend_get_query(conn, paste("SELECT", paste(c(dbglm_moment_terms(x, "w"), sprintf("SUM(w*%s*z) AS b_%d", x, seq_along(x))), collapse = ","), "FROM", projected[["table"]]))
+        row = DBI::dbGetQuery(conn, paste("SELECT", paste(c(dbglm_moment_terms(x, "w"), sprintf("SUM(w*%s*z) AS b_%d", x, seq_along(x))), collapse = ","), "FROM", projected[["table"]]))
         candidate = dbglm_solve(dbglm_read_information(row, p), vapply(seq_len(p), function(i) as.numeric(row[[paste0("b_", i)]]), numeric(1)))[["beta"]]
       }
     } else candidate = numeric()
@@ -308,7 +308,7 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
       )
       H = if (p) {
         if (!is.null(final[["cross_reduction"]])) current[["raw_moments"]][seq_len(p), seq_len(p), drop = FALSE] - final[["cross_reduction"]] else
-          dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", final[["table"]])), p)
+          dbglm_read_information(DBI::dbGetQuery(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", final[["table"]])), p)
       } else matrix(numeric(), 0, 0)
       total_cycles = total_cycles + final[["cycles"]]
       profiled_score = 0
@@ -317,7 +317,7 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
         if (!is.null(final[["extra_reduction"]])) {
           s_tilde = current[["raw_score"]] - final[["extra_reduction"]][, 1L]
         } else {
-          score_row = backend_get_query(conn, paste0(
+          score_row = DBI::dbGetQuery(conn, paste0(
             "SELECT ", paste(sprintf("%s AS s%d", vapply(sprintf("p.%s*b.score", x), function(e) sql_stable_sum(conn, e), character(1)), seq_along(x)), collapse = ","),
             " FROM ", working, " b JOIN ", final[["table"]], " p USING (__dbglm_key)"
           ))
@@ -372,7 +372,7 @@ dbglm_fe_state_builder = function(conn, base, x, link, create, cell = FALSE) {
     if (isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) {
       create(sql, materialize = TRUE)
     } else {
-      paste0("(", backend_sql(conn, sql), ")")
+      paste0("(", sql, ")")
     }
   }
   function(beta_val, c_eta_val, gamma_val = NULL, ops = NULL, info = NULL,
@@ -499,7 +499,7 @@ dbglm_fe_evaluate = function(conn, working, x, fe, collect_fe_moments = FALSE, m
   if (length(fe_queries)) {
     terms = c(terms, paste0("(SELECT MAX(s) FROM (", paste(fe_queries, collapse = " UNION ALL "), ") t) AS fe_score_max"))
   }
-  row = backend_get_query(conn, paste("SELECT", paste(terms, collapse = ","), "FROM", working))
+  row = DBI::dbGetQuery(conn, paste("SELECT", paste(terms, collapse = ","), "FROM", working))
   fe_score = if (length(fe_queries) && !is.na(row[["fe_score_max"]])) as.numeric(row[["fe_score_max"]]) else 0
   dbglm_fe_diagnostics(row, x, fe_score)
 }

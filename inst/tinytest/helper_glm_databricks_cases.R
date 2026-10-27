@@ -4,7 +4,7 @@ dbglm_test_databricks_cases = function(conn, verbose = FALSE) {
   # Wide FE covariance queries embed large coefficient literals. Verify their
   # translation and execution on both the fixture and the native warehouse.
   payload = strrep("QUJDZGVmMDEyMzQ1Njc4OSsv", 300000L)
-  decoded = dbreg:::backend_get_query(conn, paste0("SELECT LENGTH('", payload,
+  decoded = DBI::dbGetQuery(conn, paste0("SELECT LENGTH('", payload,
     "') AS n,", dbreg:::sql_sum(conn, "x"), " AS total FROM (SELECT 1.0 AS x UNION ALL SELECT 2.0 AS x) t"))
   expect_equal(as.numeric(decoded[["n"]]), nchar(payload))
   expect_equal(as.numeric(decoded[["total"]]), 3)
@@ -19,7 +19,7 @@ dbglm_test_databricks_cases = function(conn, verbose = FALSE) {
     " AS op,COUNT(*) AS n,SUM(c1) AS first,SUM(c88) AS last FROM wide_g", i), character(1))
   query = paste0("WITH ", paste(ctes, collapse = ","), " ", paste(branches, collapse = " UNION ALL "), " ORDER BY op")
   expect_true(nchar(query, type = "bytes") < 8 * 1024^2)
-  stored = dbreg:::backend_get_query(conn, query)
+  stored = DBI::dbGetQuery(conn, query)
   expect_identical(as.numeric(stored[["op"]]), as.numeric(seq_len(6L)))
   expect_equal(as.numeric(stored[["n"]]), rep(400, 6L))
   expect_equal(stored[["first"]], vapply(split(coefficients[, 1], frame[["__glm_op"]]), sum, numeric(1)),

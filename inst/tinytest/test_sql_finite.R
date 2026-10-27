@@ -24,9 +24,8 @@ local({
     " THEN (x) END AS DECIMAL(38,18))) AS DOUBLE) ELSE SUM(x) END)"
   )
   expect_identical(dbreg:::sql_stable_sum(remote, "x"), legacy_sum)
-  expect_identical(dbreg:::backend_sql(remote, dbreg:::sql_stable_sum(remote, "x")), legacy_sum)
-  expect_identical(dbreg:::backend_sql(remote, "SELECT isfinite(x),'isfinite(x)' AS label"),
-    "SELECT isfinite(x),'isfinite(x)' AS label")
+  expect_false(exists("backend_sql", envir = asNamespace("dbreg"), inherits = FALSE))
+  expect_false(exists("backend_get_query", envir = asNamespace("dbreg"), inherits = FALSE))
   expect_error(dbreg:::sql_is_finite(NULL, "x", list(name = "mysql")), "DuckDB and Spark only")
   # Independent SQL truth table: NULL remains unknown; NaN and infinities false.
   fixture = paste0("(SELECT id,v,0.0 AS o FROM (VALUES ",
@@ -35,12 +34,12 @@ local({
     "(5,0.0),(6,-0.0),(7,1e300),(8,1e-300)) t(id,v))")
   expected_finite = c(NA, FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, TRUE)
   for (conn in list(native, remote)) {
-    actual = dbreg:::backend_get_query(conn, paste("SELECT", dbreg:::sql_is_finite(conn, "v"),
+    actual = DBI::dbGetQuery(conn, paste("SELECT", dbreg:::sql_is_finite(conn, "v"),
       "AS finite FROM", fixture, "ORDER BY id"))
     expect_identical(actual[["finite"]], expected_finite)
     # The real offset builder must preserve the same ordered truth values.
     offset = dbreg:::offset_source_frame(conn, paste("FROM", fixture), "v", "o")
-    actual = dbreg:::backend_get_query(conn, paste("SELECT", offset[["finite"]],
+    actual = DBI::dbGetQuery(conn, paste("SELECT", offset[["finite"]],
       "AS finite FROM", fixture, "ORDER BY id"))
     expect_identical(actual[["finite"]], expected_finite)
     # Validate original weights before any outcome-missing filter; NaN itself

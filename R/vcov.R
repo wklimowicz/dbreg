@@ -271,7 +271,7 @@ inference_fe_nesting = function(conn, state, clusters) {
       " GROUP BY ", paste(q(state[["fe_components"]][[i]]), collapse = ","), ") g"
     ), character(1))
   }), use.names = FALSE)
-  rows = backend_get_query(conn, paste(queries, collapse = " UNION ALL "))
+  rows = DBI::dbGetQuery(conn, paste(queries, collapse = " UNION ALL "))
   nested[as.integer(rows[["fe"]][as.numeric(rows[["maximum"]]) == 1])] = TRUE
   nested
 }
@@ -418,7 +418,7 @@ retained_inference_result = function(object, vcov = "iid", cluster = NULL, ssc =
     missing = paste0(q(columns), " IS NULL")
     numeric = columns[classes[columns] %in% c("numeric", "integer")]
     if (length(numeric)) missing = c(missing, paste0("isnan(CAST(", q(numeric), " AS DOUBLE))"))
-    bad = backend_get_query(conn, paste("SELECT COUNT(*) AS n", from, "AND (", paste(missing, collapse = " OR "), ")"))
+    bad = DBI::dbGetQuery(conn, paste("SELECT COUNT(*) AS n", from, "AND (", paste(missing, collapse = " OR "), ")"))
     if (as.numeric(bad[["n"]]) > 0) stop("Post-fit clusters have missing values on the fitted sample; the sample cannot change.", call. = FALSE)
   }
   n = state[["nobs"]]
@@ -483,7 +483,7 @@ sql_score_moments = function(from_statement, score_sql, cluster_sql = character(
 }
 
 score_moments = function(conn, from_statement, score_sql, cluster_sql = character(), projection = NULL) {
-  row = backend_get_query(conn, sql_score_moments(from_statement, score_sql, cluster_sql, projection))
+  row = DBI::dbGetQuery(conn, sql_score_moments(from_statement, score_sql, cluster_sql, projection))
   if (nrow(row) != 1L) stop("Score moment aggregation must return one row.", call. = FALSE)
   list(matrix = dbglm_read_information(lapply(row, as.numeric), length(score_sql)), groups = as.numeric(row[["n_groups"]]))
 }
@@ -541,7 +541,7 @@ dbglm_covariance = function(conn, table, x, fit, family, kind, ssc, n, cell = FA
   }
   cte = dbglm_working_sql(table, x, fit[["beta"]], family[["link"]], cell = cell, conn = conn)
   if (kind == "hc1") {
-    row = backend_get_query(conn, paste0(
+    row = DBI::dbGetQuery(conn, paste0(
       cte, "SELECT ",
       paste(dbglm_moment_terms(x, if (cell) "score_sq" else "score*score"), collapse = ", "), " FROM working"
     ))
@@ -549,7 +549,7 @@ dbglm_covariance = function(conn, table, x, fit, family, kind, ssc, n, cell = FA
   } else {
     scores = sprintf("SUM((%s)*score) AS s_%d", x, seq_along(x))
     terms = dbglm_moment_terms(paste0("s_", seq_along(x)), "1.0")
-    row = backend_get_query(conn, paste0(
+    row = DBI::dbGetQuery(conn, paste0(
       cte,
       ", cluster_scores AS (SELECT __dbglm_cluster, ", paste(scores, collapse = ", "),
       " FROM working GROUP BY __dbglm_cluster) SELECT COUNT(*) AS n_clusters, ",
@@ -572,7 +572,7 @@ dbglm_fe_covariance = function(conn, x, fit, kind, ssc, n, counts, cell = FALSE)
   inverse = if (p) dbglm_solve(fit[["H"]])[["inverse"]] else matrix(numeric(), 0, 0)
   G = NULL
   if (kind == "cluster" && !p) {
-    G = as.numeric(backend_get_query(conn, paste("SELECT COUNT(DISTINCT __dbglm_cluster) AS n FROM", fit[["working"]]))[["n"]])
+    G = as.numeric(DBI::dbGetQuery(conn, paste("SELECT COUNT(DISTINCT __dbglm_cluster) AS n FROM", fit[["working"]]))[["n"]])
     if (G < 2) stop("Clustered covariance requires at least two clusters.", call. = FALSE)
   }
   if (!p) return(list(matrix = inverse, clusters = G, K = K))
@@ -586,14 +586,14 @@ dbglm_fe_covariance = function(conn, x, fit, kind, ssc, n, counts, cell = FALSE)
     }
     if (kind == "hc1") {
       sql = paste0("SELECT ", paste(dbglm_moment_terms(x_cols, if (cell) "b.score_sq" else "b.score*b.score"), collapse = ","), from)
-      row = backend_get_query(conn, sql)
+      row = DBI::dbGetQuery(conn, sql)
     } else {
       scores = sprintf("SUM(%s*b.score) AS s%d", x_cols, seq_along(x))
       sql = paste0(
         "SELECT COUNT(*) AS __n_clusters,", paste(dbglm_moment_terms(paste0("s", seq_along(x)), "1.0"), collapse = ","), " FROM (SELECT ",
         paste(scores, collapse = ","), from, " GROUP BY __dbglm_cluster) t"
       )
-      row = backend_get_query(conn, sql)
+      row = DBI::dbGetQuery(conn, sql)
       G = as.numeric(row[["__n_clusters"]])
       if (G < 2) stop("Clustered covariance requires at least two clusters.", call. = FALSE)
     }

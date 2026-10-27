@@ -18,7 +18,7 @@ local({
     query = paste0("SELECT ", dbreg:::sql_select_except(conn, "odd name"), ",",
       dbreg:::sql_cast_text(conn, "CAST(9007199254740993 AS BIGINT)"), " AS exact_key,",
       dbreg:::sql_cast_text(conn, "NULL"), ' AS missing FROM (SELECT 1 AS x,2 AS "odd name",3 AS y) t')
-    value = dbreg:::backend_get_query(conn, query)
+    value = DBI::dbGetQuery(conn, query)
     expect_identical(names(value), c("x", "y", "exact_key", "missing"))
     expect_identical(value[["exact_key"]], "9007199254740993")
     expect_true(is.na(value[["missing"]]))
@@ -26,7 +26,7 @@ local({
     source = "(SELECT 0.0 AS __dbglm_o,0.4 AS __dbglm_y,1.0 AS __dbglm_a,0.2 AS x) t"
     for (link in c("probit", "cloglog")) {
       cte = dbreg:::dbglm_working_sql(source, "x", 1, link, conn = conn)
-      rows = dbreg:::backend_get_query(conn, paste0(cte, "SELECT * FROM working"))
+      rows = DBI::dbGetQuery(conn, paste0(cte, "SELECT * FROM working"))
       expect_false(any(c("__dbglm_abs_eta", "__dbglm_eh") %in% names(rows)))
       family = stats::binomial(link)
       expect_equal(rows[["mu"]], family[["linkinv"]](.2), tolerance = 1e-12)

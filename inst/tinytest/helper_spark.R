@@ -54,7 +54,7 @@ dbreg_test_spark_algorithms = function(conn) {
   expect_equal(as.numeric(exact_keys[["n"]]), n)
   for (link in c("logit", "probit", "cloglog")) {
     kernel = dbreg:::dbglm_family_sql(link, eta = "x")
-    values = dbreg:::backend_get_query(conn, paste("SELECT id,", kernel[["mu"]], "AS mu,", kernel[["derivative"]], "AS derivative FROM", name, "ORDER BY id"))
+    values = DBI::dbGetQuery(conn, paste("SELECT id,", kernel[["mu"]], "AS mu,", kernel[["derivative"]], "AS derivative FROM", name, "ORDER BY id"))
     family = stats::binomial(link)
     expect_true(max(abs(values[["mu"]]-family[["linkinv"]](d[["x"]]))) < 1e-12)
     expect_true(max(abs(values[["derivative"]]-family[["mu.eta"]](d[["x"]]))) < 1e-12)

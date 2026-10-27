@@ -311,7 +311,7 @@ process_dbglm_inputs = function(inputs) {
     if (!is.null(retained_source)) paste(quote_id(retained_source[["key"]]), "AS __dbglm_key") else if (isTRUE(backend_info[["is_databricks"]])) "monotonically_increasing_id() AS __dbglm_key" else "ROW_NUMBER() OVER () AS __dbglm_key"
   ), collapse = ", "), source_from), materialize = !is.null(sample_table) && is.null(row_id))
   validate_source_row_id(conn, paste("FROM", snapshot), row_id)
-  schema = backend_get_query(conn, paste("SELECT * FROM", snapshot, "LIMIT 0"))
+  schema = DBI::dbGetQuery(conn, paste("SELECT * FROM", snapshot, "LIMIT 0"))
   for (name in c(parsed[["yvar"]], weights, offset, unlist(normalized[["slopes"]]))) {
     if (!is.numeric(schema[[name]]) && !(name == parsed[["yvar"]] && is.logical(schema[[name]]))) {
       stop("Outcome, weights and offset must be numeric (the outcome may be logical).", call. = FALSE)
@@ -334,7 +334,7 @@ process_dbglm_inputs = function(inputs) {
       "SUM(CASE WHEN ", elig_cond, " AND ", w, " != FLOOR(", w, ") THEN 1 ELSE 0 END) AS fractional_w, "
     )
   } else "0 AS bad_w, 0 AS fractional_w, "
-  snap_info = backend_get_query(conn, paste0(
+  snap_info = DBI::dbGetQuery(conn, paste0(
     "SELECT COUNT(*) AS n_input, ", w_bad_sql,
     "MAX(CASE WHEN ", elig_cond, " THEN ", if (is.null(weights)) "1.0" else quote_id(weights), " END) AS weight_max, ",
     "SUM(CASE WHEN ", elig_cond, " THEN 1 ELSE 0 END) AS n_elig, ",
@@ -369,7 +369,7 @@ process_dbglm_inputs = function(inputs) {
       weight_max = snap_info[["weight_max"]], bad = 0
     )
   } else {
-    sample = backend_get_query(conn, paste(
+    sample = DBI::dbGetQuery(conn, paste(
       "SELECT COUNT(*) AS n, MIN(", quote_id(parsed[["yvar"]]),
       ") AS ymin, MAX(", quote_id(parsed[["yvar"]]), ") AS ymax, SUM(CASE WHEN",
       invalid_y, "THEN 1 ELSE 0 END) AS bad, MAX(",
@@ -392,7 +392,7 @@ process_dbglm_inputs = function(inputs) {
   }
   for (a in setdiff(names(normalized[["factors"]]), normalized[["i_aliases"]])) {
     source = normalized[["factors"]][[a]]
-    ref = if (source %in% names(factor_refs)) factor_refs[[source]] else backend_get_query(
+    ref = if (source %in% names(factor_refs)) factor_refs[[source]] else DBI::dbGetQuery(
       conn,
       paste("SELECT", a, from, "GROUP BY", a, "ORDER BY", a, "LIMIT 1")
     )[[1]][1]
@@ -404,7 +404,7 @@ process_dbglm_inputs = function(inputs) {
     pure_queries = vapply(fe, function(f) {
       paste0("SELECT 1 AS p ", from, " GROUP BY ", f, " HAVING ", pure_condition)
     }, character(1))
-    pure = backend_get_query(conn, paste0("SELECT COUNT(*) AS n FROM (", paste(pure_queries, collapse = " UNION ALL "), ") t"))[["n"]]
+    pure = DBI::dbGetQuery(conn, paste0("SELECT COUNT(*) AS n FROM (", paste(pure_queries, collapse = " UNION ALL "), ") t"))[["n"]]
     if (pure) stop("GLM fixed-effect separation remains under fixef_rm='", fixef_rm, "'; no finite solution.", call. = FALSE)
   }
   spec = build_model_spec(parsed[["fml"]], conn, from, factor_refs = factor_refs, reserved_names = variables, absorbed = length(fe) > 0L)
@@ -437,7 +437,7 @@ process_dbglm_inputs = function(inputs) {
     dbglm_moment_terms(x, "__dbglm_a"),
     "SUM(__dbglm_a*__dbglm_y)/SUM(__dbglm_a) AS ybar"
   )
-  row = backend_get_query(conn, paste("SELECT", paste(base_terms, collapse = ", "), "FROM", base))
+  row = DBI::dbGetQuery(conn, paste("SELECT", paste(base_terms, collapse = ", "), "FROM", base))
   if (length(x) && !is.na(row[["nonfinite"]]) && row[["nonfinite"]] > 0) {
     stop("GLM design contains nonfinite transformed values.", call. = FALSE)
   }
@@ -456,8 +456,8 @@ process_dbglm_inputs = function(inputs) {
       paste(sprintf("(%s-(%s)) AS %s", x, dbglm_number(design_center), x), collapse = ","), " FROM ", base
     )
     base = if (isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))) create(centered_sql) else
-      paste0("(", backend_sql(conn, centered_sql), ")")
-    centered_row = backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "__dbglm_a"), collapse = ","), "FROM", base))
+      paste0("(", centered_sql, ")")
+    centered_row = DBI::dbGetQuery(conn, paste("SELECT", paste(dbglm_moment_terms(x, "__dbglm_a"), collapse = ","), "FROM", base))
     for (name in names(centered_row)) row[[name]] = centered_row[[name]]
   }
   original_base = base
@@ -482,7 +482,7 @@ process_dbglm_inputs = function(inputs) {
     projection = solve_partial_wls(conn, original, x, fe, control, create, drop, response = FALSE, cache = resources, materialize = FALSE, scales = raw_scales, need_table = FALSE)
     if (length(x)) {
       H = if (!is.null(projection[["cross_reduction"]])) raw_H - projection[["cross_reduction"]] else
-        dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", projection[["table"]])), length(x))
+        dbglm_read_information(DBI::dbGetQuery(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", projection[["table"]])), length(x))
       original_H = raw_H
       absorbed = diag(H) <= control[["collin_tol"]] * pmax(diag(original_H), .Machine[["double.xmin"]])
       candidates = which(!absorbed)
@@ -752,7 +752,7 @@ dbglm_pruning_needed = function(conn, table, groups, y, mode, family) {
     paste(vapply(groups, function(g) paste0("(", paste(g, collapse = ","), ")"), character(1)), collapse = ","),
     ")) __dbglm_prune WHERE ", condition
   )
-  as.numeric(backend_get_query(conn, sql)[["n"]]) > 0
+  as.numeric(DBI::dbGetQuery(conn, sql)[["n"]]) > 0
 }
 
 # Recursion operates on a snapshot and never rediscovers keys.
@@ -787,7 +787,7 @@ dbglm_prune = function(
       singletons = flags[[1L]],
       infinite_coef = flags[[2L]]
     )
-    info = backend_get_query(conn, paste0(
+    info = DBI::dbGetQuery(conn, paste0(
       "SELECT COUNT(*) FILTER (WHERE ", condition, ") AS removed, ",
       "COUNT(*) FILTER (WHERE ", condition, " AND ", flags[[1L]], ") AS single FROM ", flagged, " __dbglm_f"
     ))
@@ -808,7 +808,7 @@ dbglm_prune = function(
 dbglm_fe_counts = function(conn, table, fe, p, kind, ssc, fe_names = NULL, cluster_var = NULL, sizes = NULL) {
   if (!length(fe)) return(list(model = p, covariance = p, sizes = integer(), nested = logical()))
   if (is.null(sizes)) {
-    size_row = backend_get_query(conn, paste(
+    size_row = DBI::dbGetQuery(conn, paste(
       "SELECT",
       paste(sprintf("COUNT(DISTINCT %s) AS n%d", fe, seq_along(fe)), collapse = ", "),
       "FROM", table
@@ -827,7 +827,7 @@ dbglm_fe_counts = function(conn, table, fe, p, kind, ssc, fe_names = NULL, clust
         table, " GROUP BY ", fe[i], ") t"
       )
     }, character(1))
-    nest_df = backend_get_query(conn, paste(nest_queries, collapse = " UNION ALL "))
+    nest_df = DBI::dbGetQuery(conn, paste(nest_queries, collapse = " UNION ALL "))
     nested[nest_df[["idx"]]] = (nest_df[["max_n"]] == 1)
   }
   K = model
@@ -937,14 +937,14 @@ dbglm_cell_source = function(conn, base, groups, n, strategy, family, center,
   }
   if (strategy == "compress") {
     table = dbglm_compress_base(conn, base, groups, family, center, create, drop, weight_scale)
-    size = as.numeric(backend_get_query(conn, paste("SELECT COUNT(*) AS n FROM", table))[["n"]])
+    size = as.numeric(DBI::dbGetQuery(conn, paste("SELECT COUNT(*) AS n FROM", table))[["n"]])
     return(list(table = table, enabled = TRUE, cells = size, groups = groups))
   }
   count = if (length(groups)) paste0(
     "SELECT COUNT(*) AS n FROM (SELECT DISTINCT ",
     paste(groups, collapse = ","), " FROM ", base, ") cell_keys"
   ) else "SELECT 1 AS n"
-  size = as.numeric(backend_get_query(conn, count)[["n"]])
+  size = as.numeric(DBI::dbGetQuery(conn, count)[["n"]])
   if (strategy == "auto" && (size / n > ratio || size > nmax)) {
     return(list(table = base, enabled = FALSE, cells = n, groups = groups))
   }

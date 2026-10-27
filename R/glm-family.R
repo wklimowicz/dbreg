@@ -52,7 +52,7 @@ dbglm_binomial_loglik = function(conn, working, weight_scale = 1, cell = FALSE) 
   rounded = sql_round_even(a)
   term = if (cell) "__dbglm_round_ay*LN(mu)+(__dbglm_round_a-__dbglm_round_ay)*LN(1.0-mu)" else
     paste0(rounded, "*(CASE WHEN __dbglm_y=1 THEN LN(mu) ELSE LN(1.0-mu) END)")
-  as.numeric(backend_get_query(conn, paste0(
+  as.numeric(DBI::dbGetQuery(conn, paste0(
     "SELECT ", sql_stable_sum(conn, term),
     " AS ll FROM ", working
   ))[["ll"]])
@@ -220,15 +220,15 @@ dbglm_deviance_term = function(conn) paste(sql_stable_sum(conn, "dev"), "AS devi
 
 dbglm_saturated_loglik = function(conn, base) {
   backend_info = detect_backend(conn)
-  if (!isTRUE(backend_info[["is_databricks"]])) return(backend_get_query(conn, paste0(
+  if (!isTRUE(backend_info[["is_databricks"]])) return(DBI::dbGetQuery(conn, paste0(
     "SELECT ", sql_sum(conn, paste0("__dbglm_a*(CASE WHEN __dbglm_y=0 THEN 0.0 ELSE ",
       "__dbglm_y*LN(__dbglm_y)-__dbglm_y-lgamma(__dbglm_y+1) END)"), backend_info), " AS ll FROM ", base
   ))[["ll"]])
   # Databricks has no lgamma builtin. A bounded count histogram is sufficient
   # for the likelihood constant, with R's canonical lgamma evaluation.
-  n = backend_get_query(conn, paste("SELECT COUNT(DISTINCT __dbglm_y) AS n FROM", base))[["n"]]
+  n = DBI::dbGetQuery(conn, paste("SELECT COUNT(DISTINCT __dbglm_y) AS n FROM", base))[["n"]]
   if (n > 1e6) stop("Poisson count histogram exceeds the likelihood transfer limit.", call. = FALSE)
-  h = backend_get_query(conn, paste("SELECT __dbglm_y AS y,SUM(__dbglm_a) AS a FROM", base, "GROUP BY __dbglm_y"))
+  h = DBI::dbGetQuery(conn, paste("SELECT __dbglm_y AS y,SUM(__dbglm_a) AS a FROM", base, "GROUP BY __dbglm_y"))
   value = numeric(nrow(h))
   positive = h[["y"]] > 0
   value[positive] = h[["y"]][positive] * log(h[["y"]][positive]) - h[["y"]][positive] - lgamma(h[["y"]][positive] + 1)

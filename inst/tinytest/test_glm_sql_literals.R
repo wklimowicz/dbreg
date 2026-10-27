@@ -1,5 +1,4 @@
-# Large FE lookup literals must survive dialect translation byte for byte.
-# This size previously exhausted PCRE and silently truncated the covariance SQL.
+# Large lookup literals/quoted identifiers reach DBI without a SQL text rewriter.
 library(DBI)
 source(system.file("tinytest/helper_glm_databricks.R", package = "dbreg"), local = TRUE)
 local({
@@ -9,16 +8,19 @@ local({
   payload = strrep("QUJDZGVmMDEyMzQ1Njc4OSsv", 300000L)
   literal = paste0("'", payload, "''FSUM isfinite EXCLUDE VARCHAR 東京'")
   quoted = paste0(literal, ",\"FSUM\"\"VARCHAR\",`EXCLUDE``FSUM`")
-  sql = paste0("SELECT ", dbreg:::sql_sum(conn, "x"), ",CAST(x AS VARCHAR),", quoted, "\nFROM t")
+  sql = paste0("SELECT ", dbreg:::sql_sum(conn, "x"), ",", dbreg:::sql_cast_text(conn, "x"), ",", quoted, "\nFROM t")
   expected = paste0("SELECT SUM(x),CAST(x AS STRING),", quoted, "\nFROM t")
-  expect_identical(dbreg:::backend_sql(conn, sql), expected)
-  expect_identical(dbreg:::backend_sql(native, sql), sql)
-  expect_identical(dbreg:::backend_sql(conn, paste0("SELECT ", literal)), paste0("SELECT ", literal))
-  result = DBI::dbGetQuery(native, dbreg:::backend_sql(conn,
-    paste0("SELECT LENGTH(", literal, ") AS n,", dbreg:::sql_sum(conn, "x"), " AS total FROM (VALUES (1),(2)) t(x)")))
+  expect_identical(sql, expected)
+  native_sql = paste0("SELECT ", dbreg:::sql_sum(native, "x"), ",", dbreg:::sql_cast_text(native, "x"), ",", quoted, "\nFROM t")
+  expect_identical(native_sql, paste0("SELECT FSUM(x),CAST(x AS VARCHAR),", quoted, "\nFROM t"))
+  expect_false(exists("backend_sql", envir = asNamespace("dbreg"), inherits = FALSE))
+  result = DBI::dbGetQuery(native, paste0("SELECT LENGTH(", literal, ") AS n,",
+    dbreg:::sql_sum(native, "x"), " AS total FROM (VALUES (1),(2)) t(x)"))
   expect_equal(as.numeric(result[["n"]]), nchar(payload) + nchar("'FSUM isfinite EXCLUDE VARCHAR 東京"))
   expect_equal(as.numeric(result[["total"]]), 3)
-  # Doubled quote/backtick escapes and empty literals remain distinct tokens.
-  expect_identical(dbreg:::backend_sql(conn, "SELECT '', 'a''b', \"a\"\"b\", `a``b`, FSUM(x)"),
-    "SELECT '', 'a''b', \"a\"\"b\", `a``b`, FSUM(x)")
+  # Empty/doubled-quote literals are data, not tokens that need translation.
+  values = DBI::dbGetQuery(native, "SELECT '' AS empty,'a''b' AS quoted,7 AS \"a\"\"b\"")
+  expect_identical(values[["empty"]], "")
+  expect_identical(values[["quoted"]], "a'b")
+  expect_identical(names(values), c("empty", "quoted", 'a"b'))
 })

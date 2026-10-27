@@ -67,7 +67,7 @@ dbreg_test_sql_prediction_tails = function(conn) {
   input = dbreg:::prediction_upload_frame(conn, frame, resources)
   for (link in c("logit", "cloglog", "probit")) {
     query = dbreg:::sql_prediction_response(conn, gsub('["`]', "", input), "id", "prediction", link)
-    actual = dbreg:::backend_get_query(conn, query)
+    actual = DBI::dbGetQuery(conn, query)
     expected = stats::binomial(link)[["linkinv"]](eta)
     expected = expected[match(actual[["id"]], frame[["id"]])]
     expect_identical(is.na(actual[["prediction"]]), is.na(expected), info = link)

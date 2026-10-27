@@ -745,7 +745,7 @@ prediction_key_type = function(type) {
 
 prediction_key_metadata = function(conn, retained, components) {
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
-  sql_types = backend_get_query(conn, paste0(
+  sql_types = DBI::dbGetQuery(conn, paste0(
     "SELECT ", paste0("typeof(", q(components), ") AS t", seq_along(components), collapse = ","),
     " FROM ", retained, " LIMIT 1"
   ))
@@ -769,7 +769,7 @@ prediction_fe_dictionary = function(conn, retained, fe, components, limit, publi
   }, character(1))
   max_rows = floor(limit / (length(components) + 1L))
   if (max_rows < 1L) prediction_state_overflow()
-  dictionary = backend_get_query(conn, paste0(
+  dictionary = DBI::dbGetQuery(conn, paste0(
     "SELECT DISTINCT ", fe, " AS id,", paste(fields, collapse = ","),
     " FROM ", retained, " ORDER BY id LIMIT ", sprintf("%.0f", max_rows + 1)
   ))
@@ -826,7 +826,7 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
   bounded_query = function(sql, width) {
     remaining = min(max_rows - used, floor(limit / width))
     if (remaining < 1) prediction_state_overflow()
-    result = backend_get_query(conn, paste0(sql, " LIMIT ", sprintf("%.0f", remaining + 1)))
+    result = DBI::dbGetQuery(conn, paste0(sql, " LIMIT ", sprintf("%.0f", remaining + 1)))
     if (nrow(result) > remaining) prediction_state_overflow()
     used = used + nrow(result)
     result
@@ -840,10 +840,10 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
       variable = name, center = if (is.null(centers)) 0 else centers[[name]]
     )
   }
-  source = if (is.null(precomputed)) paste0("(", backend_sql(conn, paste0(
+  source = if (is.null(precomputed)) paste0("(", paste0(
     "SELECT ", sql_select_except(conn, "w", backend_info), ", __dbglm_a AS w,",
     "(eta-__dbglm_o) AS __dbglm_prediction_target FROM ", working
-  )), ")") else NULL
+  ), ")") else NULL
   columns = c(x, "__dbglm_prediction_target")
   op_sizes = sizes[vapply(ops, `[[`, integer(1), "group")]
   total = sum(op_sizes) + length(x)
@@ -898,7 +898,7 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
     B = do.call(rbind, lapply(info, function(group) as.matrix(group[paste0("b", seq_along(columns))])))
   }
   cross = if (!is.null(precomputed)) precomputed[["cross"]] else {
-    global = backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(columns, "w"), collapse = ","), "FROM", source))
+    global = DBI::dbGetQuery(conn, paste("SELECT", paste(dbglm_moment_terms(columns, "w"), collapse = ","), "FROM", source))
     dbglm_read_information(global, length(columns))
   }
   p = length(x)
@@ -964,7 +964,7 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
       ")) AS error,MAX(ABS(s.__dbglm_prediction_target)) AS scale"
     ) else
       paste(sum_sql(paste0("s.w*POWER(", residual, ",2)")), "AS rss")
-    error = backend_get_query(conn, paste0(
+    error = DBI::dbGetQuery(conn, paste0(
       "WITH ", paste(ctes, collapse = ","), " SELECT ", diagnostics, " FROM ",
       source, " s", paste(joins, collapse = "")
     ))
@@ -1104,7 +1104,7 @@ finalize_linear_prediction = function(result, inputs) {
       sql_cast_double(q(trend_sources), conn), seq_along(trend_sources)
     )
   )
-  row = backend_get_query(conn, paste("SELECT", paste(summary_terms, collapse = ","), "FROM", ranked))
+  row = DBI::dbGetQuery(conn, paste("SELECT", paste(summary_terms, collapse = ","), "FROM", ranked))
   n = as.numeric(row[["n"]])
   if (n != result[["nobs_orig"]]) stop("The OLS sample changed before prediction recovery.", call. = FALSE)
   center = vapply(seq_along(x), function(i) as.numeric(row[[paste0("center", i)]]), numeric(1))
@@ -1128,7 +1128,7 @@ finalize_linear_prediction = function(result, inputs) {
     ),
     sprintf("(CAST((%s) AS DOUBLE)-(%s)) AS %s", design[["select_exprs"]], dbglm_number(center), x)
   )
-  frame = paste0("(", backend_sql(conn, paste("SELECT", paste(fields, collapse = ","), "FROM", ranked)), ")")
+  frame = paste0("(", paste("SELECT", paste(fields, collapse = ","), "FROM", ranked), ")")
   manager = fit_table_manager(conn, inputs[["sample_resources"]])
   public_components = lapply(components, restore_names, map = inputs[["source_map"]])
   result[["fitted_state"]] = build_prediction_state(conn, frame, frame, fe, public_components,
@@ -1277,7 +1277,7 @@ prediction_two_fe_projection = function(conn, source, fe, targets, create, drop,
   sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   native = isTRUE(backend_info[["is_databricks"]])
   names = paste0("r", seq_along(targets))
-  scale_row = backend_get_query(conn, paste("SELECT", paste(sprintf("MAX(ABS(%s)) AS s%d", targets, seq_along(targets)), collapse = ","), "FROM", source))
+  scale_row = DBI::dbGetQuery(conn, paste("SELECT", paste(sprintf("MAX(ABS(%s)) AS s%d", targets, seq_along(targets)), collapse = ","), "FROM", source))
   scales = pmax(1, as.numeric(scale_row[1L, ]))
   residual = create(paste("SELECT", paste(c(fe, "w", sprintf("(%s)/(%s) AS %s", targets, dbglm_number(scales), names)), collapse = ","), "FROM", source))
   dictionaries = lapply(fe, function(f) create(paste("SELECT", f, "AS id,", paste0("CAST(0.0 AS DOUBLE) AS ", names, collapse = ","), "FROM", source, "GROUP BY", f)))
@@ -1318,7 +1318,7 @@ prediction_two_fe_projection = function(conn, source, fe, targets, create, drop,
     }
     terms = paste(paste0("ABS(", sum_sql(paste0("w*", names)), "/", sum_sql("w"), ") AS ", names), collapse = ",")
     branches = vapply(fe, function(f) paste("SELECT", terms, "FROM", residual, "GROUP BY", f), character(1))
-    diagnostic = backend_get_query(conn, paste0(
+    diagnostic = DBI::dbGetQuery(conn, paste0(
       "SELECT ", paste(sprintf("MAX(%s) AS %s", names, names), collapse = ","),
       " FROM (", paste(branches, collapse = " UNION ALL "), ") errors"
     ))
@@ -1362,7 +1362,7 @@ prediction_two_fe_components = function(conn, source, fe, create, drop, max_iter
       drop(old_right)
       drop(next_left)
     }
-    mismatch = backend_get_query(conn, paste(
+    mismatch = DBI::dbGetQuery(conn, paste(
       "SELECT 1 AS mismatch FROM", edges, "e JOIN", left,
       "l ON e.a=l.id JOIN", right, "r ON e.b=r.id WHERE l.component<>r.component LIMIT 1"
     ))
@@ -1412,7 +1412,7 @@ build_database_prediction_state = function(
     ")) AS error,MAX(ABS(", target, ")) AS scale"
   ) else
     paste0(sum_sql(paste0("s.__dbglm_a*POWER(", residual, ",2)")), " AS rss,", sum_sql(paste0("s.__dbglm_a*POWER(", target, ",2)")), " AS scale")
-  diagnostic = backend_get_query(conn, paste("SELECT", diagnostics, join))
+  diagnostic = DBI::dbGetQuery(conn, paste("SELECT", diagnostics, join))
   recovery_error = if (is.null(expected_rss)) as.numeric(diagnostic[["error"]]) else abs(as.numeric(diagnostic[["rss"]]) - expected_rss)
   tolerance = if (is.null(expected_rss)) 1e-7 else 1e-6
   scale = max(1, as.numeric(diagnostic[["scale"]]), if (!is.null(expected_rss)) abs(expected_rss))
@@ -1422,8 +1422,8 @@ build_database_prediction_state = function(
   null = NULL
   if (p) {
     within = paste0("(", paste("SELECT s.__dbglm_a AS w,", paste(sprintf("(s.%s-g.%s) AS %s", x, mx, x), collapse = ","), join), ")")
-    H = dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", within)), p)
-    raw = dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(x, "__dbglm_a"), collapse = ","), "FROM", working)), p)
+    H = dbglm_read_information(DBI::dbGetQuery(conn, paste("SELECT", paste(dbglm_moment_terms(x, "w"), collapse = ","), "FROM", within)), p)
+    raw = dbglm_read_information(DBI::dbGetQuery(conn, paste("SELECT", paste(dbglm_moment_terms(x, "__dbglm_a"), collapse = ","), "FROM", working)), p)
     null = prediction_within_null(H, raw)
   }
   list(
@@ -1499,7 +1499,7 @@ prediction_database_lookup_one = function(conn, dictionary, data) {
       "SELECT v.i,", paste0("g.", fields, collapse = ","), " FROM ", source,
       " LEFT JOIN ", dictionary[["table"]], " g ON ", join, " ORDER BY v.i"
     )
-    found = backend_get_query(conn, sql)
+    found = DBI::dbGetQuery(conn, sql)
     if (nrow(found) != length(rows) || !identical(as.numeric(found[["i"]]), as.numeric(rows))) {
       stop("Prediction dictionary no longer has unique fitted keys.", call. = FALSE)
     }
@@ -1570,12 +1570,12 @@ build_database_two_fe_state = function(
   columns = projection[["columns"]]
   diagnostics = if (is.null(expected_rss)) paste0("MAX(ABS(", columns[[1L]], "))*(", dbglm_number(scale[[1L]]), ") AS error") else
     paste(sum_sql(paste0("w*POWER(", columns[[1L]], "*(", dbglm_number(scale[[1L]]), "),2)")), "AS rss")
-  diagnostic = backend_get_query(conn, paste("SELECT", diagnostics, "FROM", within))
+  diagnostic = DBI::dbGetQuery(conn, paste("SELECT", diagnostics, "FROM", within))
   recovery_error = if (is.null(expected_rss)) as.numeric(diagnostic[["error"]]) else abs(as.numeric(diagnostic[["rss"]]) - expected_rss)
   if (is.null(expected_rss)) {
     bound = 1e-7 * scale[[1L]]
   } else {
-    norm = backend_get_query(conn, paste("SELECT", sum_sql(paste0("w*POWER( ", target, " ,2)")), "AS norm FROM", source))[["norm"]]
+    norm = DBI::dbGetQuery(conn, paste("SELECT", sum_sql(paste0("w*POWER( ", target, " ,2)")), "AS norm FROM", source))[["norm"]]
     bound = 1e-6 * max(1, abs(expected_rss), as.numeric(norm))
   }
   if (!is.finite(recovery_error) || recovery_error > bound) {
@@ -1583,9 +1583,9 @@ build_database_two_fe_state = function(
   }
   null = NULL
   if (p) {
-    H = dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(columns[-1L], "w"), collapse = ","), "FROM", within)), p)
+    H = dbglm_read_information(DBI::dbGetQuery(conn, paste("SELECT", paste(dbglm_moment_terms(columns[-1L], "w"), collapse = ","), "FROM", within)), p)
     normalized = paste0("(SELECT w,", paste(sprintf("(%s)/(%s) AS %s", x, dbglm_number(scale[-1L]), columns[-1L]), collapse = ","), " FROM ", source, ")")
-    raw = dbglm_read_information(backend_get_query(conn, paste("SELECT", paste(dbglm_moment_terms(columns[-1L], "w"), collapse = ","), "FROM", normalized)), p)
+    raw = dbglm_read_information(DBI::dbGetQuery(conn, paste("SELECT", paste(dbglm_moment_terms(columns[-1L], "w"), collapse = ","), "FROM", normalized)), p)
     null = prediction_within_null(H, raw)
   }
   labels = prediction_two_fe_components(conn, source, fe, create, drop,
@@ -1696,7 +1696,7 @@ predict_sql = function(object, newdata, conn, table, path, row_id, prediction_ta
   create = function(query) {
     name = basename(tempfile("dbreg_prediction_"))
     resources[["tables"]] = c(resources[["tables"]], name)
-    DBI::dbExecute(conn, sql_sample_table(conn, name, backend_sql(conn, query), c(row_id, prediction)))
+    DBI::dbExecute(conn, sql_sample_table(conn, name, query, c(row_id, prediction)))
     name
   }
   output = create(query)

@@ -1,21 +1,3 @@
-# Translate only generated SQL tokens, preserving quoted source identifiers and
-# literals. Finite predicates are emitted at their owning builders. This
-# temporary adapter still owns exclusion and text-type token families.
-backend_sql = function(conn, sql) {
-  if (!identical(detect_backend(conn)[["name"]], "spark")) return(sql)
-  # Consume quoted runs in chunks, without backtracking over each character.
-  # FE coefficient lookups can contain megabytes of base64 in one literal;
-  # character-by-character alternatives exhaust PCRE's match limit there.
-  pattern = "'(?:''|[^']++)*+'|\"(?:\"\"|[^\"]++)*+\"|`(?:``|[^`]++)*+`|[A-Za-z_][A-Za-z_0-9]*|[[:space:]]+|."
-  tokens = regmatches(sql, gregexpr(pattern, sql, perl = TRUE))[[1]]
-  if (sum(nchar(tokens, type = "bytes")) != nchar(sql, type = "bytes")) {
-    stop("Could not tokenize the complete generated GLM SQL statement.", call. = FALSE)
-  }
-  tokens[tokens == "EXCLUDE"] = "EXCEPT"
-  tokens[tokens == "VARCHAR"] = "STRING"
-  paste0(tokens, collapse = "")
-}
-
 # Text spelling stays at construction; generic dialects retain legacy VARCHAR.
 sql_text_type = function(conn, backend_info = detect_backend(conn)) {
   if (identical(backend_info[["name"]], "spark")) "STRING" else "VARCHAR"
@@ -74,8 +56,6 @@ sql_stable_sum = function(conn, expr, backend_info = detect_backend(conn)) {
   ), ok, expr)
 }
 
-
-backend_get_query = function(conn, sql) DBI::dbGetQuery(conn, backend_sql(conn, sql))
 
 # Projection preflights share stable locations and UTF-8 byte bounds across
 # DuckDB and native Spark, without fetching an observation-sized key column.

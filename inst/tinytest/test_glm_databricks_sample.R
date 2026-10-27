@@ -34,10 +34,10 @@ local({
   d[["y"]][d[["f"]] == 3] = 0L # Leaves a hole in the active FE ranks.
   for (j in 1:4) d[[paste0("h", j)]] = sample(1:3, nrow(d), TRUE)
   dbExecute(conn, paste("CREATE TEMP TABLE", source, "AS", dbreg:::sql_values_frame(conn, d)))
-  dbExecute(conn, dbreg:::backend_sql(conn, paste0("CREATE TEMP TABLE ", input,
+  dbExecute(conn, paste0("CREATE TEMP TABLE ", input,
     " AS SELECT ", dbreg:::sql_select_except(conn, c("x", "o", "a", "cl")), ",CASE WHEN id=1 THEN NULL ELSE x END AS x,",
     "CASE WHEN id=2 THEN CAST('Infinity' AS DOUBLE) ELSE o END AS o,",
-    "CASE WHEN id=3 THEN 0 ELSE a END AS a,CASE WHEN id=4 THEN NULL ELSE cl END AS cl FROM ", source)))
+    "CASE WHEN id=3 THEN 0 ELSE a END AS a,CASE WHEN id=4 THEN NULL ELSE cl END AS cl FROM ", source))
   formula = y ~ x | f + g + h1 + h2 + h3 + h4
   eligible = d[-(1:4), ]
   ref = dbglm_reference_feglm(formula, eligible, family = binomial("cloglog"),

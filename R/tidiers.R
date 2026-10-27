@@ -235,7 +235,7 @@ augment.dbreg = function(x, data = NULL, ...) {
     taken = names(state[["column_classes"]]), fold_case = folds_identifier_case(conn)
   )
   fitted = if (inherits(x, "dbglm")) state[["mu"]] else state[["eta"]]
-  values = backend_get_query(conn, paste(
+  values = DBI::dbGetQuery(conn, paste(
     "SELECT", paste(c(
       q(columns),
       paste(q(state[["key"]]), "AS", q(aliases[[1L]])),
@@ -287,7 +287,7 @@ fixef.dbreg = function(object, ...) {
     conn = fitted_resource_connection(object[["resource_state"]])
     backend_info = detect_backend(conn)
     q = function(value) as.character(DBI::dbQuoteIdentifier(conn, value))
-    values = lapply(dictionaries, function(dictionary) backend_get_query(
+    values = lapply(dictionaries, function(dictionary) DBI::dbGetQuery(
       conn,
       paste(
         "SELECT", paste(c(paste0(

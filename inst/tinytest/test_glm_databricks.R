@@ -4,7 +4,7 @@ source(system.file('tinytest/helper_glm_reference.R',package='dbreg'),local=TRUE
 source(system.file('tinytest/helper_glm_databricks.R',package='dbreg'),local=TRUE)
 native=dbConnect(duckdb::duckdb(config=list(temp_directory='',threads='2')))
 remote=dbglm_test_databricks_connection(native)
-r = dbreg:::backend_get_query(remote, paste0(
+r = DBI::dbGetQuery(remote, paste0(
   "SELECT ", paste(dbreg:::sql_is_finite(remote, c("1.0", "'Infinity'::DOUBLE", "'NaN'::DOUBLE")),
     "AS", c("f", "i", "n"), collapse = ","),
   ",", dbreg:::sql_sum(remote, "x"), " AS s FROM (VALUES(1.0),(2.0)) t(x)"
@@ -12,7 +12,7 @@ r = dbreg:::backend_get_query(remote, paste0(
 expect_identical(as.logical(r[1,1:3]),c(TRUE,FALSE,FALSE))
 expect_equal(r$s,3)
 # Quoted identifiers and SQL string literals survive dialect translation.
-r=dbreg:::backend_get_query(remote,"SELECT \"FSUM\",'FSUM isfinite EXCLUDE VARCHAR' AS text FROM (SELECT 7 AS \"FSUM\") t")
+r=DBI::dbGetQuery(remote,"SELECT \"FSUM\",'FSUM isfinite EXCLUDE VARCHAR' AS text FROM (SELECT 7 AS \"FSUM\") t")
 expect_equal(r$FSUM,7)
 expect_identical(r$text,'FSUM isfinite EXCLUDE VARCHAR')
 v=data.frame(k=c("a'b",'FSUM'),x=c(1e-25,-1e25))

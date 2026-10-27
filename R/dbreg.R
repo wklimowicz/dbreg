@@ -751,7 +751,7 @@ validate_weights = function(weights, data, conn, from_statement) {
       1,
       backend
     )
-    invalid = tryCatch(backend_get_query(conn, neg_sql), error = function(e) {
+    invalid = tryCatch(DBI::dbGetQuery(conn, neg_sql), error = function(e) {
       stop("Could not validate weight column '", weights, "': ", conditionMessage(e), call. = FALSE)
     })
     if (nrow(invalid) && invalid[["invalid"]][[1L]] == 1) {

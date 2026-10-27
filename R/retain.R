@@ -68,14 +68,14 @@ fit_table_manager = function(conn, resources, backend_info = detect_backend(conn
   create = function(sql, materialize = TRUE, target = NULL) {
     view = isTRUE(backend_info[["is_databricks"]]) && !materialize &&
       !isTRUE(getOption("dbreg.glm_databricks_materialize_intermediates", FALSE))
-    if (view) return(paste0("(", backend_sql(conn, sql), ")"))
+    if (view) return(paste0("(", sql, ")"))
     if (!is.null(target) && isTRUE(backend_info[["is_databricks"]])) {
-      DBI::dbExecute(conn, backend_sql(conn, paste("CREATE OR REPLACE TEMP TABLE", target, "AS", sql)))
+      DBI::dbExecute(conn, paste("CREATE OR REPLACE TEMP TABLE", target, "AS", sql))
       return(target)
     }
     name = basename(tempfile("dbglm_"))
     resources[["tables"]] = c(resources[["tables"]], name)
-    DBI::dbExecute(conn, backend_sql(conn, paste("CREATE TEMP TABLE", quote_id(name), "AS", sql)))
+    DBI::dbExecute(conn, paste("CREATE TEMP TABLE", quote_id(name), "AS", sql))
     quote_id(name)
   }
   drop = function(table) {
@@ -463,10 +463,10 @@ retain_score_sample = function(
     score_query, ") s ON r.", q(original[["key"]]), "=s.", q(score_key)
   )
   statement = if (materialize) sql_sample_table(
-    conn, name, backend_sql(conn, sql),
+    conn, name, sql,
     c(original[["columns"]], original[["key"]], private)
   ) else
-    paste("CREATE TEMP VIEW", q(name), "AS", backend_sql(conn, sql))
+    paste("CREATE TEMP VIEW", q(name), "AS", sql)
   DBI::dbExecute(conn, statement)
   w = if (is.null(weights)) "1.0" else paste0("CAST(", q(weights), " AS DOUBLE)")
   summary = c(
@@ -474,11 +474,11 @@ retain_score_sample = function(
     paste0("SUM(CASE WHEN ", q(estimated_column), " THEN POWER(", q(residual_column), ",2) ELSE 0.0 END) AS rss_unweighted"),
     paste0("SUM(CASE WHEN ", q(estimated_column), " THEN ", w, "*POWER(", q(residual_column), ",2) ELSE 0.0 END) AS rss")
   )
-  row = backend_get_query(conn, paste("SELECT", paste(summary, collapse = ","), "FROM", q(name)))
+  row = DBI::dbGetQuery(conn, paste("SELECT", paste(summary, collapse = ","), "FROM", q(name)))
   if (as.numeric(row[["n_original"]]) != original[["nobs_input"]]) stop("Retained score rows do not match the original sample.", call. = FALSE)
   fe_sizes = if (length(fe_components)) {
     terms = vapply(seq_along(fe_components), function(i) paste(sql_distinct_tuple_count(conn, fe_components[[i]]), "AS", paste0("g", i)), character(1))
-    counts = backend_get_query(conn, paste("SELECT", paste(terms, collapse = ","), "FROM", q(name), "WHERE", q(estimated_column)))
+    counts = DBI::dbGetQuery(conn, paste("SELECT", paste(terms, collapse = ","), "FROM", q(name), "WHERE", q(estimated_column)))
     vapply(counts, as.numeric, numeric(1))
   } else numeric()
   list(
@@ -522,7 +522,7 @@ predict_retained_sample = function(object, type = "link", sample = c("estimation
   create = function(sql) {
     name = basename(tempfile("dbreg_sample_prediction_"))
     resources[["tables"]] = c(resources[["tables"]], name)
-    DBI::dbExecute(conn, sql_sample_table(conn, name, backend_sql(conn, sql), c(state[["row_id"]], prediction)))
+    DBI::dbExecute(conn, sql_sample_table(conn, name, sql, c(state[["row_id"]], prediction)))
     name
   }
   table = create(paste("SELECT", paste(c(q(state[["row_id"]]), paste(q(state[["eta"]]), "AS", q(prediction))), collapse = ","), from))
@@ -618,7 +618,7 @@ materialize_retained_rows = function(object, query, value_column = NULL) {
   on.exit(release_fit_resources(resources))
   table = basename(tempfile("dbreg_retained_rows_"))
   resources[["tables"]] = table
-  DBI::dbExecute(conn, sql_sample_table(conn, table, backend_sql(conn, query), c(state[["row_id"]], value_column)))
+  DBI::dbExecute(conn, sql_sample_table(conn, table, query, c(state[["row_id"]], value_column)))
   lease = retain_fit_resources(resources, table)
   structure(list(
     conn = fitted_resource_public_connection(lease), table = table, row_id = state[["row_id"]],
@@ -747,10 +747,7 @@ residuals.dbreg = function(object, type = c("response", "deviance", "pearson", "
   }
   value = paste0("CASE WHEN ", q(state[["estimated"]]), " THEN (", value, ") ELSE CAST(NULL AS DOUBLE) END")
   from = paste("FROM", q(state[["table"]]), if (na.rm) paste("WHERE", q(state[["estimated"]])) else "")
-  if (isTRUE(state[["r_input"]])) return(DBI::dbGetQuery(conn, backend_sql(
-    conn,
-    paste("SELECT", value, "AS residual", from, "ORDER BY", q(state[["key"]]))
-  ))[["residual"]])
+  if (isTRUE(state[["r_input"]])) return(DBI::dbGetQuery(conn, paste("SELECT", value, "AS residual", from, "ORDER BY", q(state[["key"]])))[["residual"]])
   column = safe_identifiers("residual", taken = state[["row_id"]], fold_case = folds_identifier_case(conn))
   query = paste("SELECT", paste(c(q(state[["row_id"]]), paste(value, "AS", q(column))), collapse = ","), from)
   materialize_retained_rows(object, query, column)
@@ -1031,7 +1028,7 @@ linear_prune_source = function(inputs, from_statement, fe, y) {
   manager = fit_table_manager(conn, resources, backend)
   source = paste0("(SELECT * ", from_statement, ")")
   pruning = dbglm_prune(conn, source, fe, y, "singletons", manager[["create"]], manager[["drop"]], flags = flags)
-  if (pruning[["rounds"]] > 0 && as.numeric(backend_get_query(
+  if (pruning[["rounds"]] > 0 && as.numeric(DBI::dbGetQuery(
     conn,
     paste("SELECT COUNT(*) AS n FROM", pruning[["table"]])
   )[["n"]]) == 0) {
@@ -1194,7 +1191,7 @@ retain_compressed_score_sample = function(
   lookup[[private[[1L]]]] = yhat
   for (i in seq_along(selected)) lookup[[private[[i + 1L]]]] = multipliers[, i]
   types = if (length(groups)) {
-    row = backend_get_query(conn, paste(
+    row = DBI::dbGetQuery(conn, paste(
       "SELECT", paste0("typeof(", q(groups), ") AS t", seq_along(groups), collapse = ","),
       from_statement, "LIMIT 1"
     ))

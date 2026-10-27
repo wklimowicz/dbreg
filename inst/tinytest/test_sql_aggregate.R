@@ -19,7 +19,7 @@ local({
   }
   expect_false(grepl("DECIMAL", dbreg:::sql_sum(remote, "x"), fixed = TRUE))
   expect_true(grepl("DECIMAL(38,18)", dbreg:::sql_stable_sum(remote, "x"), fixed = TRUE))
-  expect_identical(dbreg:::backend_sql(remote, "SELECT FSUM(x),'FSUM' AS label"), "SELECT FSUM(x),'FSUM' AS label")
+  expect_false(exists("backend_sql", envir = asNamespace("dbreg"), inherits = FALSE))
   # Exact production SQL shapes, including aliases/order, preserve DuckDB plans.
   expect_identical(dbreg:::fe_value_terms(conn, c("x", "y")),
     c("FSUM(w) AS __h", "FSUM(w*(x)) AS __b1", "FSUM(w*(y)) AS __b2"))
@@ -33,9 +33,9 @@ local({
     " AS value FROM (VALUES (1e16),(1.0),(1.0),(-1e16)) t(v)"))
   expect_equal(cancellation[["value"]], 2, tolerance = 0)
   for (engine in list(conn, remote)) {
-    mixed = dbreg:::backend_get_query(engine, paste0("SELECT ", dbreg:::sql_sum(engine, "v"),
+    mixed = DBI::dbGetQuery(engine, paste0("SELECT ", dbreg:::sql_sum(engine, "v"),
       " AS value FROM (VALUES (1.0),(NULL),(2.0)) t(v)"))
-    empty = dbreg:::backend_get_query(engine, paste0("SELECT ", dbreg:::sql_sum(engine, "v"),
+    empty = DBI::dbGetQuery(engine, paste0("SELECT ", dbreg:::sql_sum(engine, "v"),
       " AS value FROM (VALUES (1.0)) t(v) WHERE FALSE"))
     expect_equal(mixed[["value"]], 3)
     expect_true(is.na(empty[["value"]]))

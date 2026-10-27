@@ -74,7 +74,7 @@ projection_fetch = function(conn, sql, budget, width, limits) {
     floor((limits[["transfer_cells"]] - budget[["cells"]]) / width) - 1L
   )
   if (rows < 1L) projection_abort("transfer_limit", "Fixed-effect summaries exceed the transfer budget.")
-  result = backend_get_query(conn, paste(sql, "LIMIT", sprintf("%.0f", rows + 1L)))
+  result = DBI::dbGetQuery(conn, paste(sql, "LIMIT", sprintf("%.0f", rows + 1L)))
   if (nrow(result) > rows) projection_abort("transfer_limit", "Fixed-effect summaries exceed the transfer budget.")
   budget[["rows"]] = budget[["rows"]] + nrow(result)
   budget[["cells"]] = budget[["cells"]] + width * (nrow(result) + 1L)
@@ -385,7 +385,7 @@ pack_fe_moments_sql = function(conn, sql, K, value_terms, global_terms = charact
 }
 
 read_fe_moments = function(conn, sql, max_rows = Inf) {
-  result = backend_get_query(conn, sql)
+  result = DBI::dbGetQuery(conn, sql)
   if (nrow(result) > max_rows) return(NULL)
   if ("__values" %in% names(result)) {
     payload = result[["__values"]]
@@ -644,7 +644,7 @@ project_fe_moments = function(conn, table, columns, identifiers, ops, scales, ta
       "WITH ", paste(ctes, collapse = ","), " SELECT ", broadcast, "s.*, s.w AS __w, ",
       paste(tilde_exprs, collapse = ","), " FROM ", table, " s", paste(joins, collapse = "")
     )
-    raw_projected = paste0("(", backend_sql(conn, raw_sql), ")")
+    raw_projected = paste0("(", raw_sql, ")")
     return(list(
       table = NULL, raw_projected = raw_projected, cycles = cycle, residual = residual, method = "moments",
       cross_reduction = cross_reduction, extra_reduction = extra_reduction,
@@ -763,7 +763,7 @@ dbreg_duckdb_cg_projections = function(
     ), "/(", sql_stable_sum(conn, w_double),
     ") AS center", seq_along(raw_vars)
   )
-  preflight = backend_get_query(conn, paste(
+  preflight = DBI::dbGetQuery(conn, paste(
     "SELECT COUNT(*) AS source_n,",
     paste(c(
       sprintf("COUNT(DISTINCT %s) AS n%d", fe, 1:2),
@@ -821,7 +821,7 @@ dbreg_duckdb_cg_projections = function(
   create = function(name, sql) {
     state[["created"]] = unique(c(state[["created"]], tables[[name]]))
     if (isTRUE(backend_info[["is_databricks"]])) {
-      DBI::dbExecute(conn, backend_sql(conn, paste(if (tables[[name]] %in% views) "CREATE TEMP VIEW" else "CREATE TEMP TABLE", tables[[name]], "AS", sql)))
+      DBI::dbExecute(conn, paste(if (tables[[name]] %in% views) "CREATE TEMP VIEW" else "CREATE TEMP TABLE", tables[[name]], "AS", sql))
     } else create_temp_table_as(conn, tables[[name]], sql, "duckdb")
   }
   w = if (is.null(weights)) "1.0" else weights
@@ -839,7 +839,7 @@ dbreg_duckdb_cg_projections = function(
     " GROUP BY ", paste(fe, collapse = ", "),
     " LIMIT ", sprintf("%.0f", max_edges + 1)
   )
-  edges = backend_get_query(conn, edges_sql)
+  edges = DBI::dbGetQuery(conn, edges_sql)
   if (!nrow(edges) || nrow(edges) > max_edges) {
     if (verbose) message("[dbreg] FE summaries exceed DuckDB transfer limits; using join AP")
     projection_abort("transfer_limit", "FE pair summaries exceed sparse projection limits.", list(summary_rows = max_edges))
@@ -1051,11 +1051,11 @@ dbreg_duckdb_cg_projections = function(
         " FROM ", tables[["result"]], " GROUP BY ", f, ") q"
       )
     }, character(1))
-    actual = backend_get_query(conn, paste0(
+    actual = DBI::dbGetQuery(conn, paste0(
       "SELECT MAX(max_abs) AS max_abs FROM (",
       paste(checks, collapse = " UNION ALL "), ") q"
     ))[["max_abs"]]
-    n_result = backend_get_query(conn, paste("SELECT COUNT(*) AS n FROM", tables[["result"]]))[["n"]]
+    n_result = DBI::dbGetQuery(conn, paste("SELECT COUNT(*) AS n FROM", tables[["result"]]))[["n"]]
     n_source = as.numeric(preflight[["source_n"]])
     if (!is.finite(actual) || actual > tol || n_result != n_source) return(NULL)
   }
@@ -1109,7 +1109,7 @@ dbreg_moment_projections = function(inputs, x_sql, x_names, max_iter, tol) {
     paste(w, "AS w")
   ), collapse = ","), from_statement)
   fe_ids = id_columns[match(fe, ids)]
-  stats = backend_get_query(conn, paste("SELECT", paste(c(
+  stats = DBI::dbGetQuery(conn, paste("SELECT", paste(c(
     "COUNT(*) AS n", "SUM(w) AS sw",
     sprintf("MAX(ABS(%s)) AS original%d", columns, seq_along(columns)),
     sprintf("COUNT(DISTINCT %s) AS n%d", fe_ids, seq_along(fe)),
@@ -1199,7 +1199,7 @@ dbreg_projection_certificate = function(conn, table, fe, columns, nobs) {
     " FROM (SELECT ", paste(c(means, "COUNT(*) AS n", paste0("SUM(CASE WHEN ", invalid, " THEN 1 ELSE 0 END) AS bad")), collapse = ","),
     " FROM ", table, " GROUP BY GROUPING SETS (", paste0("(", fe, ")", collapse = ","), ")) certified"
   )
-  row = backend_get_query(conn, sql)
+  row = DBI::dbGetQuery(conn, sql)
   if (is.na(row[["bad"]]) || row[["bad"]] > 0 ||
     !isTRUE(as.numeric(row[["count_sum"]]) == nobs * length(fe))) return(Inf)
   max(vapply(row[paste0("r", seq_along(columns))], as.numeric, numeric(1)))
@@ -1227,11 +1227,11 @@ dbreg_varying_projections = function(inputs, x_sql, x_names, max_iter, tol) {
     paste(if (is.null(weights)) "1.0" else sql_cast_double(weights, conn), "AS w")
   )
   source = create(paste("SELECT", paste(fields, collapse = ","), from_statement))
-  weight_max = as.numeric(backend_get_query(conn, paste("SELECT MAX(w) AS m FROM", source))[["m"]])
+  weight_max = as.numeric(DBI::dbGetQuery(conn, paste("SELECT MAX(w) AS m FROM", source))[["m"]])
   if (!is.finite(weight_max) || weight_max <= 0) stop("No positive-weight observations remain.", call. = FALSE)
   weight_scale = if (weight_max < 1 || weight_max > 2) 2^floor(log2(weight_max)) else 1
   w = paste0("w/(", dbglm_number(weight_scale), ")")
-  centers = as.numeric(backend_get_query(conn, paste("SELECT", paste(sprintf(
+  centers = as.numeric(DBI::dbGetQuery(conn, paste("SELECT", paste(sprintf(
     "SUM((%s)*%s)/SUM(%s) AS c%d", w, columns, w, seq_along(columns)
   ), collapse = ","), "FROM", source))[1, ])
   coded_fe = paste0("__dbreg_vary_f", seq_along(fe))
@@ -1280,7 +1280,7 @@ dbreg_fwl_moments = function(inputs, x_sql, x_names, max_iter, tol) {
     paste(passthrough, "AS", id_columns), paste(sql_cast_double(c(yvar, x_sql), conn), "AS", columns),
     paste(w, "AS w")
   ), collapse = ","), from_statement)
-  preflight = backend_get_query(conn, paste("SELECT", paste(c(
+  preflight = DBI::dbGetQuery(conn, paste("SELECT", paste(c(
     "COUNT(*) AS n", "MIN(w) AS wmin", "MAX(w) AS wmax",
     sprintf("COUNT(DISTINCT %s) AS size%d", fe_ids, seq_along(fe)),
     sprintf("MIN(typeof(%s)) AS type%d", fe_ids, seq_along(fe)),
@@ -1359,7 +1359,7 @@ dbreg_fwl_moments = function(inputs, x_sql, x_names, max_iter, tol) {
     )
     projected_source = rows[["raw_projected"]]
     if (recompute) {
-      actual = backend_get_query(conn, paste(
+      actual = DBI::dbGetQuery(conn, paste(
         "SELECT",
         paste(fwl_information_terms(conn, paste0(columns, "_tilde")), collapse = ","),
         "FROM", projected_source
@@ -1542,7 +1542,7 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
       identical(control[["projection_method"]], "auto") && length(columns)) {
       identifiers = unique(c(fe, unlist(slopes)))
       if (is.null(scales)) {
-        norm = as.numeric(backend_get_query(conn, paste("SELECT", paste(paste(sum_sql(sprintf("w*POWER(%s,2)", columns)), "AS", paste0("n", seq_along(columns))), collapse = ","), "FROM", table))[1, ])
+        norm = as.numeric(DBI::dbGetQuery(conn, paste("SELECT", paste(paste(sum_sql(sprintf("w*POWER(%s,2)", columns)), "AS", paste0("n", seq_along(columns))), collapse = ","), "FROM", table))[1, ])
         scales = sqrt(pmax(norm, .Machine[["double.xmin"]]))
       }
       target = control[["fe_tol"]]
@@ -1587,7 +1587,7 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
       for (i in seq_along(fe)) for (v in slopes[[i]]) ops[[length(ops) + 1]] = list(f = fe[i], v = v)
       identifiers = unique(c(fe, unlist(slopes)))
       if (is.null(scales)) {
-        norm = if (length(columns)) as.numeric(backend_get_query(conn, paste("SELECT", paste(paste(sum_sql(sprintf("w*POWER(%s,2)", columns)), "AS", paste0("n", seq_along(columns))), collapse = ","), "FROM", table))[1, ]) else numeric()
+        norm = if (length(columns)) as.numeric(DBI::dbGetQuery(conn, paste("SELECT", paste(paste(sum_sql(sprintf("w*POWER(%s,2)", columns)), "AS", paste0("n", seq_along(columns))), collapse = ","), "FROM", table))[1, ]) else numeric()
         scales = sqrt(pmax(norm, .Machine[["double.xmin"]]))
       }
       target = control[["fe_tol"]]
@@ -1632,7 +1632,7 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
   }
   identifiers = unique(c(fe, unlist(slopes), basis))
   if (!length(columns)) return(list(table = projection, cycles = 0L, residual = 0, method = "group"))
-  norm = backend_get_query(conn, paste("SELECT", paste(sprintf("SUM(w*POWER(%s,2)) AS n%d", columns, seq_along(columns)), collapse = ","), "FROM", projection))
+  norm = DBI::dbGetQuery(conn, paste("SELECT", paste(sprintf("SUM(w*POWER(%s,2)) AS n%d", columns, seq_along(columns)), collapse = ","), "FROM", projection))
   scales = sqrt(pmax(as.numeric(norm[1, ]), .Machine[["double.xmin"]]))
   target = control[["fe_tol"]]
   if (response) target = min(target, control[["score_tol"]] / (100 * max(1, utils::tail(scales, 1))))
@@ -1652,7 +1652,7 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
       f = op[["f"]]
       v = op[["v"]]
       terms = sprintf("COALESCE(ABS(SUM(w*(%3$s)*%1$s))/NULLIF(SQRT(SUM(w*(%3$s)*(%3$s))),0),0)/%2$s AS r%4$d", columns, dbglm_number(scales), v, seq_along(columns))
-      row = backend_get_query(conn, paste0(
+      row = DBI::dbGetQuery(conn, paste0(
         "SELECT ", paste(sprintf("MAX(r%d) AS r%d", seq_along(columns), seq_along(columns)), collapse = ","),
         " FROM (SELECT ", paste(terms, collapse = ","), " FROM ", projection, " GROUP BY ", f, ") t"
       ))
@@ -1674,7 +1674,7 @@ dbglm_moments_enabled = function(conn, table, fe, control, cache, columns = 1L) 
   if (is.null(cache[["projection_limits"]])) cache[["projection_limits"]] = projection_limits()
   sizes = cache[["fe_sizes"]]
   if (is.null(sizes)) {
-    count = backend_get_query(conn, paste("SELECT", paste(sprintf("COUNT(DISTINCT %s) AS n%d", fe, seq_along(fe)), collapse = ","), "FROM", table))
+    count = DBI::dbGetQuery(conn, paste("SELECT", paste(sprintf("COUNT(DISTINCT %s) AS n%d", fe, seq_along(fe)), collapse = ","), "FROM", table))
     sizes = vapply(count, as.numeric, numeric(1))
   }
   cache[["fe_sizes"]] = sizes
@@ -1754,7 +1754,7 @@ dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, targ
     applied = moments(direction, direction_names, a, info)
     drop(direction)
     joined = create(paste0("SELECT s.*,", paste(paste0("a.", a), collapse = ","), " FROM ", state, " s JOIN ", applied, " a USING (", key, ")"))
-    moment = backend_get_query(conn, paste("SELECT", paste(c(
+    moment = DBI::dbGetQuery(conn, paste("SELECT", paste(c(
       paste(sum_sql(sprintf("%1$s*%1$s", r)), "AS", paste0("rr", index)),
       paste(sum_sql(sprintf("%s*%s", d, a)), "AS", paste0("da", index))
     ), collapse = ","), "FROM", joined))
@@ -1777,7 +1777,7 @@ dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, targ
     if (cycle %% 4L == 0L || cycle == 1L || cycle == control[["fe_max_iter"]] || restart) {
       projected = rows(state, g, columns, subtract = TRUE)
       certificate = moments(projected, columns, r, info)
-      row = backend_get_query(conn, paste("SELECT", paste(sprintf("MAX(ABS(%s))/%s AS r%d", r, dbglm_number(scales), index), collapse = ","), "FROM", certificate))
+      row = DBI::dbGetQuery(conn, paste("SELECT", paste(sprintf("MAX(ABS(%s))/%s AS r%d", r, dbglm_number(scales), index), collapse = ","), "FROM", certificate))
       residual_columns = as.numeric(row[1, ])
       residual = max(residual_columns)
       active = residual_columns > target
@@ -1802,7 +1802,7 @@ dbglm_project_cg = function(conn, table, columns, identifiers, ops, scales, targ
       drop(certificate)
     }
     if (!restart) {
-      new_rr = as.numeric(backend_get_query(conn, paste("SELECT", paste(paste(sum_sql(sprintf("%1$s*%1$s", r)), "AS", paste0("r", index)), collapse = ","), "FROM", state))[1, ])
+      new_rr = as.numeric(DBI::dbGetQuery(conn, paste("SELECT", paste(paste(sum_sql(sprintf("%1$s*%1$s", r)), "AS", paste0("r", index)), collapse = ","), "FROM", state))[1, ])
       beta = ifelse(active & rr > floor_rr, new_rr / rr, 0)
       next_state = create(paste(
         "SELECT ", sql_select_except(conn, d, backend_info), ",",
@@ -1822,7 +1822,7 @@ dbglm_project_window = function(conn, table, columns, fe, control, create, drop,
     "SELECT __dbglm_key,",
     paste(c(fe, "w"), collapse = ","), "FROM", table
   )), cycles = 0L, residual = 0, method = "window"))
-  norm = backend_get_query(conn, paste("SELECT", paste(sprintf(
+  norm = DBI::dbGetQuery(conn, paste("SELECT", paste(sprintf(
     "SUM(w*POWER(%s,2)) AS n%d",
     columns, seq_along(columns)
   ), collapse = ","), "FROM", table))
@@ -1856,7 +1856,7 @@ dbglm_project_window = function(conn, table, columns, fe, control, create, drop,
       )
     }, character(1))
     convergence_query = paste0("SELECT GREATEST(", paste(sprintf("(%s)", diagnostics), collapse = ", "), ") AS max_abs")
-    max_abs = as.numeric(backend_get_query(conn, convergence_query)[1, 1L])
+    max_abs = as.numeric(DBI::dbGetQuery(conn, convergence_query)[1, 1L])
   }
   result = create(paste("SELECT __dbglm_key,", paste(c(
     fe, "__w AS w",

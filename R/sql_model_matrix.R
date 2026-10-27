@@ -141,14 +141,21 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
   source_names = unique(c(names(col_info[["types"]]), fe_vars, reserved_names))
   taken = source_names
   level_aliases = list()
+  constant_rows = integer()
+  row_count = 0L
   for (v in names(col_info[["levels"]])) {
     lvls = c(as.character(col_info[["levels"]][[v]]), "_constant")
     a = safe_identifiers(paste0(v, lvls), taken = taken, fold_case = fold_case)
     taken = c(taken, a)
     level_aliases[[v]] = data.frame(alias = a, var = v, level = lvls)
+    # The appended constant has a producer-owned row identity, even when an
+    # actual category has the same text as the legacy sentinel.
+    row_count = row_count + length(lvls)
+    constant_rows[[v]] = row_count
   }
   level_aliases = do.call(rbind, c(list(data.frame(alias = character(), var = character(), level = character())), level_aliases))
   col_info[["level_aliases"]] = level_aliases
+  col_info[["constant_rows"]] = constant_rows
   components = unique(unlist(lapply(term_labels, split_interaction_term)))
   powers = components[vapply(components, function(t) !is.null(parse_power_term(t)), logical(1))]
   col_info[["power_aliases"]] = if (length(powers)) setNames(safe_identifiers(
@@ -372,9 +379,10 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
   la = col_info[["level_aliases"]]
   la = la[la[["var"]] == var, , drop = FALSE]
   if (length(lvls) < 2) {
-    return(list(sql = "1", name = paste0(var, "_constant"), alias = la[["alias"]][la[["level"]] == "_constant"],
+    constant_row = col_info[["constant_rows"]][[var]]
+    return(list(sql = "1", name = paste0(var, "_constant"), alias = col_info[["level_aliases"]][["alias"]][constant_row],
       recipe = list(list(kind = "constant")),
-      level_row = which(col_info[["level_aliases"]][["var"]] == var & col_info[["level_aliases"]][["level"]] == "_constant")))
+      level_row = constant_row))
   }
   # Drop first level (reference) only if appropriate
   if (drop_ref) {

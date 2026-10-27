@@ -910,7 +910,7 @@ build_portable_prediction_state = function(conn, working, retained, fe, componen
     res = read_fe_moments(conn, sql)
     if (nrow(res) > row_cap) prediction_state_overflow()
     used = nrow(res)
-    moments = unpack_fe_moments(res, length(fe), length(columns), 0L)
+    moments = assemble_fe_moments(decode_fe_moments(res, length(fe), length(columns), 0L))
     if (is.null(moments)) prediction_state_overflow()
     info = moments[["info"]]
     sys = moments[["sys"]]

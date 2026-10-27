@@ -65,21 +65,6 @@ record_projection_attempt = function(context, attempt) {
   invisible(attempt[["result"]])
 }
 
-# Account across the separate marginal/pair statements needed by varying slopes.
-# Reserve an overflow probe before each DBI fetch and propagate typed capacity
-# rejection through the same solver policy as packed intercept-only summaries.
-projection_fetch = function(conn, sql, budget, width, limits) {
-  rows = min(
-    limits[["summary_rows"]] - budget[["rows"]],
-    floor((limits[["transfer_cells"]] - budget[["cells"]]) / width) - 1L
-  )
-  if (rows < 1L) projection_abort("transfer_limit", "Fixed-effect summaries exceed the transfer budget.")
-  result = DBI::dbGetQuery(conn, paste(sql, "LIMIT", sprintf("%.0f", rows + 1L)))
-  if (nrow(result) > rows) projection_abort("transfer_limit", "Fixed-effect summaries exceed the transfer budget.")
-  budget[["rows"]] = budget[["rows"]] + nrow(result)
-  budget[["cells"]] = budget[["cells"]] + width * (nrow(result) + 1L)
-  result
-}
 
 # Bounded direct nuisance solves for moderate FE dimensions. The database sends
 # only FE cross-products and FE-by-design moments; no observation vectors enter R.
@@ -325,129 +310,15 @@ fe_solver = function(sys, cache, retain_null = FALSE) {
   list(solve = solve, project = project, null_basis = null_q)
 }
 
-# One statement returns the global row (__set = 0), per-FE marginals
-# (__set = i) and pairwise FE information (__set = K + pair index). Pairs need
-# only the weight sum, so each is a narrow GROUP BY over one shared source;
-# GROUPING SETS would evaluate every aggregate for every set.
-fe_moments_sql = function(conn, source, fe, value_terms, global_terms = character(), limit = NULL, compact = FALSE, text_keys = FALSE) {
-  if (identical(detect_backend(conn)[["name"]], "spark")) {
-    sql = dbglm_databricks_moments_sql(source, fe, value_terms, global_terms, limit, text_keys = text_keys, conn = conn)
-    if (!is.null(sql)) return(if (compact) pack_fe_moments_sql(conn, sql, length(fe), value_terms, global_terms, globals_packed = TRUE) else sql)
-  }
-  K = length(fe)
-  pairs = utils::combn(K, 2L, simplify = FALSE)
-  alias = function(terms) sub(".* AS ([A-Za-z_0-9]+)$", "\\1", terms)
-  null = function(terms) if (length(terms)) paste0("CAST(NULL AS DOUBLE) AS ", alias(terms)) else character()
-  id_type = if (text_keys) sql_text_type(conn) else "BIGINT"
-  id = function(f) if (is.null(f)) paste0("CAST(NULL AS ", id_type, ")") else paste0("CAST(", f, " AS ", id_type, ")")
-  branch = function(set, i, j, columns, group) paste0(
-    "SELECT ", set, " AS __set,", id(i), " AS __i,", id(j), " AS __j,",
-    paste(columns, collapse = ","), " FROM __dbglm_src", if (length(group)) paste(" GROUP BY", paste(group, collapse = ","))
-  )
-  branches = c(
-    if (length(global_terms)) branch(0L, NULL, NULL, c(global_terms, null(value_terms)), character()),
-    vapply(seq_len(K), function(i) branch(i, fe[i], NULL, c(null(global_terms), value_terms), fe[i]), character(1)),
-    vapply(seq_along(pairs), function(k) {
-      p = pairs[[k]]
-      branch(K + k, fe[p[1]], fe[p[2]], c(null(global_terms), value_terms[1L], null(value_terms[-1L])), fe[p])
-    }, character(1))
-  )
-  materialized = if (isTRUE(detect_backend(conn)[["is_databricks"]])) "" else "MATERIALIZED "
-  sql = paste0("WITH __dbglm_src AS ", materialized, "(SELECT * FROM ", source, ") ", paste(branches, collapse = " UNION ALL "))
-  if (!is.null(limit)) sql = paste0("SELECT * FROM (", sql, ") __dbglm_m ORDER BY __set LIMIT ", sprintf("%.0f", limit))
-  if (compact) pack_fe_moments_sql(conn, sql, K, value_terms, global_terms) else sql
-}
 
-# Pair rows carry only indices and weight. Only marginal rows carry RHS
-# vectors; only the global row carries global moments. Packing before DBI
-# transfer avoids recreating a wide mostly-NULL rectangle in client memory.
-pack_fe_moments_sql = function(conn, sql, K, value_terms, global_terms = character(), globals_packed = FALSE) {
-  alias = function(terms) sub(".* AS ([A-Za-z_0-9]+)$", "\\1", terms)
-  values = alias(value_terms[-1L])
-  native = identical(detect_backend(conn)[["name"]], "spark")
-  payload = if (length(values)) paste0(
-    "CASE WHEN __set BETWEEN 1 AND ", K,
-    " THEN ", if (native) "to_json(array(" else "list_value(", paste(values, collapse = ","),
-    if (native) ")) END" else ") END"
-  ) else if (native) sql_cast_text(conn, "NULL") else "CAST(NULL AS DOUBLE[])"
-  fields = c("__set", "__i", "__j", "__h", paste(payload, "AS __values"))
-  if (length(global_terms)) {
-    globals = alias(global_terms)
-    encoded = if (globals_packed) "__globals" else paste0(
-      "CASE WHEN __set=0 THEN list_value(",
-      paste(globals, collapse = ","), ") END"
-    )
-    fields = c(fields, paste(encoded, "AS __globals"))
-  }
-  result = paste0("SELECT ", paste(fields, collapse = ","), " FROM (", sql, ") compact_fe_moments")
-  if (length(global_terms)) attr(result, "fe_global_names") = alias(global_terms)
-  result
-}
 
-read_fe_moments = function(conn, sql, max_rows = Inf) {
-  result = DBI::dbGetQuery(conn, sql)
-  if (nrow(result) > max_rows) return(NULL)
-  if ("__values" %in% names(result)) {
-    payload = result[["__values"]]
-    rows = if (is.list(payload)) which(lengths(payload) > 0L) else which(!is.na(payload))
-    values = lapply(payload[rows], function(x) if (is.list(payload)) as.numeric(x) else as.numeric(read_numeric_json(x)))
-    if (length(unique(lengths(values))) > 1L) stop("Inconsistent fixed-effect marginal widths.", call. = FALSE)
-    result[["__values"]] = NULL
-    attr(result, "fe_values") = list(rows = rows, values = if (length(rows)) do.call(rbind, values) else matrix(numeric(), 0L, 0L))
-  }
-  if (!"__globals" %in% names(result)) return(result)
-  global = which(as.integer(result[["__set"]]) == 0L)
-  payload = result[["__globals"]]
-  if (length(global) != 1L || (is.list(payload) && !length(payload[[global]])) ||
-    (!is.list(payload) && is.na(payload[global]))) {
-    stop("GLM moment query did not return its global summary.", call. = FALSE)
-  }
-  values = if (is.list(payload)) stats::setNames(as.list(as.numeric(payload[[global]])), attr(sql, "fe_global_names")) else
-    read_numeric_json(payload[global])
-  # Do not recreate mostly-NULL global columns in R: their number grows as
-  # p^2, and padding them across every FE-pair row can exhaust client memory.
-  globals = as.data.frame(lapply(values, as.numeric), check.names = FALSE)
-  result[["__globals"]] = NULL
-  attr(result, "dbglm_globals") = globals
-  result
-}
 
-# Value columns are __h, __b1.., __ex1..; see fe_moments_sql().
-unpack_fe_moments = function(res, K, n_cols, n_extra) {
-  sets = as.integer(res[["__set"]])
-  b_cols = if (n_cols) paste0("__b", seq_len(n_cols)) else character()
-  ex_cols = if (n_extra) paste0("__ex", seq_len(n_extra)) else character()
-  compact = attr(res, "fe_values", exact = TRUE)
-  info = vector("list", K)
-  for (i in seq_len(K)) {
-    rows = which(sets == i)
-    if (!length(rows)) return(NULL)
-    rows = rows[order(res[["__i"]][rows])]
-    h = as.numeric(res[["__h"]][rows])
-    if (is.null(compact)) {
-      b = as.matrix(res[rows, b_cols, drop = FALSE])
-      ex = as.matrix(res[rows, ex_cols, drop = FALSE])
-    } else {
-      positions = match(rows, compact[["rows"]])
-      if ((n_cols + n_extra) && (anyNA(positions) || ncol(compact[["values"]]) != n_cols + n_extra)) return(NULL)
-      b = if (n_cols) compact[["values"]][positions, seq_len(n_cols), drop = FALSE] else matrix(numeric(), length(rows), 0L)
-      ex = if (n_extra) compact[["values"]][positions, n_cols + seq_len(n_extra), drop = FALSE] else matrix(numeric(), length(rows), 0L)
-    }
-    if (anyNA(res[["__i"]][rows]) || anyDuplicated(res[["__i"]][rows]) || any(!is.finite(h)) || any(h <= 0) || any(!is.finite(b)) || any(!is.finite(ex))) return(NULL)
-    info[[i]] = list(id = res[["__i"]][rows], h = h, b = unname(b), ex = unname(ex))
-  }
-  combos = utils::combn(K, 2L, simplify = FALSE)
-  pairs = vector("list", length(combos))
-  for (k in seq_along(combos)) {
-    p = combos[[k]]
-    rows = which(sets == K + k)
-    if (!length(rows)) return(NULL)
-    h = as.numeric(res[["__h"]][rows])
-    ir = match(res[["__j"]][rows], info[[p[2]]][["id"]])
-    jr = match(res[["__i"]][rows], info[[p[1]]][["id"]])
-    if (any(!is.finite(h)) || anyNA(ir) || anyNA(jr)) return(NULL)
-    pairs[[k]] = list(i = p[2], j = p[1], ir = ir, jr = jr, h = h)
-  }
+# Assemble decoded FE moments in algebra coordinates; no wire/query handling.
+assemble_fe_moments = function(decoded) {
+  if (is.null(decoded)) return(NULL)
+  info = decoded[["info"]]
+  pairs = decoded[["pairs"]]
+  n_extra = decoded[["n_extra"]]
   sys = fe_system(info, pairs)
   if (is.null(sys)) return(NULL)
   B = do.call(rbind, lapply(info, `[[`, "b"))
@@ -455,18 +326,11 @@ unpack_fe_moments = function(res, K, n_cols, n_extra) {
   fe_score_max = if (n_extra >= 1L) max(abs(B_extra[, 1L]) / sqrt(pmax(sys[["diag"]], .Machine[["double.xmin"]]))) else 0
   list(
     info = info, sys = sys, B = B, B_extra = B_extra, starts = sys[["starts"]], n = sys[["n"]],
-    rows = sum(sets != 0L), fe_score_max = fe_score_max
+    rows = decoded[["rows"]], fe_score_max = fe_score_max
   )
 }
 
-fe_value_terms = function(conn, columns, extra_sums = character(), backend_info = detect_backend(conn)) {
-  sum_sql = function(expr) sql_sum(conn, expr, backend_info)
-  c(
-    paste(sum_sql("w"), "AS __h"),
-    if (length(columns)) paste(sum_sql(sprintf("w*(%s)", columns)), "AS", paste0("__b", seq_along(columns))),
-    if (length(extra_sums)) sprintf("%s AS __ex%d", vapply(extra_sums, function(e) sql_stable_sum(conn, e, backend_info), character(1)), seq_along(extra_sums))
-  )
-}
+
 
 query_fe_moments = function(conn, table, fe, columns, extra_sums = character(),
                             max_edges = getOption("dbreg.duckdb_ap_max_edges", 1e6),
@@ -488,7 +352,7 @@ query_fe_moments = function(conn, table, fe, columns, extra_sums = character(),
   )
   res = read_fe_moments(conn, sql, max_rows = max_edges)
   if (is.null(res) || !nrow(res)) return(NULL)
-  unpacked = unpack_fe_moments(res, length(fe), length(columns), length(extra_sums))
+  unpacked = assemble_fe_moments(decode_fe_moments(res, length(fe), length(columns), length(extra_sums)))
   if (is.null(unpacked)) return(NULL)
   if (unpacked[["n"]] * max(1L, length(columns)) > max_entries) return(NULL)
   unpacked[["globals"]] = attr(res, "dbglm_globals", exact = TRUE)

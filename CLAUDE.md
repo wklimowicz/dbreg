@@ -33,6 +33,7 @@ dbreg(weight ~ Time | Diet + Chick, data = ChickWeight, strategy = "mundlak")
   - `fit.R` — estimators on sufficient statistics (`cross_moments()`, `fit_ols()`, `fit_2sls()`, `fit_meat()`)
   - `vcov.R` — covariance calculation, SSC and completed inference records
   - `fe-solver.R` — shared FE moment transport, projection systems and solvers
+  - `fe-transport.R` — bounded FE moment decoding and coefficient SQL transport
   - `glm-family.R`, `glm-fit.R` — GLM family/SQL helpers and IRLS fitting
   - `utils.R` — formula, source naming, connection setup and shared utilities
   - `backend-sql.R` — backend SQL helpers and compact payload codecs

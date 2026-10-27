@@ -94,53 +94,8 @@ fit_table_manager = function(conn, resources, backend_info = detect_backend(conn
   list(create = create, drop = drop)
 }
 
-# One coefficient-frame/lookup contract serves prediction and projection.
-# Decode integer64 keys before unlist() can strip their class.
-dbglm_coefficient_frame = function(info, coefficients) {
-  coefficients = as.matrix(coefficients)
-  frame = data.frame(op = rep(seq_along(info), vapply(info, function(group) length(group[["id"]]), integer(1))))
-  names(frame) = "__glm_op"
-  ids = lapply(info, function(group) group[["id"]])
-  frame[["__glm_group"]] = if (any(vapply(ids, is.character, logical(1)))) unlist(lapply(ids, as.character), use.names = FALSE) else
-    unlist(lapply(ids, as.numeric), use.names = FALSE)
-  frame[paste0("c", seq_len(ncol(coefficients)))] = as.data.frame(coefficients)
-  frame
-}
 
-# `tables` lists physical objects owned by the fit; inline SQL owns nothing.
-dbglm_coefficient_lookup = function(conn, frame, create, inline = FALSE) {
-  if (isTRUE(detect_backend(conn)[["is_databricks"]])) {
-    sql = sql_values_frame(conn, frame)
-    if (is.null(sql)) projection_abort("upload_limit", "FE coefficient lookup exceeds the SQL transfer limit.")
-    if (inline) return(list(source = paste0("(", sql, ")"), tables = character()))
-    lookup = create(sql, materialize = TRUE)
-  } else {
-    registered = basename(tempfile("dbglm_coef_"))
-    tryCatch(
-      {
-        duckdb::duckdb_register(conn, registered, frame)
-        lookup = create(paste("SELECT * FROM", DBI::dbQuoteIdentifier(conn, registered)), materialize = TRUE)
-      },
-      finally = try(duckdb::duckdb_unregister(conn, registered), silent = TRUE)
-    )
-  }
-  list(source = lookup, tables = lookup)
-}
 
-# Define a coefficient lookup once, then filter it per FE operation. Repeating
-# an inline JSON lookup in every operation can exceed the warehouse query-text
-# limit even when the lookup itself is within its transfer bound.
-dbglm_coefficient_ctes = function(source, n_ops, prefix) {
-  inline = startsWith(source, "(")
-  lookup = if (inline) paste0(prefix, "_lookup") else source
-  c(
-    if (inline) paste0(lookup, " AS (SELECT * FROM ", source, ")"),
-    vapply(seq_len(n_ops), function(i) paste0(
-      prefix, "_g", i,
-      " AS (SELECT * FROM ", lookup, " WHERE __glm_op=", i, ")"
-    ), character(1))
-  )
-}
 
 # Mathematical fitted state stays in plain lists. Only this separate lease
 # owns database handles; its finalizer must never capture a fitting frame.

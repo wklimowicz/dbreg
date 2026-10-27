@@ -85,6 +85,33 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   Compression groups the expanded regressors, fixed effects, offsets and
 #'   initial cluster. It preserves original observation counts, likelihoods,
 #'   IID and sandwich covariance, and requested original-row retention.
+#' @param null_model Logical, default `FALSE`. Explicitly request compact global
+#'   null likelihood diagnostics on the exact final estimation sample. The null
+#'   drops regressors and fixed effects, retains the fixed offset, and estimates
+#'   one constant only if the fitted specification includes an ordinary or FE
+#'   intercept. No null SQL or retained state is added when `FALSE`.
+#' @section Optional null likelihood diagnostics:
+#' `null_model = TRUE` stores `null_diagnostics`, a compact scalar record rather
+#' than a fitted model or retained rows. It uses the final full-model sample after
+#' subset, missing-value/positive-weight checks and recursive FE pruning. Removing
+#' regressors never restores excluded rows. This global null is distinct from an
+#' FE-only within-model baseline. A no-intercept model has only its fixed offset.
+#'
+#' Reported and original-weight likelihoods follow the same conventions as
+#' [logLik.dbglm()], including rounded fractional binomial weights and Gaussian
+#' reported likelihood minus one. Binomial outcomes remain binary; compressed
+#' fractional cell means never replace original outcomes in these diagnostics.
+#' The separate pseudo likelihood ratios are `1 - full / null`; these are not ordinary
+#' variance-explained R squared, are not clamped, and can be negative. Ratios with
+#' zero/nonfinite denominators or nonfinite full MLEs are unavailable explicitly.
+#'
+#' Null scalar optimization uses `control` iteration/step-halving limits. Some
+#' cases use analytic constants; offset binary models may need repeated aggregate
+#' evaluations. Failure warns and stores an unavailable reason, preserving the
+#' valid full fit. `print`, `gof`, and `glance` read only this stored record, even
+#' after `close()`. Default output fields remain unchanged. Requested `gof` stays
+#' numeric, adds availability flags, and carries the record as an attribute;
+#' `glance` also exposes reason columns. No diagnostic triggers lazy queries.
 #' @param verbose Print iteration diagnostics?
 #' @param fixef_rm Recursive FE exclusion policy, using fixest conventions.
 #'   If perfect-prediction groups remain under the selected policy, fitting errors.
@@ -190,7 +217,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
                  row_id = NULL, sample_table = NULL, separation = c("error", "prediction"),
                  retain = c("none", "prediction", "inference", "all"), subset = NULL,
                  strategy = c("auto", "compress", "moments", "ap"),
-                 compress_ratio = NULL, compress_nmax = 1e6) {
+                 compress_ratio = NULL, compress_nmax = 1e6, null_model = FALSE) {
   inputs = new.env(parent = emptyenv())
   env2env(environment(), inputs, names(formals(dbglm)))
   inputs[["resources"]] = fit_resources()
@@ -201,6 +228,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
 
 process_dbglm_inputs = function(inputs) {
   env2env(inputs, environment(), c(names(formals(dbglm)), "resources"))
+  if (!is.logical(null_model) || length(null_model) != 1L || is.na(null_model)) stop("`null_model` must be TRUE or FALSE.", call. = FALSE)
   weights = formula_column(weights, "weights")
   offset = formula_column(offset, "offset")
   family = dbglm_family(family)
@@ -517,7 +545,7 @@ process_dbglm_inputs = function(inputs) {
     "conn", "control", "count_input", "covariance", "create",
     "data", "design_center", "drop", "family", "fe",
     "fixef_rm", "fml", "from", "has_intercept", "keep",
-    "n", "n_eligible", "normalized", "offset", "original_base",
+    "n", "n_eligible", "normalized", "null_model", "offset", "original_base",
     "parsed", "path", "precomputed_fe_sizes", "prediction_keys", "pruning",
     "resources", "retain", "retained_source", "row", "row_id",
     "sample_table", "separation", "setup", "snap_info", "spec",
@@ -534,7 +562,7 @@ execute_dbglm_fit = function(inputs) {
     "conn", "control", "count_input", "covariance", "create",
     "data", "design_center", "drop", "family", "fe",
     "fixef_rm", "fml", "from", "has_intercept", "keep",
-    "n", "n_eligible", "normalized", "offset", "original_base",
+    "n", "n_eligible", "normalized", "null_model", "offset", "original_base",
     "parsed", "path", "precomputed_fe_sizes", "prediction_keys", "pruning",
     "resources", "retain", "retained_source", "row", "row_id",
     "sample_table", "separation", "setup", "snap_info", "spec",
@@ -590,6 +618,7 @@ execute_dbglm_fit = function(inputs) {
   call[["strategy"]] = strategy
   call[["compress_ratio"]] = compress_ratio
   call[["compress_nmax"]] = compress_nmax
+  if (null_model) call[["null_model"]] = TRUE
   if (!is.null(subset)) call[["subset"]] = if (inherits(subset, "formula"))
     stats::as.formula(paste(deparse(subset), collapse = ""), env = baseenv()) else subset
   call = as.call(call)
@@ -598,7 +627,7 @@ execute_dbglm_fit = function(inputs) {
   reported_loglik = weighted_loglik
   if (family[["family"]] == "gaussian") {
     log_weights = if (is.null(weights)) 0 else as.numeric(row[["log_weights"]]) + n * log(weight_scale)
-    weighted_loglik = -n / 2 * (log(2 * pi) + log(fit[["deviance"]] / n) + log(weight_scale) + 1) + log_weights / 2
+    weighted_loglik = dbglm_gaussian_loglik(n, fit[["deviance"]], weight_scale, log_weights)
     reported_loglik = weighted_loglik - 1
   }
   if (family[["family"]] == "binomial" && isTRUE(snap_info[["fractional_w"]] > 0)) {
@@ -609,7 +638,7 @@ execute_dbglm_fit = function(inputs) {
     reported_loglik = dbglm_binomial_loglik(conn, working, weight_scale, cell = cell)
   }
   result = list(
-    collin.coef = full,
+    null_diagnostics = NULL, collin.coef = full,
     projection_diagnostics = resources[["projection_diagnostics"]],
     collin.var = setdiff(all_names, public), coef_names = public, coef_names_all = all_names,
     family = family, fml = saved_formula, model_spec = spec, has_intercept = has_intercept,
@@ -643,6 +672,13 @@ execute_dbglm_fit = function(inputs) {
     status = if (unavailable) "unavailable" else "available",
     reason = if (unavailable) "nonfinite_mle" else NULL)
   result = install_inference_result(result, inference, beta)
+  if (null_model) result[["null_diagnostics"]] = dbglm_null_diagnostics(
+    result, conn, original_base, family, control, has_intercept || length(fe) > 0L,
+    weight_scale, saturated_loglik,
+    log_weights = if (family[["family"]] == "gaussian") log_weights else NULL,
+    fractional_weights = isTRUE(snap_info[["fractional_w"]] > 0),
+    full_is_null = !length(fe) && has_intercept && identical(x, "__dbglm_intercept")
+  )
   if (retain_prediction(retain) && length(fe)) {
     prediction_beta = numeric(length(all_x))
     prediction_beta[keep] = fit[["beta"]]

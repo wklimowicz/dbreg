@@ -27,7 +27,8 @@ dbglm(
   subset = NULL,
   strategy = c("auto", "compress", "moments", "ap"),
   compress_ratio = NULL,
-  compress_nmax = 1e+06
+  compress_nmax = 1e+06,
+  null_model = FALSE
 )
 }
 \arguments{
@@ -72,6 +73,12 @@ Poisson inference uses the normal distribution.}
 Named vectors must identify the retained design coefficients.}
 
 \item{control}{A list from [dbglm_control()].}
+
+\item{null_model}{Logical, default \code{FALSE}. Explicitly request compact global
+null likelihood diagnostics on the exact final estimation sample. The null drops
+regressors and fixed effects, retains the offset, and estimates one constant only
+if the fitted specification includes an ordinary or FE intercept. No null SQL or
+retained state is added when \code{FALSE}.}
 
 \item{verbose}{Print iteration diagnostics?}
 
@@ -198,4 +205,30 @@ d = data.frame(y = c(0, 1, 0, 0, 1, 1), x = c(-2, -1, 0, 1, 2, 3))
 m = dbglm(y ~ x, data = d, family = binomial("logit"))
 coef(m)
 predict(m, newdata = d, type = "response")
+}
+
+\section{Optional null likelihood diagnostics}{
+\code{null_model = TRUE} stores \code{null_diagnostics}, a compact scalar record,
+not a fitted null model or retained rows. It uses the exact final estimation sample,
+including subset, missing values, positive weights and recursive FE pruning; no
+excluded observations return when regressors are removed. The global null removes
+all ordinary regressors and FE. It keeps the fixed offset and a constant only when
+the fitted specification contains an ordinary or FE intercept; a no-intercept null
+has only its offset. This differs from an FE-only within-model baseline.
+
+Reported and original-weight likelihoods follow \code{logLik.dbglm}, including
+rounded fractional binomial weights and Gaussian reported likelihood minus one.
+Binomial outcomes remain binary; compressed fractional cell means never replace
+original outcomes in these diagnostics. The separate ratios \code{1-full/null}
+are pseudo likelihood ratios, not ordinary variance-explained R squared. They are
+not clamped and may be negative. Zero/nonfinite denominators and nonfinite full
+MLEs have explicit unavailable reasons.
+
+Optional scalar optimization uses the existing iteration/step-halving controls.
+Offset binary models can require repeated aggregate evaluations. Failure warns
+and stores an unavailable result without replacing the valid full fit. Consumers
+read only the stored record after fitting and after \code{close()}. Default output
+fields remain unchanged. Requested \code{gof} is numeric with availability flags
+and the record attribute; \code{glance} also supplies reason columns. No lazy query
+or refit is performed by these consumers.
 }

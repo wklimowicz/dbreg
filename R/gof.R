@@ -9,10 +9,14 @@
 #' @export
 gof = function(object, ...) {
   if (inherits(object, "dbglm")) {
-    return(c(
-      logLik = object[["loglik"]], deviance = object[["deviance"]],
-      AIC = stats::AIC(object), BIC = stats::BIC(object)
-    ))
+    output = c(logLik = object[["loglik"]], deviance = object[["deviance"]],
+      AIC = stats::AIC(object), BIC = stats::BIC(object))
+    record = object[["null_diagnostics"]]
+    if (!is.null(record)) {
+      output = c(output, dbglm_null_gof(record))
+      attr(output, "null_diagnostics") = record
+    }
+    return(output)
   }
   nobs = object[["nobs_orig"]]
   df_res = object[["df_residual"]]

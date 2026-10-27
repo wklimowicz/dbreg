@@ -615,3 +615,150 @@ dbglm_databricks_array_terms = function(
   }
   terms
 }
+
+# Compact diagnostics only: never a fitted null object, source lease or rows.
+dbglm_null_likelihood = function(full, value, fit_available, reason, finite_mle) {
+  ll_available = fit_available && is.finite(value)
+  ll_reason = if (!fit_available) reason else if (!is.finite(value)) "nonfinite_null_likelihood" else NULL
+  ratio_reason = if (!ll_available) ll_reason else if (!isTRUE(finite_mle)) "nonfinite_full_mle" else
+    if (!is.finite(full)) "nonfinite_full_likelihood" else if (value == 0) "zero_null_likelihood" else NULL
+  ratio = if (is.null(ratio_reason)) 1 - full / value else NA_real_
+  if (is.null(ratio_reason) && !is.finite(ratio)) ratio_reason = "nonfinite_ratio"
+  list(logLik = value, available = ll_available, reason = ll_reason,
+    ratio = ratio, ratio_available = is.null(ratio_reason), ratio_reason = ratio_reason)
+}
+
+dbglm_null_record = function(result, constant, available = FALSE, reason = NULL,
+                             method = NULL, reported = NA_real_, weighted = NA_real_,
+                             iterations = 0L, evaluations = 0L, message = NULL) {
+  list(definition = "global_same_sample_weights_offset_structural_constant",
+    nobs = result[["nobs_orig"]], constant = constant, offset = result[["offset"]],
+    family = result[["family"]][["family"]], link = result[["family"]][["link"]],
+    fit = list(available = available, reason = reason, method = method,
+      iterations = iterations, evaluations = evaluations,
+      iteration_limit = result[["control"]][["glm_max_iter"]],
+      evaluation_limit = 1 + result[["control"]][["glm_max_iter"]] * (1 + result[["control"]][["step_max_halvings"]]),
+      message = message),
+    reported = dbglm_null_likelihood(result[["loglik"]], reported, available, reason, result[["finite_mle"]]),
+    weighted = dbglm_null_likelihood(result[["weighted_loglik"]], weighted, available, reason, result[["finite_mle"]]))
+}
+
+# Called only for null_model=TRUE while the exact original final sample exists.
+# Scalar fits use existing kernels/controls; no new formula/sample processing.
+dbglm_null_diagnostics = function(result, conn, original_base, family, control,
+                                  constant, weight_scale, saturated_loglik,
+                                  log_weights = NULL, fractional_weights = FALSE,
+                                  full_is_null = FALSE) {
+  if (!isTRUE(result[["finite_mle"]])) return(dbglm_null_record(result, constant, reason = "nonfinite_full_mle"))
+  if (full_is_null) return(dbglm_null_record(result, constant, TRUE, method = "full_is_null",
+    reported = result[["loglik"]], weighted = result[["weighted_loglik"]]))
+  tryCatch({
+    backend_info = detect_backend(conn)
+    sum_sql = function(expr) sql_stable_sum(conn, expr, backend_info)
+    aggregate = function(terms) DBI::dbGetQuery(conn, paste("SELECT", paste(terms, collapse = ","), "FROM", original_base))
+    alpha = 0
+    iterations = 0L
+    evaluations = 0L
+    method = "fixed_offset"
+    null_fit = NULL
+    if (constant) {
+      if (family[["family"]] == "gaussian") {
+        location = aggregate(paste0(sum_sql("__dbglm_a*(__dbglm_y-__dbglm_o)"), "/", sum_sql("__dbglm_a"), " AS location"))
+        alpha = as.numeric(location[["location"]])
+        method = "gaussian_constant"
+      } else if (family[["family"]] == "poisson") {
+        totals = aggregate(c(paste(sum_sql("__dbglm_a*__dbglm_y"), "AS total"), "MAX(__dbglm_o) AS offset_max"))
+        total = as.numeric(totals[["total"]])
+        if (!is.finite(total) || total <= 0) stop("Null model reaches a numerical boundary.", call. = FALSE)
+        center = as.numeric(totals[["offset_max"]])
+        exposure = aggregate(paste(sum_sql(paste0("__dbglm_a*EXP(__dbglm_o-(", dbglm_number(center), "))")), "AS exposure"))
+        alpha = log(total) - (center + log(as.numeric(exposure[["exposure"]])))
+        method = "poisson_constant"
+      } else {
+        totals = aggregate(c(paste0(sum_sql("__dbglm_a*__dbglm_y"), "/", sum_sql("__dbglm_a"), " AS mean"),
+          if (!is.null(result[["offset"]])) paste0(sum_sql("__dbglm_a*__dbglm_o"), "/", sum_sql("__dbglm_a"), " AS offset_mean")))
+        mean = as.numeric(totals[["mean"]])
+        if (!is.finite(mean) || mean <= 0 || mean >= 1) stop("Null model reaches a numerical boundary.", call. = FALSE)
+        alpha = family[["linkfun"]](mean)
+        method = "binomial_constant"
+        if (!is.null(result[["offset"]])) {
+          alpha = alpha - as.numeric(totals[["offset_mean"]])
+          source = paste0("(SELECT *,1.0 AS __dbglm_null_intercept FROM ", original_base, ") null_sample")
+          null_fit = dbglm_irls(conn, source, "__dbglm_null_intercept", alpha, family, control, FALSE,
+            separation = "error", cell = FALSE)
+          alpha = as.numeric(null_fit[["beta"]])
+          iterations = null_fit[["iterations"]]
+          evaluations = 1L + iterations + null_fit[["step_halvings"]]
+          method = "binomial_scalar_irls"
+        }
+      }
+    }
+    if (length(alpha) != 1L || !is.finite(alpha)) stop("Null predictor is nonfinite.", call. = FALSE)
+    eta = paste0("__dbglm_o+(", dbglm_number(alpha), ")")
+    working = paste0("(", dbglm_working_sql(original_base, character(), numeric(), family[["link"]], eta = eta, conn = conn),
+      "SELECT * FROM working) null_working")
+    if (is.null(null_fit)) {
+      # Residual energy is evaluated on rows, never by subtracting raw moments.
+      finite = sql_is_finite(conn, c("eta", "w"), backend_info)
+      row = DBI::dbGetQuery(conn, paste("SELECT", paste(c(
+        paste(sum_sql(if (family[["family"]] == "gaussian") paste0(
+          "__dbglm_a*POWER((__dbglm_y-__dbglm_o)-(", dbglm_number(alpha), "),2)"
+        ) else "dev"), "AS deviance"), "MIN(mu) AS mu_min", "MAX(mu) AS mu_max",
+        paste(sum_sql("score"), "AS score"), paste(sum_sql("w"), "AS information"),
+        paste0("SUM(CASE WHEN NOT ", finite[[1L]], " OR NOT ", finite[[2L]], " OR w<=0 THEN 1 ELSE 0 END) AS bad")
+      ), collapse = ","), "FROM", working))
+      null_fit = row
+      evaluations = evaluations + 1L
+      if (!isTRUE(as.numeric(row[["bad"]]) == 0) || !is.finite(row[["deviance"]]) || dbglm_boundary(row, family[["link"]])) {
+        stop("Null model reaches a numerical boundary.", call. = FALSE)
+      }
+      if (constant && family[["family"]] != "gaussian" &&
+        abs(as.numeric(row[["score"]])) / sqrt(as.numeric(row[["information"]])) > control[["score_tol"]]) {
+        stop("Null analytic score exceeds the requested tolerance.", call. = FALSE)
+      }
+    }
+    if (family[["family"]] == "gaussian") {
+      weighted = dbglm_gaussian_loglik(result[["nobs_orig"]], null_fit[["deviance"]], weight_scale, log_weights)
+      reported = weighted - 1
+    } else {
+      weighted = (saturated_loglik - null_fit[["deviance"]] / 2) * weight_scale
+      reported = weighted
+      if (family[["family"]] == "binomial" && fractional_weights) {
+        # original_base is uncompressed and still has binary original outcomes.
+        reported = dbglm_binomial_loglik(conn, working, weight_scale, cell = FALSE)
+      }
+    }
+    dbglm_null_record(result, constant, TRUE, method = method, reported = as.numeric(reported), weighted = as.numeric(weighted),
+      iterations = iterations, evaluations = evaluations)
+  }, error = function(error) {
+    message = conditionMessage(error)
+    reason = if (grepl("did not converge within|step halving failed", message)) "budget_exceeded" else
+      if (grepl("boundary", message)) "null_boundary" else "numerical_error"
+    warning("Requested null model unavailable: ", message, call. = FALSE)
+    dbglm_null_record(result, constant, reason = reason, message = message,
+      iterations = NA_integer_, evaluations = NA_integer_)
+  })
+}
+
+# Consumers share stored scalar values/status; there is no lazy source access.
+dbglm_null_gof = function(record) {
+  value = function(part, field, available) if (isTRUE(part[[available]])) part[[field]] else NA_real_
+  c(null.logLik = value(record[["reported"]], "logLik", "available"),
+    weighted.null.logLik = value(record[["weighted"]], "logLik", "available"),
+    pseudo.r.squared = value(record[["reported"]], "ratio", "ratio_available"),
+    weighted.pseudo.r.squared = value(record[["weighted"]], "ratio", "ratio_available"),
+    null.available = as.numeric(record[["fit"]][["available"]]),
+    null.logLik.available = as.numeric(record[["reported"]][["available"]]),
+    weighted.null.logLik.available = as.numeric(record[["weighted"]][["available"]]),
+    pseudo.r.squared.available = as.numeric(record[["reported"]][["ratio_available"]]),
+    weighted.pseudo.r.squared.available = as.numeric(record[["weighted"]][["ratio_available"]]))
+}
+
+dbglm_null_reasons = function(record) {
+  reason = function(value) if (is.null(value)) NA_character_ else value
+  c(null.reason = reason(record[["fit"]][["reason"]]),
+    null.logLik.reason = reason(record[["reported"]][["reason"]]),
+    weighted.null.logLik.reason = reason(record[["weighted"]][["reason"]]),
+    pseudo.r.squared.reason = reason(record[["reported"]][["ratio_reason"]]),
+    weighted.pseudo.r.squared.reason = reason(record[["weighted"]][["ratio_reason"]]))
+}

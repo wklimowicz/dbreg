@@ -234,3 +234,9 @@ dbglm_saturated_loglik = function(conn, base) {
   value[positive] = h[["y"]][positive] * log(h[["y"]][positive]) - h[["y"]][positive] - lgamma(h[["y"]][positive] + 1)
   sum(h[["a"]] * value)
 }
+
+# Shared profile Gaussian reporting primitive. Keep normalized RSS and its
+# binary weight scale separate; multiplying them first can overflow.
+dbglm_gaussian_loglik = function(n, deviance, weight_scale, log_weights) {
+  -n / 2 * (log(2 * pi) + log(deviance / n) + log(weight_scale) + 1) + log_weights / 2
+}

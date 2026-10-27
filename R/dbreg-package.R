@@ -27,6 +27,7 @@ globalVariables(c(
   "n",
   "n_eligible",
   "normalized",
+  "null_model",
   "offset",
   "original_base",
   "parsed",

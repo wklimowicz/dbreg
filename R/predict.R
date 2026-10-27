@@ -664,13 +664,19 @@ tidy.dbglm = function(x, conf.int = FALSE, conf.level = 0.95, collin = FALSE, ..
 #' @rdname dbglm-methods
 #' @export
 glance.dbglm = function(x, ...) {
-  data.frame(
+  output = data.frame(
     nobs = x[["nobs_orig"]], nobs.input = x[["nobs_input"]], nobs.dropped = x[["nobs_dropped"]],
     logLik = x[["loglik"]], deviance = x[["deviance"]], AIC = stats::AIC(x), BIC = stats::BIC(x),
     df.residual = x[["df_residual"]], n.params = x[["n_params_model"]], family = x[["family"]][["family"]],
     link = x[["family"]][["link"]], vcov.type = x[["vcov_type"]], converged = x[["converged"]],
     finite.mle = x[["finite_mle"]], iterations = x[["iterations"]], score.max = x[["score_max"]]
   )
+  record = x[["null_diagnostics"]]
+  if (!is.null(record)) {
+    output = cbind(output, as.data.frame(as.list(dbglm_null_gof(record))),
+      as.data.frame(as.list(dbglm_null_reasons(record))))
+  }
+  output
 }
 
 #' @rdname dbglm-methods
@@ -696,8 +702,16 @@ print.dbglm = function(x, ...) {
     "Log-Likelihood:", format(x[["loglik"]], digits = 6),
     "  Deviance:", format(x[["deviance"]], digits = 6), "  BIC:", format(stats::BIC(x), digits = 6), "\n"
   )
-  if (!is.null(x[["null_loglik"]]) && is.finite(x[["null_loglik"]]) && x[["null_loglik"]] != 0) {
-    cat("Pseudo R2:", format(1 - x[["loglik"]] / x[["null_loglik"]], digits = 6), "\n")
+  record = x[["null_diagnostics"]]
+  if (!is.null(record)) {
+    cat("Global null model:", if (isTRUE(record[["fit"]][["available"]])) "available" else record[["fit"]][["reason"]], "\n")
+    for (type in c("reported", "weighted")) {
+      part = record[[type]]
+      cat("Null log-likelihood (", type, "): ",
+        if (isTRUE(part[["available"]])) format(part[["logLik"]], digits = 6) else part[["reason"]],
+        "; pseudo likelihood ratio: ",
+        if (isTRUE(part[["ratio_available"]])) format(part[["ratio"]], digits = 6) else part[["ratio_reason"]], "\n", sep = "")
+    }
   }
   cat("IRLS iterations:", x[["iterations"]], "\n")
   invisible(x)

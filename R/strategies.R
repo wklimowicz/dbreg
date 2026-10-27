@@ -577,7 +577,7 @@ execute_compress_strategy = function(inputs) {
   factor_levels = lapply(setNames(nm = categorical), function(v) {
     saved = inputs[["factor_levels"]][[v]]
     if (!is.null(saved)) return(saved)
-    if (is.logical(compressed_dat[[v]])) c(FALSE, TRUE) else levels(factor(compressed_dat[[v]]))
+    if (is.logical(compressed_dat[[v]])) sort(unique(compressed_dat[[v]])) else levels(factor(compressed_dat[[v]]))
   })
   register_factor_display(inputs, factor_levels, factor_classes = compressed_classes[categorical])
   matrix_formula = reformulate(if (length(c(design_vars, fe, nuisance))) c(design_vars, fe, nuisance) else "1", intercept = intercept)

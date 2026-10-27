@@ -933,7 +933,18 @@ fitted_model_matrix = function(formula, data) {
   data = model_matrix_data(formula, data)
   categorical = names(data)[vapply(data, function(x) is.factor(x) || is.character(x) || is.logical(x), logical(1))]
   categorical = intersect(categorical, all.vars(formula))
-  contrasts = lapply(data[categorical], function(x) {
+  # The SQL compiler represents a sole categorical level by X = 1. Apply
+  # that same basis only in this private working copy; raw compressed keys
+  # and declared unused factor levels remain owned by their original data.
+  constant_sources = categorical[vapply(data[categorical], function(x) {
+    length(if (is.factor(x)) levels(x) else levels(factor(x))) == 1L
+  }, logical(1))]
+  original_data = data
+  for (variable in constant_sources) {
+    data[[variable]] = rep(1, nrow(data))
+    data[[variable]][is.na(original_data[[variable]])] = NA_real_
+  }
+  contrasts = lapply(data[setdiff(categorical, constant_sources)], function(x) {
     lev = if (is.factor(x)) levels(x) else levels(factor(x))
     stats::contr.treatment(lev)
   })
@@ -944,11 +955,29 @@ fitted_model_matrix = function(formula, data) {
   width = (length(labels) + 1L) *
     prod(vapply(contrasts, nrow, integer(1)))
   if (!any(grepl("(", labels, fixed = TRUE)) && nrow(data) * width <= 1e6) {
-    return(stats::model.matrix(formula, data = data, contrasts.arg = contrasts))
+    X = stats::model.matrix(formula, data = data, contrasts.arg = contrasts)
+  } else {
+    X = tryCatch(Matrix::sparse.model.matrix(formula, data = data, contrasts.arg = contrasts),
+      error = function(e) stats::model.matrix(formula, data = data, contrasts.arg = contrasts)
+    )
   }
-  tryCatch(Matrix::sparse.model.matrix(formula, data = data, contrasts.arg = contrasts),
-    error = function(e) stats::model.matrix(formula, data = data, contrasts.arg = contrasts)
-  )
+  if (length(constant_sources)) {
+    attr(X, "dbreg_constant_sources") = constant_sources
+    # Rebuilders that select legacy FE coordinates by name need the same
+    # canonical labels as the fitted producer. Relabel affected terms only.
+    recipes = model_matrix_recipes(X, formula, original_data)
+    factors = attr(stats::terms(formula), "factors")
+    affected = vapply(seq_len(ncol(factors)), function(term) {
+      variables = rownames(factors)[factors[, term] != 0L]
+      any(vapply(variables, function(variable) {
+        expr = parse(text = variable, keep.source = FALSE)[[1L]]
+        is.symbol(expr) && as.character(expr) %in% constant_sources
+      }, logical(1)))
+    }, logical(1))
+    positions = which(attr(X, "assign") %in% which(affected))
+    colnames(X)[positions] = vapply(recipes[positions], linear_recipe_label, character(1))
+  }
+  X
 }
 
 # A single GLM design specification shared by SQL fitting and R prediction.
@@ -1462,6 +1491,11 @@ linear_column_labels = function(columns, source_map = character(), i_specs = lis
 model_matrix_recipes = function(X, formula, data, design = NULL, trend_sources = character()) {
   tt = stats::terms(formula, data = data)
   factors = attr(tt, "factors")
+  source_variable = function(variable) {
+    expr = parse(text = variable, keep.source = FALSE)[[1L]]
+    if (is.symbol(expr)) as.character(expr) else variable
+  }
+  constant_sources = attr(X, "dbreg_constant_sources")
   # model.matrix's no-intercept producer promotes its first categorical
   # component to full indicators. Carry that actual coding decision into the
   # label basis; terms() alone still describes treatment contrasts here.
@@ -1469,7 +1503,7 @@ model_matrix_recipes = function(X, formula, data, design = NULL, trend_sources =
     promoted = FALSE
     for (term in seq_len(ncol(factors))) {
       for (variable in rownames(factors)) {
-        value = data[[variable]]
+        value = data[[source_variable(variable)]]
         categorical = is.factor(value) || is.character(value) || is.logical(value)
         levels = if (is.factor(value)) levels(value) else if (categorical) levels(factor(value)) else character()
         if (factors[variable, term] != 0L && length(levels) > 1L) {
@@ -1490,11 +1524,16 @@ model_matrix_recipes = function(X, formula, data, design = NULL, trend_sources =
     parts = lapply(variables, function(variable) {
       emitted = if (!is.null(compiled)) match(variable, compiled[["alias"]]) else NA_integer_
       if (!is.na(emitted) && !identical(compiled[["recipe"]][[emitted]][["kind"]], "raw")) return(list(compiled[["recipe"]][[emitted]]))
+      component = variable
+      variable = source_variable(variable)
       value = data[[variable]]
       actual = if (variable %in% names(trend_sources)) trend_sources[[variable]] else variable
+      if (variable %in% constant_sources) return(list(list(kind = "constant", variable = actual)))
+      power = if (is.null(value)) parse_power_term(variable) else NULL
+      if (!is.null(power)) return(list(list(kind = "power", variable = power[["variable"]], exponent = power[["exponent"]])))
       if (is.factor(value) || is.character(value) || is.logical(value)) {
         levels = if (is.factor(value)) levels(value) else levels(factor(value))
-        if (factors[variable, term] == 1L) levels = levels[-1L]
+        if (factors[component, term] == 1L) levels = levels[-1L]
         return(lapply(levels, function(level) list(kind = "indicator", variable = actual, value = level)))
       }
       list(list(kind = "numeric", variable = actual))
@@ -1570,7 +1609,9 @@ compressed_linear_layout = function(X, formula, data, design, original_formula, 
     } else {
       value = data[[variable]]
       categorical = is.factor(value) || is.character(value) || is.logical(value)
-      if (categorical) {
+      if (variable %in% attr(X, "dbreg_constant_sources")) {
+        recipe = label_recipes[[j]]
+      } else if (categorical) {
         levels = if (is.factor(value)) levels(value) else levels(factor(value))
         width = sum(assignment == term_id)
         selected = if (width == length(levels)) seq_along(levels) else seq.int(2L, length(levels))

@@ -535,6 +535,8 @@ predict_retained_sample = function(object, type = "link", sample = c("estimation
 }
 
 inference_coefficients = function(object, V) {
+  ids = attr(V, "dbreg_coefficient_ids")
+  if (!is.null(ids) && !is.null(object[["linear_design"]])) return(linear_coefficients_for_ids(object, ids))
   beta = stats::coef(object)
   if (!identical(names(beta), rownames(V))) beta = beta[rownames(V)]
   beta
@@ -546,7 +548,9 @@ inference_coeftable = function(object, V, distribution = NULL, coefficients = NU
   statistic = beta / se
   normal = if (is.null(distribution)) inherits(object, "dbglm") && object[["family"]][["family"]] %in% c("binomial", "poisson") else distribution == "normal"
   p = if (normal) 2 * stats::pnorm(-abs(statistic)) else 2 * stats::pt(-abs(statistic), attr(V, "df.t"))
-  cbind(estimate = beta, std.error = se, statistic = statistic, p.value = p)
+  table = cbind(estimate = beta, std.error = se, statistic = statistic, p.value = p)
+  attr(table, "dbreg_coefficient_ids") = attr(V, "dbreg_coefficient_ids")
+  table
 }
 
 #' Summarize a database regression
@@ -606,6 +610,7 @@ inference_confint = function(object, V, parm, level) {
   answer = outer(sqrt(Matrix::diag(V))[indices], critical) + beta[indices]
   rownames(answer) = names(beta)[indices]
   colnames(answer) = paste0(format(100 * probabilities), " %")
+  if (!is.null(attr(V, "dbreg_coefficient_ids"))) attr(answer, "dbreg_coefficient_ids") = attr(V, "dbreg_coefficient_ids")[indices]
   answer
 }
 
@@ -833,9 +838,17 @@ finalize_linear_inference = function(result, inputs) {
   state = inputs[["inference_state"]]
   if (is.null(state)) stop("This strategy has not retained its inference frame.", call. = FALSE)
   if (state[["nobs"]] != result[["nobs_orig"]]) stop("Retained score rows differ from the fitted sample.", call. = FALSE)
+  layout = result[["linear_design"]]
+  if (!is.null(layout) && is.null(state[["coefficient_ids"]])) {
+    positions = match(state[["coefficient_names"]], layout[["columns"]][["alias"]])
+    if (anyNA(positions)) stop("Retained scores do not match fitted coordinate IDs.", call. = FALSE)
+    state[["coefficient_ids"]] = layout[["columns"]][["id"]][positions]
+  }
   map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])
   names = standardize_coef_names(restore_names(state[["coefficient_names"]], map))
-  public_names = names(coef.dbreg(result))
+  public_names = if (!is.null(state[["coefficient_ids"]])) {
+    names(linear_coefficients_for_ids(result, state[["coefficient_ids"]]))
+  } else names(coef.dbreg(result))
   if (is.null(public_names)) public_names = character()
   if (!identical(names, public_names)) stop("Retained inference coefficients do not match the fitted design.", call. = FALSE)
   state[["coefficient_names"]] = names
@@ -1170,12 +1183,13 @@ finalize_linear_sample = function(result, inputs) {
 # no second WLS or observation-level FE projection is needed.
 retain_compressed_score_sample = function(
   fit, score_X, yhat, cells,
-  groups, from_statement, slope_names, inputs
+  groups, from_statement, layout, inputs
 ) {
   conn = inputs[["conn"]]
   resources = inputs[["sample_resources"]]
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
-  selected = if (length(inputs[["fe"]])) which(standardize_coef_names(fit[["x"]]) %in% slope_names) else seq_along(fit[["x"]])
+  selected_ids = if (length(inputs[["fe"]])) layout[["slope_ids"]] else layout[["fitted_ids"]]
+  selected = match(selected_ids, layout[["fitted_ids"]])
   names = fit[["x"]][selected]
   scale = fit[["weight_scale"]]
   projection = fit[["sandwich_bread"]][selected, , drop = FALSE] * scale
@@ -1244,6 +1258,7 @@ retain_compressed_score_sample = function(
   state[["bread"]] = unname(fit[["bread"]][selected, selected, drop = FALSE]) * scale
   state[["score_projection"]] = diag(length(selected))
   state[["coefficient_names"]] = names
+  state[["coefficient_ids"]] = selected_ids
   state[["kind"]] = "ols"
   state[["weight_scale"]] = scale
   state[["storage"]] = if (materialize) "rows" else "cells"

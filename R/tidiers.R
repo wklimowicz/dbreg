@@ -53,6 +53,8 @@ tidy.dbreg = function(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE,
       vcov = vcov[names, names, drop = FALSE]
     }
     attr(vcov, "df.t") = if (is.null(df)) x[["df_t"]] else df
+    # Public supplied matrix attributes cannot assert internal axis identity.
+    attr(vcov, "dbreg_coefficient_ids") = linear_view_ids(x)
     x[["coeftable"]] = inference_coeftable(x, vcov)
   } else if (!is.null(vcov) || !is.null(cluster) || !is.null(ssc)) {
     x = summary.dbreg(x, vcov = vcov, cluster = cluster, ssc = ssc)
@@ -68,7 +70,12 @@ tidy.dbreg = function(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE,
     }
   }
   ct = x[["coeftable"]]
-  if (!isTRUE(fe) && !is.null(x[["fe"]])) {
+  ct_ids = linear_active_ids(x)
+  positions = linear_table_positions(x, fe)
+  if (!is.null(positions)) {
+    ct = ct[positions, , drop = FALSE]
+    ct_ids = ct_ids[positions]
+  } else if (!isTRUE(fe) && !is.null(x[["fe"]])) {
     coef_names = x[["coef_names"]]
     if (!is.null(coef_names)) {
       ct = ct[coef_names, , drop = FALSE]
@@ -89,7 +96,10 @@ tidy.dbreg = function(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE,
       row.names = NULL
     )
     estimated = which(!is.na(coefficients))
-    if (identical(terms[estimated], rownames(ct))) {
+    output_ids = linear_view_ids(x, fe, collin = TRUE)
+    if (!is.null(output_ids) && !is.null(ct_ids)) {
+      matched = match(output_ids, ct_ids)
+    } else if (identical(terms[estimated], rownames(ct))) {
       matched = rep(NA_integer_, length(terms))
       matched[estimated] = seq_len(nrow(ct))
     } else matched = match(terms, rownames(ct))
@@ -102,7 +112,9 @@ tidy.dbreg = function(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE,
 
   if (isTRUE(conf.int)) {
     ci = if (custom) inference_confint(x, vcov, NULL, conf.level) else confint(x, level = conf.level, fe = fe)
-    ci_positions = if (identical(rownames(ct), rownames(ci))) seq_len(nrow(ct)) else match(rownames(ct), rownames(ci))
+    ci_ids = attr(ci, "dbreg_coefficient_ids")
+    ci_positions = if (!is.null(ct_ids) && !is.null(ci_ids)) match(ct_ids, ci_ids) else
+      if (identical(rownames(ct), rownames(ci))) seq_len(nrow(ct)) else match(rownames(ct), rownames(ci))
     ci_match = ci_positions[matched]
     out[["conf.low"]] = unname(ci[ci_match, 1])
     out[["conf.high"]] = unname(ci[ci_match, 2])
@@ -155,7 +167,8 @@ glance.dbreg = function(x, ...) {
   )
 }
 
-select_coefficient_names = function(names, keep = NULL, drop = NULL, order = NULL) {
+select_coefficient_names = function(names, keep = NULL, drop = NULL, order = NULL, positions = FALSE) {
+  indices = seq_along(names)
   for (value in list(keep, drop, order)) if (!is.null(value) && (!is.character(value) || anyNA(value))) stop("Coefficient selectors must be nonmissing regular expressions.", call. = FALSE)
   match = function(pattern, names) {
     pattern = sub("^!%", "%!", pattern)
@@ -165,13 +178,22 @@ select_coefficient_names = function(names, keep = NULL, drop = NULL, order = NUL
     found = grepl(pattern, names, perl = TRUE)
     if (negative) !found else found
   }
-  if (length(keep)) names = names[Reduce(`|`, lapply(keep, match, names = names))]
-  if (length(drop)) names = names[!Reduce(`|`, lapply(drop, match, names = names))]
+  if (length(keep)) {
+    chosen = Reduce(`|`, lapply(keep, match, names = names))
+    names = names[chosen]
+    indices = indices[chosen]
+  }
+  if (length(drop)) {
+    chosen = !Reduce(`|`, lapply(drop, match, names = names))
+    names = names[chosen]
+    indices = indices[chosen]
+  }
   for (pattern in rev(order)) {
     first = match(pattern, names)
     names = c(names[first], names[!first])
+    indices = c(indices[first], indices[!first])
   }
-  names
+  if (positions) indices else names
 }
 
 #' Coefficient summaries through fixest generics
@@ -185,9 +207,17 @@ NULL
 #' @rdname coefficient-summaries
 #' @exportS3Method fixest::coeftable
 coeftable.dbreg = function(object, keep = NULL, drop = NULL, order = NULL, ...) {
-  value = summary.dbreg(object, ...)[["coeftable"]]
-  names = select_coefficient_names(names(stats::coef(object)), keep, drop, order)
-  value = as.matrix(value[names, , drop = FALSE])
+  object = summary.dbreg(object, ...)
+  value = object[["coeftable"]]
+  positions = linear_table_positions(object)
+  if (!is.null(positions)) value = value[positions, , drop = FALSE]
+  if (!is.null(object[["linear_design"]])) {
+    selected = select_coefficient_names(rownames(value), keep, drop, order, positions = TRUE)
+    value = as.matrix(value[selected, , drop = FALSE])
+  } else {
+    names = select_coefficient_names(names(stats::coef(object)), keep, drop, order)
+    value = as.matrix(value[names, , drop = FALSE])
+  }
   normal = inherits(object, "dbglm") && object[["family"]][["family"]] %in% c("binomial", "poisson")
   colnames(value) = c("Estimate", "Std. Error", if (normal) "z value" else "t value", if (normal) "Pr(>|z|)" else "Pr(>|t|)")
   value

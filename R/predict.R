@@ -50,6 +50,16 @@ coef.dbreg = function(object, fe = FALSE, collin = FALSE, ...) {
   if (isTRUE(fe) && !isTRUE(collin) && !is.null(object[["all_coefficients"]])) return(object[["all_coefficients"]])
 
   ct = object[["coeftable"]]
+  if (!is.null(object[["linear_design"]])) {
+    ids = linear_view_ids(object, fe, collin)
+    if (isTRUE(collin)) {
+      values = object[["collin.coef"]]
+      positions = match(ids, linear_collin_ids(object))
+      return(values[positions])
+    }
+    return(stats::setNames(ct[match(ids, linear_active_ids(object)), "estimate"],
+      rownames(ct)[match(ids, linear_active_ids(object))]))
+  }
   out = if (isTRUE(collin) && !is.null(object[["collin.coef"]])) {
     object[["collin.coef"]]
   } else {
@@ -222,7 +232,7 @@ predict.dbreg = function(
     return(if (interval == "none") blank else data.frame(fit = blank, lwr = blank, upr = blank))
   }
   newdata = newdata[valid, , drop = FALSE]
-  native_data = if (!is.null(object[["linear_design"]])) newdata else NULL
+  native_data = if (native_linear_runtime(object)) newdata else NULL
   newdata = prediction_factors(object, newdata)
 
   # Ensure FE columns are factors
@@ -253,7 +263,7 @@ predict.dbreg = function(
     terms_rhs = "1"
   }
   fml_mm = reformulate(terms_rhs, intercept = intercept)
-  if (!is.null(object[["linear_design"]])) {
+  if (native_linear_runtime(object)) {
     mm = native_linear_matrix(object, native_data, stored = stored && identical(object[["strategy"]], "compress"))
   } else if (stored && !is.null(object[["compressed_design"]])) {
     spec = object[["compressed_design"]]
@@ -261,7 +271,10 @@ predict.dbreg = function(
     names(data) = unname(spec[["source_names"]][names(data)])
     data = compressed_trend_data(data, spec[["trend_sources"]], spec[["trend_centers"]])
     mm = fitted_model_matrix(spec[["formula"]], data)
-    mm = mm[, names(spec[["columns"]]), drop = FALSE]
+    if (!is.null(object[["linear_design"]])) {
+      positions = match(object[["linear_design"]][["fitted_ids"]], object[["linear_design"]][["columns"]][["id"]])
+      mm = mm[, positions, drop = FALSE]
+    } else mm = mm[, names(spec[["columns"]]), drop = FALSE]
     colnames(mm) = unname(spec[["columns"]])
   } else {
     mm = build_newdata_design(fml_mm, newdata, object[["factor_levels"]], i_cols, object[["i_specs"]])
@@ -290,7 +303,7 @@ predict.dbreg = function(
       call. = FALSE
     )
   }
-  if (is.null(object[["linear_design"]])) {
+  if (!native_linear_runtime(object) && (is.null(object[["linear_design"]]) || !stored)) {
     mm = if (length(betas)) mm[, names(betas), drop = FALSE] else matrix(0, nrow(newdata), 0L)
   }
 
@@ -386,6 +399,10 @@ vcov.dbreg = function(object, fe = FALSE, ..., vcov = NULL, cluster = NULL, ssc 
   out = object[["vcov"]]
   if (isTRUE(fe) && length(object[["fe"]]) && isTRUE(object[["postfit_covariance"]])) stop("Post-fit absorbed-effect covariance is not supported; use fe=FALSE.", call. = FALSE)
   if (!is.null(object[["inference_result"]])) {
+    ids = linear_view_ids(object, fe)
+    if (!is.null(ids) && !is.null(object[["inference_result"]][["coefficient_ids"]])) {
+      return(inference_covariance(object[["inference_result"]], coefficient_ids = ids))
+    }
     visible = if (!isTRUE(fe) && length(object[["fe"]])) names(coef(object, fe = fe)) else object[["inference_result"]][["coefficient_names"]]
     return(inference_covariance(object[["inference_result"]], visible))
   }
@@ -396,8 +413,14 @@ vcov.dbreg = function(object, fe = FALSE, ..., vcov = NULL, cluster = NULL, ssc 
   # Its rows and the stored covariance share the fitted parameter order.
   dimnames(out) = rep(list(rownames(object[["coeftable"]])), 2L)
   if (!isTRUE(fe) && length(object[["fe"]])) {
-    visible = names(coef(object, fe = fe))
-    out = out[visible, visible, drop = FALSE]
+    ids = linear_view_ids(object, fe)
+    if (!is.null(ids)) {
+      positions = match(ids, object[["linear_design"]][["fitted_ids"]])
+      out = out[positions, positions, drop = FALSE]
+    } else {
+      visible = names(coef(object, fe = fe))
+      out = out[visible, visible, drop = FALSE]
+    }
   }
   for (nm in names(metadata)) if (!is.null(metadata[[nm]])) attr(out, nm) = metadata[[nm]]
   out
@@ -439,7 +462,11 @@ confint.dbreg = function(
 
   ct = object[["coeftable"]]
 
-  if (!isTRUE(fe) && !is.null(object[["fe"]])) {
+  positions = linear_table_positions(object, fe)
+  ci_ids = linear_view_ids(object, fe)
+  if (!is.null(positions)) {
+    ct = ct[positions, , drop = FALSE]
+  } else if (!isTRUE(fe) && !is.null(object[["fe"]])) {
     coef_names = object[["coef_names"]]
     if (!is.null(coef_names)) {
       ct = ct[coef_names, , drop = FALSE]
@@ -462,7 +489,9 @@ confint.dbreg = function(
 
   if (!missing(parm)) {
     ci = ci[parm, , drop = FALSE]
+    if (!is.null(ci_ids)) ci_ids = ci_ids[if (is.character(parm)) match(parm, rownames(ct)) else seq_along(ci_ids)[parm]]
   }
+  if (!is.null(ci_ids)) attr(ci, "dbreg_coefficient_ids") = ci_ids
 
   ci
 }
@@ -1075,9 +1104,16 @@ finalize_linear_prediction = function(result, inputs) {
   map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])
   design_names = standardize_coef_names(restore_names(design[["aliases"]], map))
   beta = coef.dbreg(result)
-  if (length(setdiff(names(beta), design_names))) stop("Could not align fitted OLS prediction slopes.", call. = FALSE)
   full_beta = stats::setNames(rep(0, length(design_names)), design_names)
-  full_beta[names(beta)] = beta
+  if (!is.null(result[["linear_design"]])) {
+    ids = result[["linear_design"]][["slope_ids"]]
+    positions = match(ids, design[["columns"]][["id"]])
+    if (anyNA(positions)) stop("Could not align fitted OLS prediction coordinates.", call. = FALSE)
+    full_beta[positions] = linear_coefficients_for_ids(result, ids)
+  } else {
+    if (length(setdiff(names(beta), design_names))) stop("Could not align fitted OLS prediction slopes.", call. = FALSE)
+    full_beta[names(beta)] = beta
+  }
   taken = unique(c(
     inputs[["yvar"]], inputs[["xvars"]], inputs[["fe"]], unlist(components),
     inputs[["weights"]], inputs[["cluster_var"]], inputs[["row_id_safe"]]
@@ -1167,9 +1203,18 @@ finalize_fwl_prediction = function(result, inputs) {
   map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])
   design_names = standardize_coef_names(restore_names(x, map))
   fitted = coef.dbreg(result)
-  if (length(setdiff(names(fitted), design_names))) return(NULL)
   beta = stats::setNames(rep(0, p), design_names)
-  beta[names(fitted)] = fitted
+  if (!is.null(result[["linear_design"]])) {
+    layout = result[["linear_design"]]
+    ids = layout[["slope_ids"]]
+    aliases = layout[["columns"]][["alias"]][match(ids, layout[["columns"]][["id"]])]
+    positions = match(aliases, x)
+    if (anyNA(positions)) return(NULL)
+    beta[positions] = linear_coefficients_for_ids(result, ids)
+  } else {
+    if (length(setdiff(names(fitted), design_names))) return(NULL)
+    beta[names(fitted)] = fitted
+  }
   alpha = moments[["alpha"]]
   gamma = as.numeric(alpha[, 1L] - alpha[, seq_len(p) + 1L, drop = FALSE] %*% unname(beta))
   starts = cumsum(c(0, moments[["sizes"]]))
@@ -1885,7 +1930,7 @@ sql_prediction_context = function(object, conn, dataframe_labels = NULL) {
   if (is.null(state)) {
     beta = stats::coef(object)
     if (inherits(object, "dbglm")) names(beta) = object[["design_names"]]
-    index = if (!is.null(object[["linear_design"]])) {
+    index = if (native_linear_runtime(object)) {
       match(object[["linear_design"]][["fitted_ids"]], design[["ids"]])
     } else match(names(beta), design[["names"]])
     if (anyNA(index)) stop("Could not align fitted SQL prediction coefficients.", call. = FALSE)

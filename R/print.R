@@ -23,7 +23,10 @@ print.dbreg = function(x, fe = FALSE, ...) {
 
   ct = x[["coeftable"]]
   colnames(ct) = c("Estimate", "Std. Error", "t value", "Pr(>|t|)")
-  if (!isTRUE(fe) && !is.null(x[["fe"]])) {
+  positions = linear_table_positions(x, fe)
+  if (!is.null(positions)) {
+    ct = ct[positions, , drop = FALSE]
+  } else if (!isTRUE(fe) && !is.null(x[["fe"]])) {
     # Use coef_names if available (handles interactions), fall back to xvars
     coef_names = x[["coef_names"]]
     if (!is.null(coef_names)) {

@@ -316,7 +316,7 @@ inference_repair_vcov = function(V, fix = TRUE) {
 # A completed covariance policy is separate from its retained score recipe.
 new_inference_result = function(covariance, kind, coefficient_names, clusters,
                                 n_clusters, ssc, n_params_vcov, df_t, distribution,
-                                repair = NULL, status = "available", reason = NULL) {
+                                repair = NULL, status = "available", reason = NULL, coefficient_ids = NULL) {
   if (!length(coefficient_names)) coefficient_names = character()
   if (!identical(dim(covariance), rep(length(coefficient_names), 2L)) ||
       anyNA(coefficient_names) ||
@@ -324,6 +324,9 @@ new_inference_result = function(covariance, kind, coefficient_names, clusters,
       !identical(as.character(colnames(covariance)), coefficient_names)) {
     stop("Covariance coefficient identities do not match the fitted design.", call. = FALSE)
   }
+  if (!is.null(coefficient_ids) && (!is.character(coefficient_ids) ||
+      length(coefficient_ids) != length(coefficient_names) || anyNA(coefficient_ids) ||
+      anyDuplicated(coefficient_ids))) stop("Invalid covariance coordinate IDs.", call. = FALSE)
   if (!kind %in% c("iid", "hc1", "cluster") || !distribution %in% c("t", "normal")) stop("Invalid inference policy.", call. = FALSE)
   if (!identical(status, "available") && !identical(status, "unavailable")) stop("Invalid inference availability.", call. = FALSE)
   unavailable = identical(status, "unavailable")
@@ -339,13 +342,15 @@ new_inference_result = function(covariance, kind, coefficient_names, clusters,
   result = list(covariance = covariance, coefficient_names = coefficient_names,
     kind = kind, clusters = clusters, n_clusters = if (length(clusters)) n_clusters else NULL,
     ssc = inference_ssc(ssc), n_params_vcov = n_params_vcov, df_t = df_t,
-    distribution = distribution, repair = repair, status = status, reason = reason)
+    distribution = distribution, repair = repair, status = status, reason = reason,
+    coefficient_ids = coefficient_ids)
   result[["covariance"]] = stamp_inference_covariance(covariance, result)
   result
 }
 
 # Stamp once at construction, then restore the same policy only on subsets.
 stamp_inference_covariance = function(V, result) {
+  attr(V, "dbreg_coefficient_ids") = result[["coefficient_ids"]]
   attr(V, "type") = attr(V, "vcov_type") = result[["kind"]]
   attr(V, "cluster_var") = if (length(result[["clusters"]])) vapply(result[["clusters"]], paste, collapse = "^", character(1)) else NULL
   attr(V, "n_clusters") = result[["n_clusters"]]
@@ -356,12 +361,18 @@ stamp_inference_covariance = function(V, result) {
   V
 }
 
-inference_covariance = function(result, coefficients = result[["coefficient_names"]]) {
+inference_covariance = function(result, coefficients = result[["coefficient_names"]], coefficient_ids = NULL) {
   V = result[["covariance"]]
-  if (identical(coefficients, result[["coefficient_names"]])) return(V)
-  subset = V[coefficients, coefficients, drop = FALSE]
+  positions = if (!is.null(coefficient_ids)) {
+    if (is.null(result[["coefficient_ids"]])) stop("Covariance does not declare fitted coordinate IDs.", call. = FALSE)
+    match(coefficient_ids, result[["coefficient_ids"]])
+  } else if (identical(coefficients, result[["coefficient_names"]])) seq_len(nrow(V)) else match(coefficients, result[["coefficient_names"]])
+  if (anyNA(positions)) stop("Unknown covariance coordinates.", call. = FALSE)
+  if (identical(positions, seq_len(nrow(V)))) return(V)
+  subset = V[positions, positions, drop = FALSE]
   attr(subset, "rss") = attr(V, "rss")
   attr(subset, "tss") = attr(V, "tss")
+  if (!is.null(result[["coefficient_ids"]])) result[["coefficient_ids"]] = result[["coefficient_ids"]][positions]
   stamp_inference_covariance(subset, result)
 }
 
@@ -372,6 +383,7 @@ install_inference_result = function(object, result, coefficients) {
   object[["inference_result"]] = result
   object[["vcov"]] = V
   object[["coeftable"]] = inference_coeftable(object, V, result[["distribution"]], coefficients)
+  attr(object[["coeftable"]], "dbreg_coefficient_ids") = result[["coefficient_ids"]]
   object[["vcov_type"]] = result[["kind"]]
   for (field in c("cluster_var", "n_clusters", "ssc", "n_params", "df_t")) object[[field]] = attr(V, field)
   if (inherits(object, "dbglm")) object[["n_params_vcov"]] = result[["n_params_vcov"]]
@@ -390,10 +402,6 @@ requested_inference_result = function(object, vcov = NULL, cluster = NULL, ssc =
   if (is.null(vcov) && is.null(cluster)) vcov = object[["vcov_type"]]
   if (is.null(vcov) && is.null(cluster)) vcov = attr(object[["vcov"]], "type")
   retained_inference_result(object, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)
-}
-
-retained_covariance = function(object, vcov = "iid", cluster = NULL, ssc = NULL, vcov_fix = TRUE) {
-  inference_covariance(retained_inference_result(object, vcov, cluster, ssc, vcov_fix))
 }
 
 retained_inference_result = function(object, vcov = "iid", cluster = NULL, ssc = NULL, vcov_fix = TRUE) {
@@ -456,7 +464,8 @@ retained_inference_result = function(object, vcov = "iid", cluster = NULL, ssc =
   test_df = if (is.numeric(ssc[["t.df"]])) ssc[["t.df"]] else if (length(G) && ssc[["t.df"]] == "min") max(min(G) - 1, 1) else max(n - K, 1)
   distribution = if (inherits(object, "dbglm") && object[["family"]][["family"]] %in% c("binomial", "poisson")) "normal" else "t"
   new_inference_result(V, request[["kind"]], state[["coefficient_names"]],
-    clusters, G, ssc, K, test_df, distribution, attr(V, "repair"))
+    clusters, G, ssc, K, test_df, distribution, attr(V, "repair"),
+    coefficient_ids = state[["coefficient_ids"]])
 }
 
 # Aggregate cluster score cross-products in SQL. Even observation-sized cluster

@@ -826,7 +826,7 @@ restore_result_names = function(result, inputs) {
       lapply(inference[["clusters"]], restore_names, map = map),
       inference[["n_clusters"]], inference[["ssc"]], inference[["n_params_vcov"]],
       inference[["df_t"]], inference[["distribution"]], inference[["repair"]],
-      inference[["status"]], inference[["reason"]])
+      inference[["status"]], inference[["reason"]], inference[["coefficient_ids"]])
     coefficients = stats::setNames(result[["coeftable"]][, "estimate"], coordinates)
     result = install_inference_result(result, inference, coefficients)
   }

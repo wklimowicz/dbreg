@@ -187,6 +187,7 @@ execute_demean_strategy = function(inputs) {
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
 
   list(
+    linear_design = native_linear_layout(sql_design, fit[["x"]], FALSE),
     coeftable = coeftable,
     vcov = vcov_mat,
     fml = fml,
@@ -580,11 +581,15 @@ execute_compress_strategy = function(inputs) {
   trend_centers = vapply(matrix_data[trend_aliases], function(value) min(value) / 2 + max(value) / 2, numeric(1))
   for (alias in trend_aliases) matrix_data[[alias]] = matrix_data[[alias]] - trend_centers[[alias]]
   X = fitted_model_matrix(matrix_formula, matrix_data)
-  if (!length(fe)) {
-    compressed_layout = compressed_linear_layout(X, matrix_formula, matrix_data,
-      sql_design, fml, inputs)
-    colnames(X) = compressed_layout[["aliases"]]
-  }
+  matrix_terms = attr(terms(matrix_formula), "term.labels")
+  slope_terms = match(design_vars, matrix_terms)
+  compressed_layout = compressed_linear_layout(X, matrix_formula, matrix_data,
+    sql_design, fml, inputs, roles = list(slope = slope_terms,
+      fe = match(fe, matrix_terms), fe_slope = which(vapply(matrix_terms, function(term) {
+        any(vapply(nuisance, function(source) setequal(split_interaction_term(term),
+          split_interaction_term(source)), logical(1)))
+      }, logical(1)))))
+  colnames(X) = compressed_layout[["aliases"]]
   numeric_sql = if (length(trends)) stats::setNames(paste0(
     "(", sql_cast_double(trends, conn), "-(",
     dbglm_number(trend_centers), "))"
@@ -593,7 +598,6 @@ execute_compress_strategy = function(inputs) {
     conn, matrix_formula,
     matrix_data, X, c(compressed_classes, stats::setNames(rep("numeric", length(trends)), trend_aliases)), numeric_sql
   )
-  slope_terms = match(design_vars, attr(terms(matrix_formula), "term.labels"))
   slope_names = standardize_coef_names(colnames(X)[attr(X, "assign") %in% slope_terms])
   if (ncol(X) == 0) {
     stop("Design matrix has zero columns.")
@@ -610,6 +614,7 @@ execute_compress_strategy = function(inputs) {
   absorbed = compressed_slope_rank(X, matrix_data, inputs, ordinary, trend_sources)
   fit = fit_ols(S, yvar, setdiff(colnames(X), absorbed), drop_collinear = TRUE, verbose = verbose)
   fit[["dropped"]] = c(absorbed, fit[["dropped"]])
+  layout = native_linear_layout(list(columns = compressed_layout[["columns"]]), fit[["x"]], FALSE)
   collin_vars = fit[["dropped"]]
   X = X[, fit[["x"]], drop = FALSE]
   betahat = fit[["coef"]]
@@ -628,7 +633,7 @@ execute_compress_strategy = function(inputs) {
   # its numerical rank must not silently select a different SSC convention.
   n_params_full = ncol(X)
   if (length(fe)) {
-    n_slopes = length(intersect(slope_names, standardize_coef_names(colnames(X))))
+    n_slopes = length(layout[["slope_ids"]])
     n_params_full = n_slopes + linear_fe_df(inputs, vapply(compressed_dat[fe], nlevels, integer(1)))
   }
   df_res = nobs_orig - n_params_full
@@ -688,19 +693,19 @@ execute_compress_strategy = function(inputs) {
   if (retain_sample(inputs[["retain"]])) {
     retain_compressed_score_sample(
       fit, score_X, yhat, compressed_dat,
-      group_cols, from_statement, slope_names, inputs
+      group_cols, from_statement, layout, inputs
     )
   }
 
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
 
   # Use term assignments, not name prefixes (an FE can start with a slope name).
-  coef_names = intersect(slope_names, rownames(coeftable))
+  slope_positions = match(layout[["slope_ids"]], layout[["fitted_ids"]])
+  coef_names = rownames(coeftable)[slope_positions]
 
   return(
     list(
-      linear_design = if (!is.null(compressed_layout)) native_linear_layout(
-        list(columns = compressed_layout[["columns"]]), fit[["x"]], FALSE),
+      linear_design = layout,
       coeftable = coeftable,
       compressed_design = list(
         formula = matrix_formula, trend_sources = trend_sources, trend_centers = trend_centers,

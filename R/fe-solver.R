@@ -1918,9 +1918,16 @@ sample_diagnostics = function(inputs, from_statement, variables) {
 
 finalize_fit_diagnostics = function(result, inputs) {
   estimates = setNames(result[["coeftable"]][, "estimate"], rownames(result[["coeftable"]]))
-  dropped = setdiff(result[["collin.var"]], names(estimates))
+  layout = result[["linear_design"]]
+  if (!is.null(layout)) {
+    dropped_ids = setdiff(layout[["columns"]][["id"]], layout[["fitted_ids"]])
+    dropped = layout[["columns"]][["label"]][match(dropped_ids, layout[["columns"]][["id"]])]
+  } else dropped = setdiff(result[["collin.var"]], names(estimates))
   result[["collin.coef"]] = c(estimates, setNames(rep(NA_real_, length(dropped)), dropped))
-  if (is.null(result[["coef_names_all"]])) {
+  if (!is.null(layout)) {
+    result[["coef_names"]] = layout[["columns"]][["label"]][match(layout[["slope_ids"]], layout[["columns"]][["id"]])]
+    result[["coef_names_all"]] = layout[["columns"]][["label"]][layout[["columns"]][["role"]] == "slope"]
+  } else if (is.null(result[["coef_names_all"]])) {
     visible = result[["coef_names"]]
     if (is.null(visible)) visible = result[["xvars"]]
     result[["coef_names_all"]] = unique(c(visible, dropped))

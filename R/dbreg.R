@@ -1311,8 +1311,8 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   if (inputs[["data_only"]]) {
     return(result)
   }
-  result = finalize_fit_diagnostics(result, inputs)
   result = finalize_linear_design(result, inputs)
+  result = finalize_fit_diagnostics(result, inputs)
   result = finalize_linear_prediction(result, inputs)
   result = finalize_linear_inference(result, inputs)
   result = finalize_linear_sample(result, inputs)
@@ -1324,7 +1324,8 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   coefficients = stats::setNames(result[["coeftable"]][, "estimate"], coordinates)
   clusters = if (attr(V, "type") == "cluster") list(restore_names(inputs[["cluster_var"]], inputs[["source_map"]])) else list()
   inference = new_inference_result(V, attr(V, "type"), coordinates, clusters,
-    attr(V, "n_clusters"), attr(V, "ssc"), attr(V, "n_params"), attr(V, "df.t"), "t", attr(V, "repair"))
+    attr(V, "n_clusters"), attr(V, "ssc"), attr(V, "n_params"), attr(V, "df.t"), "t", attr(V, "repair"),
+    coefficient_ids = result[["linear_design"]][["fitted_ids"]])
   result = install_inference_result(result, inference, coefficients)
   if (identical(result[["fitted_state"]][["resources"]][["storage"]], "database")) {
     inputs[["sample_resources"]][["own_conn"]] = isTRUE(inputs[["own_conn"]])

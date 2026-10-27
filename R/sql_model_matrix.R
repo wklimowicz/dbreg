@@ -1307,7 +1307,8 @@ native_linear_layout = function(design, fitted, intercept) {
 
 # Capture the expansion actually emitted by the compressed matrix producer.
 # Its term assignment disambiguates a factor dummy from a same-labelled source.
-compressed_linear_layout = function(X, formula, data, design, original_formula, inputs) {
+compressed_linear_layout = function(X, formula, data, design, original_formula, inputs,
+                                     roles = NULL) {
   assignment = attr(X, "assign")
   terms = attr(stats::terms(formula), "term.labels")
   original = attr(stats::terms(stats::formula(original_formula, lhs = 0, rhs = 1)), "term.labels")
@@ -1315,34 +1316,37 @@ compressed_linear_layout = function(X, formula, data, design, original_formula, 
   columns = empty_linear_columns()
   for (j in seq_len(ncol(X))) {
     term_id = assignment[[j]]
+    basis = match(j, which(assignment == term_id))
+    variable = if (term_id) terms[[term_id]] else NULL
+    role = if (!term_id) "intercept" else if (is.null(roles) || term_id %in% roles[["slope"]]) "slope" else
+      if (term_id %in% roles[["fe_slope"]]) "fe_slope" else "fe_intercept"
+    emitted = if (!is.null(compiled) && !is.null(variable)) match(variable, compiled[["alias"]]) else NA_integer_
     if (!term_id) {
       column = linear_intercept_column()
+    } else if (role != "slope") {
+      column = data.frame(id = paste0("n", term_id, "b", basis), term = term_id,
+        basis = basis, alias = colnames(X)[[j]], label = colnames(X)[[j]], role = role, stringsAsFactors = FALSE)
+      column[["recipe"]] = list(NULL)
+    } else if (!is.na(emitted) && !identical(compiled[["recipe"]][[emitted]][["kind"]], "raw")) {
+      column = compiled[emitted, , drop = FALSE]
     } else {
-      variable = terms[[term_id]]
-      emitted = if (!is.null(compiled)) match(variable, compiled[["alias"]]) else NA_integer_
-      if (!is.na(emitted) && !identical(compiled[["recipe"]][[emitted]][["kind"]], "raw")) {
-        column = compiled[emitted, , drop = FALSE]
-      } else {
-        basis = match(j, which(assignment == term_id))
-        value = data[[variable]]
-        categorical = is.factor(value) || is.character(value) || is.logical(value)
-        if (categorical) {
-          levels = if (is.factor(value)) levels(value) else levels(factor(value))
-          width = sum(assignment == term_id)
-          selected = if (width == length(levels)) seq_along(levels) else seq.int(2L, length(levels))
-          if (length(selected) != width) stop("Compressed factor coding does not match its emitted basis.", call. = FALSE)
-          recipe = list(kind = "indicator", variable = variable, value = levels[selected[[basis]]])
-        } else recipe = list(kind = "numeric", variable = variable)
-        source_term = match(variable, original)
-        if (is.na(source_term)) stop("Compressed term has no fitted source identity.", call. = FALSE)
-        column = data.frame(id = paste0("t", source_term, "b", basis), term = source_term,
-          basis = basis, alias = colnames(X)[[j]], label = colnames(X)[[j]], role = "slope", stringsAsFactors = FALSE)
-        column[["recipe"]] = list(recipe)
-      }
+      value = data[[variable]]
+      categorical = is.factor(value) || is.character(value) || is.logical(value)
+      if (categorical) {
+        levels = if (is.factor(value)) levels(value) else levels(factor(value))
+        width = sum(assignment == term_id)
+        selected = if (width == length(levels)) seq_along(levels) else seq.int(2L, length(levels))
+        if (length(selected) != width) stop("Compressed factor coding does not match its emitted basis.", call. = FALSE)
+        recipe = list(kind = "indicator", variable = variable, value = levels[selected[[basis]]])
+      } else recipe = list(kind = "numeric", variable = variable)
+      source_term = match(variable, original)
+      if (is.na(source_term)) stop("Compressed term has no fitted source identity.", call. = FALSE)
+      column = data.frame(id = paste0("t", source_term, "b", basis), term = source_term,
+        basis = basis, alias = colnames(X)[[j]], label = colnames(X)[[j]], role = "slope", stringsAsFactors = FALSE)
+      column[["recipe"]] = list(recipe)
     }
-    if (!term_id) {
-      cell_recipe = list(kind = "constant")
-    } else {
+    cell_recipe = NULL
+    if (!term_id) cell_recipe = list(kind = "constant") else if (role == "slope") {
       position = match(variable, names(data))
       if (is.na(position)) stop("Compressed cell term has no prepared column.", call. = FALSE)
       cell_recipe = if (!is.na(emitted) && !identical(compiled[["recipe"]][[emitted]][["kind"]], "raw")) {
@@ -1369,6 +1373,7 @@ compressed_linear_layout = function(X, formula, data, design, original_formula, 
 }
 
 restore_linear_recipe = function(recipe, map) {
+  if (is.null(recipe)) return(NULL)
   if (!is.null(recipe[["variable"]])) recipe[["variable"]] = restore_names(recipe[["variable"]], map)
   if (!is.null(recipe[["second"]])) recipe[["second"]] = restore_names(recipe[["second"]], map)
   if (!is.null(recipe[["term"]])) recipe[["term"]] = restore_term_names(recipe[["term"]], map)
@@ -1476,4 +1481,57 @@ validate_native_numeric_types = function(object, data, recipes) {
     stop("newdata changes a fitted numeric term to an incompatible input type.", call. = FALSE)
   }
   invisible(NULL)
+}
+
+# During migration, a saved coordinate layout does not imply that FE, IV or
+# Mundlak raw/SQL prediction has its complete runtime adapter.
+native_linear_runtime = function(object) {
+  !is.null(object[["linear_design"]]) && !length(object[["fe"]]) &&
+    !inherits(object, "dbivreg") && object[["strategy"]] %in% c("moments", "compress")
+}
+
+linear_active_ids = function(object) {
+  if (is.null(object[["linear_design"]])) return(NULL)
+  ids = attr(object[["coeftable"]], "dbreg_coefficient_ids")
+  if (is.null(ids)) ids = object[["inference_result"]][["coefficient_ids"]]
+  if (is.null(ids)) ids = object[["linear_design"]][["fitted_ids"]]
+  if (length(ids) != nrow(object[["coeftable"]])) stop("Coefficient table axes do not match fitted coordinates.", call. = FALSE)
+  ids
+}
+
+linear_collin_ids = function(object) {
+  layout = object[["linear_design"]]
+  c(layout[["fitted_ids"]], setdiff(layout[["columns"]][["id"]], layout[["fitted_ids"]]))
+}
+
+linear_view_ids = function(object, fe = FALSE, collin = FALSE) {
+  layout = object[["linear_design"]]
+  if (is.null(layout)) return(NULL)
+  if (isTRUE(collin)) {
+    if (!isTRUE(fe) && length(object[["fe"]])) return(layout[["columns"]][["id"]][layout[["columns"]][["role"]] == "slope"])
+    return(linear_collin_ids(object))
+  }
+  ids = linear_active_ids(object)
+  if (!isTRUE(fe) && length(object[["fe"]])) ids = layout[["slope_ids"]][layout[["slope_ids"]] %in% ids]
+  ids
+}
+
+linear_table_positions = function(object, fe = FALSE) {
+  ids = linear_view_ids(object, fe)
+  if (is.null(ids)) return(NULL)
+  positions = match(ids, linear_active_ids(object))
+  if (anyNA(positions)) stop("Requested coefficient coordinates are absent from the active table.", call. = FALSE)
+  positions
+}
+
+linear_coefficients_for_ids = function(object, ids) {
+  available = linear_active_ids(object)
+  beta = object[["coeftable"]][, "estimate"]
+  if (any(!ids %in% available) && !is.null(object[["all_coefficients"]])) {
+    available = object[["linear_design"]][["fitted_ids"]]
+    beta = object[["all_coefficients"]]
+  }
+  positions = match(ids, available)
+  if (anyNA(positions)) stop("Inference axes do not match fitted coefficient coordinates.", call. = FALSE)
+  stats::setNames(as.numeric(beta[positions]), object[["linear_design"]][["columns"]][["label"]][match(ids, object[["linear_design"]][["columns"]][["id"]])])
 }

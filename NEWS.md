@@ -1,5 +1,13 @@
 # dbreg (development version)
 
+- Compressed linear fits handle an ordinary categorical regressor with one
+  observed level without changing the compressed grouping keys.
+- IV fits keep structural and instrument coordinates separate. R prediction
+  reconstructs structural terms from raw columns when public labels collide.
+- SQL Server and MySQL `i()` coding reads native column metadata through scoped
+  adapters; other backend metadata paths retain their existing behavior.
+- `i()` level discovery excludes missing keys and orders integer keys by their
+  native values, including when the source column is named `value`.
 - HC1 score queries project residual and regressor expressions once, reducing
   repeated SQL while preserving the covariance multiplication order.
 - Coefficient labels come from fitted source and basis identities. Literal

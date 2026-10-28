@@ -20,7 +20,9 @@ local({
     expected = predict(fit, d)
     # Mutating a captured panel must not mutate the serialized fitted object.
     formula_env[["captured_panel"]][["y"]] = -1e6
-    expect_identical(serialize(fit, NULL), saved)
+    # Prediction can realize R ALTREP storage; the complete decoded values,
+    # classes and attributes must still remain exactly unchanged.
+    expect_identical(unserialize(serialize(fit, NULL)), unserialize(saved))
     expect_equal(predict(unserialize(saved), d), expected, tolerance = 1e-10)
   }
 })

@@ -520,7 +520,7 @@ model_matrix_data = function(formula, data) {
 
 # Common reserved words across backends (lower case)
 sql_reserved = c(
-  "all", "and", "as", "asc", "between", "by", "case", "cast", "check",
+  "all", "and", "as", "asc", "between", "binary", "by", "case", "cast", "check",
   "column", "create", "cross", "default", "delete", "desc", "distinct",
   "drop", "else", "end", "except", "exists", "false", "for", "foreign", "from",
   "full", "group", "having", "in", "inner", "insert", "intersect", "into", "is",
@@ -624,7 +624,7 @@ safe_source = function(conn, from_statement, vars, reserved = character()) {
   renamed = safe != vars
   map = setNames(vars[renamed], safe[renamed])
   if (any(renamed)) {
-    sel = vars
+    sel = as.character(DBI::dbQuoteIdentifier(conn, vars))
     # Quote the original names for this backend; keep the safe aliases unquoted
     # (case-folding backends need consistent aliases)
     sel[renamed] = glue_sql("{`vars[renamed]`} AS {DBI::SQL(safe[renamed])}", .con = conn)
@@ -662,20 +662,47 @@ safe_source = function(conn, from_statement, vars, reserved = character()) {
 #'   and `level` (the `level_aliases` element of [sql_model_matrix()]).
 #' @param i_columns Optional data frame of `i()` column aliases (the
 #'   `i_columns` element of [sql_model_matrix()]). Their display names, e.g.
-#'   `period::5:treat`, are also recorded in `inputs$i_columns` for
-#'   `predict()`.
+#'   `period::5:treat`, contribute presentation mappings. Physical columns are
+#'   retained in `inputs$i_columns` for prediction.
 #' @param factor_classes Optional named fitted source classes for factors.
 #' @param i_specs Typed fitted i() dictionaries shared by R and SQL prediction.
 #' @param columns Canonical fitted columns with typed source/basis recipes.
+#' @param source_classes Actual compiler or collected-cell source classes.
+#' @param factor_sources Actual physical dictionary-to-source bindings.
 #' @keywords internal
-register_factor_display = function(inputs, factor_levels = list(), level_aliases = NULL, col_names = NULL, aliases = NULL, factor_classes = NULL, i_columns = NULL, i_specs = list(), columns = NULL) {
+register_factor_display = function(inputs, factor_levels = list(), level_aliases = NULL, col_names = NULL, aliases = NULL, factor_classes = NULL, i_columns = NULL, i_specs = list(), columns = NULL, source_classes = NULL, factor_sources = NULL) {
   saved = inputs[["factor_levels"]]
   if (is.null(saved)) saved = list()
-  for (nm in names(factor_levels)) saved[[nm]] = factor_levels[[nm]]
+  for (position in seq_along(factor_levels)) {
+    nm = names(factor_levels)[[position]]
+    if (nm %in% names(saved) && !identical(saved[[nm]], factor_levels[[position]])) {
+      stop("Conflicting physical factor dictionaries.", call. = FALSE)
+    }
+    saved[[nm]] = factor_levels[[position]]
+  }
+  for (field in c("source_classes", "factor_sources")) {
+    incoming = if (field == "source_classes") source_classes else factor_sources
+    known = inputs[[field]]
+    if (is.null(known)) known = if (field == "source_classes") character() else list()
+    for (position in seq_along(incoming)) {
+      key = names(incoming)[[position]]
+      if (key %in% names(known) && !identical(known[[key]], incoming[[position]])) {
+        stop("Conflicting physical source metadata.", call. = FALSE)
+      }
+      known[[key]] = incoming[[position]]
+    }
+    inputs[[field]] = known
+  }
   inputs[["factor_levels"]] = saved
   classes = inputs[["factor_classes"]]
   if (is.null(classes)) classes = character()
-  classes[names(factor_classes)] = factor_classes
+  for (position in seq_along(factor_classes)) {
+    key = names(factor_classes)[[position]]
+    if (key %in% names(classes) && !identical(classes[[key]], factor_classes[[position]])) {
+      stop("Conflicting physical factor classes.", call. = FALSE)
+    }
+    classes[[key]] = factor_classes[[position]]
+  }
   inputs[["factor_classes"]] = classes
   map = inputs[["name_map"]]
   if (is.null(map)) map = setNames(character(), character())
@@ -712,38 +739,20 @@ register_factor_display = function(inputs, factor_levels = list(), level_aliases
     if (anyDuplicated(i_display[["name"]])) stop("Design terms produce duplicate public coefficient names.", call. = FALSE)
     new = new[!names(new) %in% i_columns[["alias"]]]
     new = c(new, setNames(i_display[["name"]], i_columns[["alias"]]))
-    i_display = rbind(inputs[["i_columns"]], i_display)
-    inputs[["i_columns"]] = i_display[!duplicated(i_display[["name"]]), , drop = FALSE]
+    physical = data.frame(
+      name = paste0(i_columns[["var"]], "::", i_columns[["level"]], ifelse(is.na(i_columns[["by"]]), "", paste0(":", i_columns[["by"]]))),
+      var = i_columns[["var"]], level = i_columns[["level"]], by = i_columns[["by"]], alias = i_columns[["alias"]]
+    )
+    physical = rbind(inputs[["i_columns"]], physical)
+    inputs[["i_columns"]] = physical[!duplicated(physical[["name"]]), , drop = FALSE]
   }
   if (length(i_specs)) {
-    specs = restore_i_sources(i_specs, inputs[["source_map"]])
+    specs = i_specs
     specs = c(inputs[["i_specs"]], specs)
     inputs[["i_specs"]] = specs[!duplicated(vapply(specs, `[[`, character(1), "term"))]
   }
   inputs[["name_map"]] = c(map, new)
   invisible(inputs)
-}
-
-#' Map internal (safe) names back to display names
-#'
-#' Maps each name via `map` (display names indexed by safe names), or else
-#' splits it on the interaction separators (`:` and `_x_`) and maps each token.
-#' @keywords internal
-restore_names = function(x, map) {
-  if (!length(map) || is.null(x) || !length(x)) {
-    return(x)
-  }
-  out = vapply(x, function(s) {
-    if (is.na(s)) return(s)
-    if (s %in% names(map)) return(map[[s]])
-    m = gregexpr(":|_x_", s)
-    tokens = regmatches(s, m, invert = TRUE)[[1]]
-    seps = regmatches(s, m)[[1]]
-    tokens = ifelse(tokens %in% names(map), map[tokens], tokens)
-    paste0(c(rbind(tokens, c(seps, ""))), collapse = "")
-  }, character(1), USE.NAMES = FALSE)
-  if (!is.null(names(x))) names(out) = names(x)
-  out
 }
 
 # Variable names as they appear inside coefficient names: like model.matrix(),
@@ -756,18 +765,6 @@ restore_coefficient_names = function(x, map) {
   present = !is.na(positions)
   x[present] = unname(map[positions[present]])
   x
-}
-
-restore_i_sources = function(specs, map) {
-  lapply(specs, function(spec) {
-    spec[["first"]] = restore_coefficient_names(spec[["first"]], map)
-    spec[["second"]] = restore_coefficient_names(spec[["second"]], map)
-    spec[["term"]] = restore_term_names(spec[["term"]], map)
-    spec[["names"]] = if (!length(spec[["selected"]])) character() else paste0(
-      spec[["first"]], "::", spec[["labels"]][spec[["selected"]]],
-      if (!is.null(spec[["second"]])) paste0(":", spec[["second"]]))
-    spec
-  })
 }
 
 # Coefficient labels quote source variables while preserving expanded labels.
@@ -791,7 +788,7 @@ restore_result_names = function(result, inputs) {
   # Coefficient names backtick non-syntactic variable names (as in lm())
   coef_map = coefficient_name_map(map, inputs[["source_map"]])
   if (is.data.frame(result)) {
-    names(result) = restore_names(names(result), map)
+    names(result) = restore_coefficient_names(names(result), map)
     return(result)
   }
   layout = result[["linear_design"]]
@@ -820,11 +817,13 @@ restore_result_names = function(result, inputs) {
     result[["linear_design"]][["columns"]][["label"]] = labels
     if (isTRUE(result[["strategy"]] %in% c("demean", "mundlak"))) result[["xvars"]] = result[["coef_names"]]
   }
+  # These are source identities (or generated composite-rank keys), not
+  # coefficient/display terms. Unmapped literal names remain opaque.
   for (f in c("yvar", "fe", "weights")) {
-    if (!is.null(result[[f]])) result[[f]] = restore_names(result[[f]], map)
+    if (!is.null(result[[f]])) result[[f]] = restore_coefficient_names(result[[f]], inputs[["source_map"]])
   }
   if (!is.null(result[["n_fe_levels"]]) && !is.null(names(result[["n_fe_levels"]]))) {
-    names(result[["n_fe_levels"]]) = restore_names(names(result[["n_fe_levels"]]), map)
+    names(result[["n_fe_levels"]]) = restore_coefficient_names(names(result[["n_fe_levels"]]), inputs[["source_map"]])
   }
   if (is.data.frame(result[["data"]])) {
     names(result[["data"]]) = restore_coefficient_names(names(result[["data"]]), map)
@@ -847,7 +846,7 @@ restore_result_names = function(result, inputs) {
     V = inference[["covariance"]]
     dimnames(V) = rep(list(coordinates), 2L)
     inference = new_inference_result(V, inference[["kind"]], coordinates,
-      lapply(inference[["clusters"]], restore_names, map = map),
+      lapply(inference[["clusters"]], restore_coefficient_names, map = inputs[["source_map"]]),
       inference[["n_clusters"]], inference[["ssc"]], inference[["n_params_vcov"]],
       inference[["df_t"]], inference[["distribution"]], inference[["repair"]],
       inference[["status"]], inference[["reason"]], inference[["coefficient_ids"]])

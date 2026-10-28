@@ -191,6 +191,8 @@ process_dbivreg_inputs = function(inputs) {
   src = safe_source(conn, from_statement, c(model_vars(fml), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]])))
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
+  bound_sources = unique(c(model_vars(fml), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]])))
+  inputs[["linear_source_map"]] = stats::setNames(bound_sources, src[["to_safe"]](bound_sources))
   parsed_fml = dbivreg_parse_formula(src[["to_safe"]](fml))
   yvar = parsed_fml[["yvar"]]
   fe = parsed_fml[["fe"]]
@@ -216,7 +218,7 @@ process_dbivreg_inputs = function(inputs) {
     )
     parsed_fml = dbivreg_parse_formula(stats::as.formula(formula, env = baseenv()))
     yvar = parsed_fml[["yvar"]]
-    name_map[[adjusted[["alias"]]]] = restore_names(adjusted[["outcome"]], src[["map"]])
+    name_map[[adjusted[["alias"]]]] = restore_coefficient_names(adjusted[["outcome"]], src[["map"]])
     inputs[["name_map"]] = inputs[["source_map"]] = name_map
   }
 
@@ -279,7 +281,10 @@ process_dbivreg_inputs = function(inputs) {
     aliases = c(exog_design[["names"]], endog_design[["names"]], instr_design[["names"]]),
     columns = rbind(exog_design[["columns"]], endog_design[["columns"]], instr_design[["columns"]]),
     i_columns = rbind(exog_design[["i_columns"]], endog_design[["i_columns"]], instr_design[["i_columns"]]),
-    i_specs = c(exog_design[["i_specs"]], endog_design[["i_specs"]], instr_design[["i_specs"]])
+    i_specs = c(exog_design[["i_specs"]], endog_design[["i_specs"]], instr_design[["i_specs"]]),
+    factor_classes = c(exog_design[["factor_classes"]], endog_design[["factor_classes"]], instr_design[["factor_classes"]]),
+    source_classes = c(exog_design[["source_classes"]], endog_design[["source_classes"]], instr_design[["source_classes"]]),
+    factor_sources = c(exog_design[["factor_sources"]], endog_design[["factor_sources"]], instr_design[["factor_sources"]])
   )
   # Without an intercept, factor coding of the endogenous/instrument blocks
   # would depend on the combined X and Z designs; not supported yet
@@ -338,6 +343,12 @@ process_dbivreg_inputs = function(inputs) {
   inputs[["iv_blocks"]] = list(exog = exog_design[["columns"]],
     endog = endog_design[["columns"]], excluded = instr_design[["columns"]])
   inputs[["i_specs"]] = c(exog_design[["i_specs"]], endog_design[["i_specs"]])
+  structural_keys = unique(c(names(exog_design[["factor_levels"]]), names(endog_design[["factor_levels"]])))
+  inputs[["factor_levels"]] = inputs[["factor_levels"]][structural_keys]
+  inputs[["factor_classes"]] = inputs[["factor_classes"]][structural_keys]
+  inputs[["factor_sources"]] = inputs[["factor_sources"]][structural_keys]
+  structural_aliases = c(exog_design[["columns"]][["alias"]], endog_design[["columns"]][["alias"]])
+  if (NROW(inputs[["i_columns"]])) inputs[["i_columns"]] = inputs[["i_columns"]][inputs[["i_columns"]][["alias"]] %in% structural_aliases, , drop = FALSE]
   x_all_sql = c(exog_design[["sql"]], endog_design[["sql"]])
   x_all_names = c(exog_design[["names"]], endog_design[["names"]])
   z_all_names = c(exog_design[["names"]], instr_design[["names"]])
@@ -816,6 +827,9 @@ dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(),
     sql = sql_design[["select_exprs"]],
     names = sql_design[["aliases"]],
     factor_levels = sql_design[["factor_levels"]],
+    factor_classes = sql_design[["factor_classes"]],
+    source_classes = sql_design[["source_classes"]],
+    factor_sources = sql_design[["factor_sources"]],
     level_aliases = sql_design[["level_aliases"]],
     i_columns = sql_design[["i_columns"]],
     columns = sql_design[["columns"]],

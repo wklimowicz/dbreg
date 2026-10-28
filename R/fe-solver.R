@@ -1773,7 +1773,7 @@ sample_diagnostics = function(inputs, from_statement, variables) {
     n_nonpositive_weight = if (is.null(weights)) 0 else as.numeric(counts[["n_nonpositive_weight"]]),
     detail = data.frame(
       role = roles,
-      variable = restore_names(variables, inputs[["source_map"]]),
+      variable = restore_coefficient_names(variables, inputs[["source_map"]]),
       n_missing = vapply(aliases, function(a) as.numeric(counts[[a]]), numeric(1)), row.names = NULL
     ),
     query_string = sql
@@ -1797,7 +1797,7 @@ finalize_fit_diagnostics = function(result, inputs) {
     result[["coef_names_all"]] = unique(c(visible, dropped))
   }
   result[["vcov_type"]] = inputs[["vcov_type_req"]]
-  result[["cluster_var"]] = restore_names(inputs[["cluster_var"]], inputs[["source_map"]])
+  result[["cluster_var"]] = restore_coefficient_names(inputs[["cluster_var"]], inputs[["source_map"]])
   result[["ssc"]] = if (inputs[["vcov_type_req"]] == "cluster") inputs[["ssc"]] else NULL
   result[["n_clusters"]] = attr(result[["vcov"]], "n_clusters")
   result[["n_params"]] = attr(result[["vcov"]], "n_params")

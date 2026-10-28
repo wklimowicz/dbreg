@@ -20,6 +20,7 @@ dbglm_read_information = function(row, p) {
 }
 
 dbglm_basis = function(H, tol) {
+  if (any(!is.finite(H))) stop("GLM initial information is nonfinite; check predictor magnitudes and weights.", call. = FALSE)
   scale = sqrt(pmax(diag(H), 0))
   keep = integer()
   for (j in seq_len(ncol(H))) {

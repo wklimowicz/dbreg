@@ -232,42 +232,24 @@ predict.dbreg = function(
     return(if (interval == "none") blank else data.frame(fit = blank, lwr = blank, upr = blank))
   }
   newdata = newdata[valid, , drop = FALSE]
-  native_data = if (native_linear_runtime(object)) newdata else NULL
+  original_data = newdata
+  native = native_linear_runtime(object)
+  native_data = if (native) newdata else NULL
   newdata = prediction_factors(object, newdata)
 
-  # Ensure FE columns are factors
-  for (f in fe) {
-    if (!is.factor(newdata[[f]])) newdata[[f]] = factor(newdata[[f]])
+  # These grouping views are separate from raw RHS/modifier values. Compressed
+  # designs prepare their actual FE basis from the fitted cell receipt below.
+  if (strategy %in% c("demean", "mundlak")) for (f in fe) {
+    if (!is.factor(newdata[[f]])) newdata[[f]] = exact_numeric_factor(newdata[[f]])
   }
-
-  # Rebuild the design from the model's own terms (so factors, interactions and
-  # no-intercept models expand exactly as in estimation), then align its
-  # columns to the coefficients by name
-  terms_rhs = attr(terms(formula(fml, lhs = 0, rhs = 1)), "term.labels")
   i_cols = object[["i_columns"]]
-  if (strategy %in% c("compress", "moments")) {
-    # FE enter as dummies (compress)
-    prediction_trends = object[["compressed_design"]][["prediction_trends"]]
-    if (length(prediction_trends)) newdata = compressed_trend_data(newdata, prediction_trends, object[["compressed_design"]][["trend_centers"]])
-    nuisance = unlist(lapply(seq_along(fe), function(i) {
-      slopes = object[["varying_slopes"]][[i]]
-      if (length(prediction_trends)) slopes = names(prediction_trends)[match(slopes, prediction_trends)]
-      if (length(slopes)) paste(vapply(fe[i], function(name) paste(deparse(as.name(name), backtick = TRUE), collapse = ""), character(1)),
-        vapply(slopes, function(name) paste(deparse(as.name(name), backtick = TRUE), collapse = ""), character(1)),
-        sep = ":"
-      ) else character()
-    }), use.names = FALSE)
-    terms_rhs = c(terms_rhs, fe, nuisance)
-  }
-  if (!length(terms_rhs)) {
-    terms_rhs = "1"
-  }
-  fml_mm = reformulate(terms_rhs, intercept = intercept)
-  if (native_linear_runtime(object)) {
+  if (native) {
     mm = native_linear_matrix(object, native_data, stored = stored && identical(object[["strategy"]], "compress"))
   } else if (stored && !is.null(object[["compressed_design"]])) {
     spec = object[["compressed_design"]]
-    data = expand_newdata_i(stats::formula(fml, lhs = 0, rhs = 1), newdata, i_cols, object[["i_specs"]])[["data"]]
+    # These are the actual collected cells; their prepared columns already
+    # contain the fitted i() expansion. Replay the saved matrix producer.
+    data = original_data
     names(data) = unname(spec[["source_names"]][names(data)])
     data = compressed_trend_data(data, spec[["trend_sources"]], spec[["trend_centers"]])
     mm = fitted_model_matrix(spec[["formula"]], data)
@@ -277,9 +259,65 @@ predict.dbreg = function(
     } else mm = mm[, names(spec[["columns"]]), drop = FALSE]
     colnames(mm) = unname(spec[["columns"]])
   } else {
-    mm = build_newdata_design(fml_mm, newdata, object[["factor_levels"]], i_cols, object[["i_specs"]])
-    for (alias in names(object[["compressed_design"]][["prediction_trends"]])) {
-      colnames(mm) = gsub(alias, coef_var_name(object[["compressed_design"]][["prediction_trends"]][[alias]]), colnames(mm), fixed = TRUE)
+    design_data = linear_prediction_source_data(object, original_data)
+    layout = object[["linear_design"]]
+    for (physical in names(layout[["fe_sources"]])) {
+      source = layout[["fe_sources"]][[physical]]
+      design_data[[physical]] = if (source %in% names(object[["composite_fes"]])) newdata[[source]] else original_data[[source]]
+    }
+    for (physical in names(layout[["trend_sources"]])) design_data[[physical]] = original_data[[layout[["trend_sources"]][[physical]]]]
+    if (strategy == "compress") design_data = compressed_trend_data(design_data,
+      object[["compressed_design"]][["trend_sources"]], object[["compressed_design"]][["trend_centers"]])
+    if (strategy == "compress") {
+      # The saved recipes own the full fitted axis. Structural values retain
+      # original source types; FE nuisance values use the cached typed basis.
+      nuisance_data = design_data
+      fe_fields = names(layout[["fe_sources"]])
+      for (physical in fe_fields) {
+        position = match(physical, unname(object[["compressed_design"]][["source_names"]]))
+        if (is.na(position)) stop("Fitted compressed FE source has no prepared cell column.", call. = FALSE)
+        trained = object[["data"]][[position]]
+        if (!is.factor(trained)) stop("Fitted compressed FE source has no categorical receipt.", call. = FALSE)
+        levels = levels(trained)
+        keys = attr(trained, "dbreg_key_values")
+        type = attr(trained, "dbreg_key_type")
+        if (is.null(keys)) keys = levels
+        if (is.null(type)) type = "character"
+        if (length(keys) != length(levels)) stop("Fitted compressed FE keys do not match their levels.", call. = FALSE)
+        values = design_data[[physical]]
+        index = match(prediction_key_part(values, type), prediction_key_part(keys, type))
+        if (any(!is.na(values) & is.na(index))) stop("newdata contains unseen fixed-effect levels.", call. = FALSE)
+        nuisance_data[[physical]] = factor(levels[index], levels = levels)
+        attr(nuisance_data[[physical]], "dbreg_key_values") = attr(trained, "dbreg_key_values")
+        attr(nuisance_data[[physical]], "dbreg_key_type") = attr(trained, "dbreg_key_type")
+      }
+      trend_sources = object[["compressed_design"]][["trend_sources"]]
+      for (alias in names(trend_sources)) nuisance_data[[trend_sources[[alias]]]] = design_data[[alias]]
+      columns = layout[["columns"]]
+      ids = columns[["id"]]
+      fitted = layout[["fitted_ids"]]
+      positions = match(fitted, ids)
+      if (anyNA(ids) || anyDuplicated(ids) || anyNA(positions) || anyDuplicated(fitted) ||
+          length(columns[["recipe"]]) != length(ids) || any(vapply(columns[["recipe"]], is.null, logical(1))) ||
+          any(!columns[["role"]] %in% c("intercept", "slope", "fe_intercept", "fe_slope"))) {
+        stop("Fitted compressed prediction recipes do not match their coordinate IDs.", call. = FALSE)
+      }
+      validate_native_numeric_types(object, design_data, columns[["recipe"]][columns[["role"]] == "slope"])
+      values = lapply(seq_along(ids), function(i) linear_recipe_value(columns[["recipe"]][[i]],
+        if (columns[["role"]][[i]] == "slope") design_data else nuisance_data, object[["i_specs"]]))
+      if (any(lengths(values) != nrow(original_data))) stop("Compressed prediction recipes have inconsistent row counts.", call. = FALSE)
+      mm = if (length(values)) do.call(cbind, values) else matrix(0, nrow(original_data), 0L)
+      mm = mm[, positions, drop = FALSE]
+      colnames(mm) = columns[["alias"]][positions]
+      betas = linear_coefficients_for_ids(object, fitted)
+    } else {
+      physical_terms = attr(stats::terms(layout[["rhs"]]), "term.labels")
+      physical_formula = stats::reformulate(if (length(physical_terms)) physical_terms else "1", intercept = intercept)
+      mm = build_newdata_design(physical_formula, design_data, object[["factor_levels"]], i_cols, object[["i_specs"]])
+      # Display names remain annotations for the remaining strategy adapters.
+      label_map = stats::setNames(layout[["columns"]][["label"]], vapply(layout[["columns"]][["recipe"]], linear_recipe_label, character(1), i_specs = object[["i_specs"]]))
+      present = match(colnames(mm), names(label_map))
+      colnames(mm)[!is.na(present)] = label_map[present[!is.na(present)]]
     }
   }
   if (strategy == "mundlak") {
@@ -287,7 +325,7 @@ predict.dbreg = function(
     mm_means = mapply(
       function(term, f) weighted_group_mean(
         as.numeric(mm[, term]), newdata[[f]],
-        if (is.null(object[["weights"]])) NULL else newdata[[object[["weights"]]]]
+        if (is.null(object[["weights"]])) NULL else original_data[[object[["weights"]]]]
       ),
       object[["mundlak_means"]][["term"]],
       object[["mundlak_means"]][["fe"]]
@@ -295,29 +333,31 @@ predict.dbreg = function(
     mm_means = matrix(mm_means, nrow = nrow(mm), dimnames = list(NULL, object[["mundlak_means"]][["name"]]))
     mm = cbind(mm, mm_means)
   }
-  missing_cols = setdiff(names(betas), colnames(mm))
-  if (length(missing_cols)) {
-    stop(
-      "predict() could not rebuild the design for coefficient(s): ",
-      paste(missing_cols, collapse = ", "),
-      call. = FALSE
-    )
-  }
-  if (!native_linear_runtime(object) && (is.null(object[["linear_design"]]) || !stored)) {
-    mm = if (length(betas)) mm[, names(betas), drop = FALSE] else matrix(0, nrow(newdata), 0L)
+  if (strategy != "compress" || is.null(object[["linear_design"]])) {
+    missing_cols = setdiff(names(betas), colnames(mm))
+    if (length(missing_cols)) {
+      stop(
+        "predict() could not rebuild the design for coefficient(s): ",
+        paste(missing_cols, collapse = ", "),
+        call. = FALSE
+      )
+    }
+    if (!native && (is.null(object[["linear_design"]]) || !stored)) {
+      mm = if (length(betas)) mm[, names(betas), drop = FALSE] else matrix(0, nrow(newdata), 0L)
+    }
   }
 
   if (strategy == "demean") {
     # demean: sweep the FE out of the regressors (and recover the outcome's
     # group means, if available, to return level predictions)
-    has_y = yvar %in% names(newdata)
+    has_y = yvar %in% names(original_data)
     groups = lapply(fe, function(f) newdata[[f]])
-    weights = if (is.null(object[["weights"]])) NULL else newdata[[object[["weights"]]]]
-    slopes = lapply(object[["varying_slopes"]], function(vars) newdata[vars])
+    weights = if (is.null(object[["weights"]])) NULL else original_data[[object[["weights"]]]]
+    slopes = lapply(object[["varying_slopes"]], function(vars) original_data[vars])
     sweep_fe = function(v) demean_prediction_data(v, groups, weights, slopes = slopes)
     mm = sweep_fe(mm)
     if (has_y) {
-      y = as.numeric(newdata[[yvar]]) - linear_prediction_offset(object, newdata)
+      y = as.numeric(original_data[[yvar]]) - linear_prediction_offset(object, original_data)
       y_group_mean = y - drop(sweep_fe(matrix(y, ncol = 1L)))
     } else {
       y_group_mean = 0
@@ -333,7 +373,7 @@ predict.dbreg = function(
   if (strategy == "demean") {
     fit = fit + y_group_mean
   }
-  fit = fit + linear_prediction_offset(object, newdata)
+  fit = fit + linear_prediction_offset(object, original_data)
 
   if (interval != "none") {
     vcovm = vcov(object, fe = TRUE)
@@ -596,11 +636,6 @@ predict.dbglm = function(
     stop("New-row prediction for absorbed GLMs requires fitting with retain='prediction'.", call. = FALSE)
   }
   newdata = as.data.frame(newdata)
-  for (a in names(object[["factor_sources"]])) {
-    source = object[["factor_sources"]][[a]]
-    if (!source %in% names(newdata)) stop("newdata is missing columns: ", source, call. = FALSE)
-    newdata[[a]] = newdata[[source]]
-  }
   state = object[["fitted_state"]]
   if (is.null(state[["prediction"]])) state = NULL
   database = identical(state[["prediction"]][["storage"]], "database")
@@ -640,13 +675,23 @@ predict.dbglm = function(
       positions = positions[known]
     }
   }
-  design = as.matrix(evaluate_model_spec(object[["model_spec"]], data))
-  colnames(design) = object[["model_spec"]][["columns"]][["name"]]
+  specification = object[["model_spec"]]
+  design = as.matrix(evaluate_model_spec(specification, data))
+  if (!identical(attr(design, "dbreg_column_ids"), specification[["columns"]][["id"]])) {
+    stop("Evaluated GLM columns do not match the fitted full design.", call. = FALSE)
+  }
+  if (!identical(specification[["fitted_ids"]], object[["inference_result"]][["coefficient_ids"]])) {
+    stop("Fitted GLM coefficient IDs do not match their completed inference order.", call. = FALSE)
+  }
+  colnames(design) = specification[["columns"]][["name"]]
   if (object[["has_intercept"]]) design = cbind("(Intercept)" = 1, design)
   beta = stats::coef(object)
   names(beta) = object[["design_names"]]
+  ids = c(if (object[["has_intercept"]]) "intercept", specification[["columns"]][["id"]])
+  fitted_positions = match(specification[["fitted_ids"]], ids)
+  if (anyNA(fitted_positions) || length(fitted_positions) != length(beta) || anyDuplicated(fitted_positions)) stop("Fitted GLM coefficients do not match their design IDs.", call. = FALSE)
   eta = if (!is.null(state)) predict_from_fitted_state(state, design, data, groups = groups, lookup = lookup) else
-    prediction_matrix_product(design[, names(beta), drop = FALSE], beta)
+    prediction_matrix_product(design[, fitted_positions, drop = FALSE], beta)
   if (!is.null(object[["offset"]])) eta = eta + as.numeric(data[[object[["offset"]]]])
   prediction[positions] = if (type == "link") eta else object[["family"]][["linkinv"]](eta)
   prediction
@@ -1057,6 +1102,30 @@ prediction_match_groups = function(state, data) {
   })
 }
 
+# Learned OLS coordinates are the full recovery axis, including dropped slopes.
+# GLM states retain their separate, uniquely named full design contract.
+prediction_design_columns = function(state, design) {
+  specification = state[["specification"]]
+  if (!identical(state[["prediction"]][["recovery_kind"]], "rss")) {
+    return(design[, specification[["design_names"]], drop = FALSE])
+  }
+  ids = specification[["design_ids"]]
+  actual = attr(design, "dbreg_column_ids", exact = TRUE)
+  positions = match(ids, actual)
+  width = length(ids)
+  coefficients = state[["coefficients"]]
+  beta_width = if (identical(state[["prediction"]][["storage"]], "database")) {
+    length(coefficients[["slopes"]])
+  } else length(coefficients[["joint"]]) - coefficients[["fe_n"]]
+  if (!is.character(ids) || anyNA(ids) || anyDuplicated(ids) ||
+      !is.character(actual) || anyNA(actual) || anyDuplicated(actual) ||
+      length(actual) != ncol(design) || anyNA(positions) ||
+      width != length(specification[["design_center"]]) || width != beta_width) {
+    stop("Could not align the full learned OLS design coordinates.", call. = FALSE)
+  }
+  design[, positions, drop = FALSE]
+}
+
 predict_from_fitted_state = function(state, design, data, groups = NULL, lookup = NULL) {
   if (!identical(state[["version"]], 1L)) stop("Unsupported fitted-state version.", call. = FALSE)
   if (identical(state[["prediction"]][["storage"]], "database")) {
@@ -1064,7 +1133,7 @@ predict_from_fitted_state = function(state, design, data, groups = NULL, lookup 
   }
   specification = state[["specification"]]
   coef = state[["coefficients"]]
-  x = sweep(design[, specification[["design_names"]], drop = FALSE], 2L, specification[["design_center"]], "-")
+  x = sweep(prediction_design_columns(state, design), 2L, specification[["design_center"]], "-")
   if (is.null(groups)) groups = prediction_match_groups(state, data)
   ops = specification[["operations"]]
   indices = values = vector("list", length(ops))
@@ -1110,24 +1179,31 @@ finalize_linear_prediction = function(result, inputs) {
   from = inputs[["from_statement"]]
   source = paste0("(SELECT * ", from, ")")
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
+  scalar_fe = !as.character(inputs[["fe"]]) %in% names(inputs[["composite_fes"]])
+  compiler_fe = unique(c(inputs[["fe"]], unlist(components[scalar_fe], use.names = FALSE)))
   design = sql_model_matrix_internal(inputs[["fml"]], conn, sub("^FROM\\s+", "", from, ignore.case = TRUE),
-    expand = "all", fe_vars = inputs[["fe"]], intercept = inputs[["intercept"]], factor_refs = inputs[["factor_refs"]],
+    expand = "all", fe_vars = compiler_fe, intercept = inputs[["intercept"]], factor_refs = inputs[["factor_refs"]],
     reserved_names = sql_design_reserved(inputs)
   )
-  register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]], design[["col_names"]], design[["aliases"]], factor_classes = design[["factor_classes"]], columns = design[["columns"]], i_specs = design[["i_specs"]])
+  register_factor_display(inputs, design[["factor_levels"]], design[["level_aliases"]], design[["col_names"]], design[["aliases"]], factor_classes = design[["factor_classes"]], columns = design[["columns"]], i_specs = design[["i_specs"]],
+    source_classes = design[["source_classes"]], factor_sources = design[["factor_sources"]])
   map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])
   design_names = restore_coefficient_names(design[["aliases"]], map)
-  beta = coef.dbreg(result)
-  full_beta = stats::setNames(rep(0, length(design_names)), design_names)
-  if (!is.null(result[["linear_design"]])) {
-    ids = result[["linear_design"]][["slope_ids"]]
-    positions = match(ids, design[["columns"]][["id"]])
-    if (anyNA(positions)) stop("Could not align fitted OLS prediction coordinates.", call. = FALSE)
-    full_beta[positions] = linear_coefficients_for_ids(result, ids)
-  } else {
-    if (length(setdiff(names(beta), design_names))) stop("Could not align fitted OLS prediction slopes.", call. = FALSE)
-    full_beta[names(beta)] = beta
+  layout = result[["linear_design"]]
+  columns = layout[["columns"]]
+  design_ids = design[["columns"]][["id"]]
+  full_positions = match(design_ids, columns[["id"]])
+  ids = layout[["slope_ids"]]
+  positions = match(ids, design_ids)
+  if (is.null(layout) || !is.character(design_ids) || anyNA(design_ids) ||
+      anyDuplicated(design_ids) || anyDuplicated(columns[["id"]]) ||
+      anyNA(full_positions) || any(columns[["role"]][full_positions] != "slope") ||
+      any(vapply(columns[["recipe"]][full_positions], is.null, logical(1))) ||
+      !is.character(ids) || anyNA(ids) || anyDuplicated(ids) || anyNA(positions)) {
+    stop("Could not align the full OLS prediction recovery coordinates.", call. = FALSE)
   }
+  full_beta = stats::setNames(rep(0, length(design_ids)), design_names)
+  full_beta[positions] = linear_coefficients_for_ids(result, ids)
   taken = unique(c(
     inputs[["yvar"]], inputs[["xvars"]], inputs[["fe"]], unlist(components),
     inputs[["weights"]], inputs[["cluster_var"]], inputs[["row_id_safe"]]
@@ -1139,7 +1215,7 @@ finalize_linear_prediction = function(result, inputs) {
     taken = c(taken, fe),
     fold_case = folds_identifier_case(conn)
   ) else character()
-  trend_aliases = stats::setNames(trend_columns, restore_names(trend_sources, inputs[["source_map"]]))
+  trend_aliases = stats::setNames(trend_columns, restore_coefficient_names(trend_sources, inputs[["source_map"]]))
   attr(fe, "slopes") = lapply(inputs[["fe_slopes"]], function(vars) trend_columns[match(vars, trend_sources)])
   ranked = paste0("(", sql_rank_fixed_effects(conn, source, components, fe), ")")
   x = if (length(design_names)) paste0("__dbglm_prediction_x", seq_along(design_names)) else character()
@@ -1180,16 +1256,14 @@ finalize_linear_prediction = function(result, inputs) {
   )
   frame = paste0("(", paste("SELECT", paste(fields, collapse = ","), "FROM", ranked), ")")
   manager = fit_table_manager(conn, inputs[["sample_resources"]])
-  public_components = lapply(components, restore_names, map = inputs[["source_map"]])
+  public_components = lapply(components, restore_coefficient_names, map = inputs[["source_map"]])
   result[["fitted_state"]] = build_prediction_state(conn, frame, frame, fe, public_components,
     x, design_names, center, trend_aliases, sizes, manager[["create"]], manager[["drop"]], n,
     dictionary_components = keys[["columns"]], beta = unname(full_beta),
     expected_rss = attr(result[["vcov"]], "rss") / weight_scale, constant = y_center,
     recovery_control = list(tol = inputs[["fe_tol"]], max_iter = inputs[["fe_max_iter"]])
   )
-  levels = inputs[["factor_levels"]]
-  if (length(levels)) names(levels) = restore_term_names(names(levels), inputs[["source_map"]])
-  result[["factor_levels"]] = levels
+  result[["fitted_state"]][["specification"]][["design_ids"]] = design_ids
   result
 }
 
@@ -1216,19 +1290,22 @@ finalize_fwl_prediction = function(result, inputs) {
   p = length(x)
   map = coefficient_name_map(inputs[["name_map"]], inputs[["source_map"]])
   design_names = restore_coefficient_names(x, map)
-  fitted = coef.dbreg(result)
-  beta = stats::setNames(rep(0, p), design_names)
-  if (!is.null(result[["linear_design"]])) {
-    layout = result[["linear_design"]]
-    ids = layout[["slope_ids"]]
-    aliases = layout[["columns"]][["alias"]][match(ids, layout[["columns"]][["id"]])]
-    positions = match(aliases, x)
-    if (anyNA(positions)) return(NULL)
-    beta[positions] = linear_coefficients_for_ids(result, ids)
-  } else {
-    if (length(setdiff(names(fitted), design_names))) return(NULL)
-    beta[names(fitted)] = fitted
+  layout = result[["linear_design"]]
+  columns = layout[["columns"]]
+  full_positions = match(x, columns[["alias"]])
+  design_ids = columns[["id"]][full_positions]
+  ids = layout[["slope_ids"]]
+  positions = match(ids, design_ids)
+  if (is.null(layout) || anyDuplicated(columns[["id"]]) ||
+      anyDuplicated(columns[["alias"]]) || anyNA(full_positions) ||
+      anyNA(design_ids) || anyDuplicated(design_ids) ||
+      any(columns[["role"]][full_positions] != "slope") ||
+      any(vapply(columns[["recipe"]][full_positions], is.null, logical(1))) ||
+      !is.character(ids) || anyNA(ids) || anyDuplicated(ids) || anyNA(positions)) {
+    stop("Could not align the full FWL prediction recovery coordinates.", call. = FALSE)
   }
+  beta = stats::setNames(rep(0, p), design_names)
+  beta[positions] = linear_coefficients_for_ids(result, ids)
   alpha = moments[["alpha"]]
   gamma = as.numeric(alpha[, 1L] - alpha[, seq_len(p) + 1L, drop = FALSE] %*% unname(beta))
   starts = cumsum(c(0, moments[["sizes"]]))
@@ -1240,7 +1317,7 @@ finalize_fwl_prediction = function(result, inputs) {
   # Keep the existing row certificate for numerically risky cancellation.
   if (!is.finite(prediction_bound) || prediction_bound > 1e8 * response_scale) return(NULL)
   components = lapply(inputs[["prediction_fe_components"]], unique)
-  public = lapply(components, restore_names, map = inputs[["source_map"]])
+  public = lapply(components, restore_coefficient_names, map = inputs[["source_map"]])
   conn = inputs[["conn"]]
   source = paste0("(SELECT * ", inputs[["from_statement"]], ")")
   dictionaries = vector("list", length(components))
@@ -1281,6 +1358,7 @@ finalize_fwl_prediction = function(result, inputs) {
     dbreg_prediction_overflow = function(error) NULL
   )
   if (is.null(state)) return(NULL)
+  state[["specification"]][["design_ids"]] = design_ids
   result[["fitted_state"]] = state
   result
 }
@@ -1319,11 +1397,9 @@ predict_linear_state = function(object, newdata, interval) {
     if (database) lookup = lookup[known, , drop = FALSE]
     positions = positions[known]
   }
-  levels = object[["factor_levels"]]
-  levels = levels[intersect(names(levels), c(all.vars(rhs), names(explicit_factor_sources(attr(stats::terms(rhs), "term.labels")))))]
-  design = as.matrix(build_newdata_design(rhs, rows, levels, object[["i_columns"]], object[["i_specs"]]))
-  absent = setdiff(state[["specification"]][["design_names"]], colnames(design))
-  if (length(absent)) stop("Could not reconstruct fitted OLS design: ", paste(absent, collapse = ", "), call. = FALSE)
+  ids = state[["specification"]][["design_ids"]]
+  if (!is.character(ids)) stop("Missing full learned OLS design coordinates.", call. = FALSE)
+  design = native_linear_matrix(object, rows, ids = ids)
   prediction[positions] = predict_from_fitted_state(state, design, rows, groups = groups, lookup = lookup) + linear_prediction_offset(object, rows)
   prediction
 }
@@ -1571,7 +1647,7 @@ predict_from_database_state = function(state, design, lookup) {
   if (is.null(lookup)) stop("Database prediction requires its fitted key lookup.", call. = FALSE)
   specification = state[["specification"]]
   x = sweep(
-    design[, specification[["design_names"]], drop = FALSE], 2L,
+    prediction_design_columns(state, design), 2L,
     specification[["design_center"]], "-"
   )
   prediction = prediction_matrix_product(x, state[["coefficients"]][["slopes"]]) + lookup[["gamma"]] + state[["prediction"]][["constant"]]
@@ -1715,12 +1791,13 @@ predict_sql = function(object, newdata, conn, table, path, row_id, prediction_ta
     stop("An explicit prediction export requires a caller-owned connection.", call. = FALSE)
   }
   required = prediction_required_columns(object)
-  labels = NULL
+  labels = key_labels = NULL
   if (!is.null(newdata)) {
     if (!is.data.frame(newdata)) stop("`newdata` must be a data frame.", call. = FALSE)
     incoming = prediction_dataframe_source(object, newdata, unique(c(required, row_id)))
     newdata = incoming[["data"]]
     labels = incoming[["labels"]]
+    key_labels = incoming[["key_labels"]]
   }
   resources = fit_resources()
   on.exit(release_fit_resources(resources), add = TRUE)
@@ -1748,7 +1825,7 @@ predict_sql = function(object, newdata, conn, table, path, row_id, prediction_ta
   }
   if (!is.null(prediction_table) && sample_table_exists(conn, prediction_table)) stop("Prediction export table already exists.", call. = FALSE)
   context = sql_prediction_context(object, conn, labels)
-  source = sql_prediction_source(object, context, conn, from_statement, row_id, required, labels)
+  source = sql_prediction_source(object, context, conn, from_statement, row_id, required, labels, key_labels)
   dictionaries = prediction_portable_tables(context, conn, resources)
   prediction = safe_identifiers("prediction", taken = row_id, fold_case = folds_identifier_case(conn))
   query = sql_prediction_equation(object, context, source, dictionaries, conn, row_id, prediction)
@@ -1866,8 +1943,11 @@ prediction_i_specs = function(object) {
 prediction_required_columns = function(object) {
   if (inherits(object, "dbglm")) {
     variables = object[["model_spec"]][["source_vars"]]
-    for (name in intersect(variables, names(object[["factor_sources"]]))) variables[variables == name] = object[["factor_sources"]][[name]]
-  } else variables = all.vars(stats::formula(object[["fml"]], lhs = 0, rhs = 1))
+  } else {
+    validate_linear_source_contract(object)
+    layout = object[["linear_design"]]
+    variables = unname(layout[["source_map"]][model_vars(layout[["rhs"]])])
+  }
   state = object[["fitted_state"]]
   unique(c(
     variables, object[["offset"]],
@@ -1879,14 +1959,15 @@ prediction_required_columns = function(object) {
 prediction_factor_sources = function(object) {
   if (inherits(object, "dbglm")) {
     variables = names(object[["model_spec"]][["factor_levels"]])
-    for (name in intersect(variables, names(object[["factor_sources"]]))) variables[variables == name] = object[["factor_sources"]][[name]]
+    source_map = object[["model_spec"]][["source_map"]]
+    variables = unname(source_map[variables])
     unique(variables)
   } else {
-    rhs = stats::formula(object[["fml"]], lhs = 0, rhs = 1)
-    unique(c(
-      intersect(names(object[["factor_levels"]]), all.vars(rhs)),
-      unname(explicit_factor_sources(attr(stats::terms(rhs), "term.labels")))
-    ))
+    validate_linear_source_contract(object)
+    layout = object[["linear_design"]]
+    keys = names(layout[["factor_sources"]])[layout[["factor_roles"]] != "fe"]
+    physical = unlist(layout[["factor_sources"]][keys], use.names = FALSE)
+    unique(unname(layout[["source_map"]][physical]))
   }
 }
 
@@ -1898,11 +1979,23 @@ prediction_dataframe_source = function(object, data, required) {
   character_keys = unlist(lapply(state[["specification"]][["dictionaries"]], function(dictionary) {
     dictionary[["columns"]][dictionary[["types"]] == "character"]
   }), use.names = FALSE)
-  factors = unique(c(prediction_factor_sources(object), character_keys))
-  labels = safe_identifiers(paste0("dbreg_prediction_factor", seq_along(factors), "__"), taken = names(data))
-  if (!length(factors)) labels = character()
-  for (i in seq_along(factors)) data[[labels[[i]]]] = as.character(data[[factors[[i]]]])
-  names(labels) = factors
+  if (inherits(object, "dbglm")) {
+    factors = unique(c(prediction_factor_sources(object), character_keys))
+    bindings = stats::setNames(factors, factors)
+  } else {
+    validate_linear_source_contract(object)
+    layout = object[["linear_design"]]
+    keys = names(layout[["factor_sources"]])[layout[["factor_roles"]] != "fe"]
+    physical = unlist(layout[["factor_sources"]][keys], use.names = FALSE)
+    bindings = stats::setNames(unname(layout[["source_map"]][physical]), keys)
+    # Existing FE character tuple fields are distinct from compiler dictionary
+    # roles. A forced-factor label never shares an i() label field by raw name.
+    # FE character keys get a separate transient namespace below.
+  }
+  labels = safe_identifiers(paste0("dbreg_prediction_factor", seq_along(bindings), "__"), taken = names(data))
+  if (!length(bindings)) labels = character()
+  for (i in seq_along(bindings)) data[[labels[[i]]]] = as.character(data[[bindings[[i]]]])
+  names(labels) = names(bindings)
   if (length(prediction_i_specs(object))) {
     eligible = rep(TRUE, nrow(data))
     for (name in prediction_required_columns(object)) {
@@ -1913,8 +2006,10 @@ prediction_dataframe_source = function(object, data, required) {
   }
   for (spec in prediction_i_specs(object)) {
     first = spec[["first"]]
-    public = if (inherits(object, "dbglm")) object[["factor_sources"]][[first]] else first
-    if (is.null(public)) public = first
+    public = if (inherits(object, "dbglm")) {
+      source_map = object[["model_spec"]][["source_map"]]
+      source_map[[first]]
+    } else object[["linear_design"]][["source_map"]][[first]]
     index = rep(NA_integer_, nrow(data))
     index[eligible] = i_match_values(spec, data[[public]][eligible], strict = FALSE)
     label = safe_identifiers(paste0("dbreg_prediction_i", length(labels) + 1L, "__"), taken = names(data))
@@ -1926,7 +2021,15 @@ prediction_dataframe_source = function(object, data, required) {
     data[[label]][eligible & is.na(index)] = marker
     labels[first] = label
   }
-  list(data = data[unique(c(required, labels))], labels = labels)
+  key_labels = labels
+  if (!inherits(object, "dbglm")) {
+    key_variables = unique(character_keys)
+    key_labels = safe_identifiers(paste0("dbreg_prediction_key", seq_along(key_variables), "__"), taken = names(data))
+    if (!length(key_variables)) key_labels = character()
+    names(key_labels) = key_variables
+    for (key in key_variables) data[[key_labels[[key]]]] = as.character(data[[key]])
+  }
+  list(data = data[unique(c(required, labels, key_labels))], labels = labels, key_labels = key_labels)
 }
 
 sql_prediction_context = function(object, conn, dataframe_labels = NULL) {
@@ -1939,12 +2042,22 @@ sql_prediction_context = function(object, conn, dataframe_labels = NULL) {
   design = sql_fitted_prediction_design(object, conn, factor_labels = !is.null(dataframe_labels))
   for (name in names(design[["factor_levels"]])) {
     public = design[["sources"]][[name]]
-    if (!is.null(dataframe_labels)) design[["sources"]][name] = dataframe_labels[[if (name %in% names(dataframe_labels)) name else public]]
+    if (!is.null(dataframe_labels)) {
+      if (inherits(object, "dbglm")) {
+        i_sources = vapply(object[["model_spec"]][["i_specs"]], `[[`, character(1), "first")
+        key = if (name %in% i_sources) name else public
+      } else key = if (name %in% names(dataframe_labels)) name else public
+      design[["sources"]][name] = dataframe_labels[[key]]
+    }
   }
   if (is.null(state)) {
     beta = stats::coef(object)
     if (inherits(object, "dbglm")) names(beta) = object[["design_names"]]
-    index = if (native_linear_runtime(object)) {
+    index = if (inherits(object, "dbglm")) {
+      fitted = object[["model_spec"]][["fitted_ids"]]
+      if (length(fitted) != length(beta)) stop("Fitted GLM coefficients do not match their design IDs.", call. = FALSE)
+      match(fitted, design[["ids"]])
+    } else if (native_linear_runtime(object)) {
       match(object[["linear_design"]][["fitted_ids"]], design[["ids"]])
     } else match(names(beta), design[["names"]])
     if (anyNA(index)) stop("Could not align fitted SQL prediction coefficients.", call. = FALSE)
@@ -1956,13 +2069,30 @@ sql_prediction_context = function(object, conn, dataframe_labels = NULL) {
     ))
   }
   expected = state[["specification"]][["design_names"]]
-  index = match(expected, design[["names"]])
+  if (identical(state[["prediction"]][["recovery_kind"]], "rss")) {
+    ids = state[["specification"]][["design_ids"]]
+    actual = design[["ids"]]
+    columns = object[["linear_design"]][["columns"]]
+    positions = match(ids, columns[["id"]])
+    index = match(ids, actual)
+    if (!is.character(ids) || anyNA(ids) || anyDuplicated(ids) ||
+        !is.character(actual) || anyNA(actual) || anyDuplicated(actual) ||
+        anyDuplicated(columns[["id"]]) || anyNA(positions) ||
+        any(columns[["role"]][positions] != "slope") ||
+        length(ids) != length(expected) || length(actual) != length(design[["expressions"]])) {
+      stop("Could not align the full learned OLS SQL coordinates.", call. = FALSE)
+    }
+  } else index = match(expected, design[["names"]])
   if (anyNA(index)) stop("Could not align the fitted learned-effect SQL design.", call. = FALSE)
   design[["expressions"]] = design[["expressions"]][index]
   design[["names"]] = expected
   database = identical(state[["prediction"]][["storage"]], "database")
   beta = if (database) state[["coefficients"]][["slopes"]] else
     state[["coefficients"]][["joint"]][state[["coefficients"]][["fe_n"]] + seq_along(expected)]
+  if (identical(state[["prediction"]][["recovery_kind"]], "rss") &&
+      (length(beta) != length(ids) || length(state[["specification"]][["design_center"]]) != length(ids))) {
+    stop("The full learned OLS SQL coordinates have inconsistent widths.", call. = FALSE)
+  }
   constant = state[["prediction"]][["constant"]]
   if (is.null(constant)) constant = 0
   list(
@@ -2057,13 +2187,14 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
   if (glm) {
     specification = object[["model_spec"]]
     rhs = specification[["rhs"]]
-    variables = specification[["source_vars"]]
-    if (any(!is_safe_identifier(variables))) {
-      stop("SQL prediction requires SQL-safe fitted GLM regressor names.", call. = FALSE)
+    validate_model_spec(specification)
+    if (!identical(specification[["fitted_ids"]], object[["inference_result"]][["coefficient_ids"]])) {
+      stop("Fitted GLM coefficient IDs do not match their completed inference order.", call. = FALSE)
     }
+    variables = model_vars(rhs)
+    if (any(!is_safe_identifier(variables))) stop("SQL prediction requires SQL-safe fitted GLM regressor names.", call. = FALSE)
     aliases = variables
-    sources = stats::setNames(variables, aliases)
-    for (name in intersect(names(object[["factor_sources"]]), aliases)) sources[name] = object[["factor_sources"]][[name]]
+    sources = specification[["source_map"]][aliases]
     levels = specification[["factor_levels"]]
     classes = specification[["factor_classes"]]
     if (factor_labels) classes = stats::setNames(rep("character", length(levels)), names(levels))
@@ -2085,53 +2216,43 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
     )
     names = design[["coef_names"]]
     expressions = design[["select_exprs"]]
-    if (!identical(names, specification[["columns"]][["name"]])) {
-      stop("Could not reconstruct the fitted GLM SQL design.", call. = FALSE)
+    fields = c("id", "term", "basis", "role")
+    if (!identical(design[["columns"]][fields], specification[["columns"]][fields])) {
+      stop("Could not reconstruct the fitted GLM SQL descriptor axis.", call. = FALSE)
     }
+    names = specification[["columns"]][["name"]]
     intercept = isTRUE(object[["has_intercept"]])
-  } else {
-    rhs = stats::formula(object[["fml"]], lhs = 0, rhs = 1)
-    variables = all.vars(rhs)
-    aliases = safe_identifiers(variables, fold_case = folds_identifier_case(conn))
-    sources = stats::setNames(variables, aliases)
-    renamed = aliases != variables
-    source_map = stats::setNames(variables[renamed], aliases[renamed])
-    rhs = rename_expr_vars(rhs, stats::setNames(aliases, variables))
-    source_aliases = stats::setNames(aliases, variables)
-    raw_rhs = stats::formula(object[["fml"]], lhs = 0, rhs = 1)
-    forced = explicit_factor_sources(attr(stats::terms(raw_rhs), "term.labels"))
-    relevant = c(variables, names(forced))
-    levels = object[["factor_levels"]][intersect(names(object[["factor_levels"]]), relevant)]
-    if (length(levels)) names(levels) = restore_term_names(names(levels), source_aliases)
-    classes = object[["factor_classes"]][intersect(names(object[["factor_classes"]]), relevant)]
-    if (length(classes)) names(classes) = restore_term_names(names(classes), source_aliases)
-    forced_safe = explicit_factor_sources(attr(stats::terms(rhs), "term.labels"))
-    for (term in names(forced_safe)) sources[[term]] = variables[match(forced_safe[[term]], aliases)]
-    if (length(forced)) {
-      unused = setdiff(unname(forced), model_vars(raw_rhs, skip_factors = TRUE))
-      unused = aliases[match(unused, variables)]
-      sources = sources[!names(sources) %in% unused]
-      levels = levels[!names(levels) %in% unused]
-      classes = classes[!names(classes) %in% unused]
+    if (any(!specification[["fitted_ids"]] %in%
+        c(if (intercept) "intercept", specification[["columns"]][["id"]]))) {
+      stop("Fitted GLM coefficient IDs do not match their actual design axis.", call. = FALSE)
     }
+  } else {
+    validate_linear_source_contract(object)
+    layout = object[["linear_design"]]
+    rhs = layout[["rhs"]]
+    aliases = model_vars(rhs)
+    source_map = layout[["source_map"]]
+    sources = source_map[aliases]
+    keys = names(layout[["factor_sources"]])[layout[["factor_roles"]] != "fe"]
+    levels = object[["factor_levels"]][keys]
+    classes = object[["factor_classes"]][keys]
+    forced_safe = layout[["factor_sources"]][keys[layout[["factor_roles"]][keys] == "forced"]]
+    for (term in names(forced_safe)) sources[[term]] = source_map[[forced_safe[[term]]]]
+    unused = setdiff(unlist(forced_safe, use.names = FALSE), model_vars(rhs, skip_factors = TRUE))
+    sources = sources[!names(sources) %in% unused]
+    levels = levels[!names(levels) %in% unused]
+    classes = classes[!names(classes) %in% unused]
+
     if (factor_labels) classes = stats::setNames(rep("character", length(levels)), names(levels))
-    # Scalar FE terms affect the native interaction reference rule; composite
-    # FE ranks are distinct from their component variables in that rule.
-    scalar_fe = unlist(lapply(state[["specification"]][["dictionaries"]], function(dictionary) {
-      if (length(dictionary[["columns"]]) == 1L) dictionary[["columns"]] else character()
-    }), use.names = FALSE)
-    fe = aliases[match(intersect(scalar_fe, variables), variables)]
+    fe = names(layout[["fe_sources"]])
+    scalar_fe = unname(layout[["fe_sources"]])[!unname(layout[["fe_sources"]]) %in% names(object[["composite_fes"]])]
+    fe = unique(c(fe, aliases[unname(source_map[aliases]) %in% scalar_fe]))
     info = list(
       types = as.list(stats::setNames(ifelse(aliases %in% names(levels), "factor", "numeric"), aliases)),
       levels = levels, factor_classes = classes, level_sql = if (factor_labels)
         lapply(levels, function(value) sql_value_literals(conn, as.character(value))) else sql_factor_literals(conn, levels, classes)
     )
-    info[["i_specs"]] = lapply(object[["i_specs"]], function(spec) {
-      spec[["first"]] = source_aliases[[spec[["first"]]]]
-      if (!is.null(spec[["second"]])) spec[["second"]] = source_aliases[[spec[["second"]]]]
-      spec[["term"]] = restore_term_names(spec[["term"]], source_aliases)
-      spec
-    })
+    info[["i_specs"]] = object[["i_specs"]]
     for (spec in info[["i_specs"]]) {
       first = spec[["first"]]
       if (!is.null(spec[["source_type"]])) info[["types"]][[first]] = spec[["source_type"]]
@@ -2140,7 +2261,7 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
         sql_factor_literals(conn, stats::setNames(list(spec[["values"]]), first), classes)[[first]]
       levels[[first]] = if (factor_labels) spec[["labels"]] else spec[["values"]]
     }
-    info[["classes"]] = stats::setNames(rep("numeric", length(aliases)), aliases)
+    info[["classes"]] = layout[["source_classes"]]
     info[["classes"]][names(classes)] = classes
     for (spec in info[["i_specs"]]) {
       second = spec[["second"]]
@@ -2166,7 +2287,7 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
       i_columns = design[["i_columns"]], i_specs = design[["i_specs"]], columns = design[["columns"]]
     )
     map = coefficient_name_map(inputs[["name_map"]], source_map)
-    names = restore_coefficient_names(design[["aliases"]], map)
+    names = linear_column_labels(design[["columns"]], source_map, object[["i_specs"]])
     expressions = design[["select_exprs"]]
     intercept = intercept && !length(object[["fe"]])
   }
@@ -2176,7 +2297,7 @@ sql_fitted_prediction_design = function(object, conn, factor_labels = FALSE) {
   }
   list(
     expressions = expressions, names = names, sources = sources,
-    ids = if (!glm) c(if (intercept) "intercept", design[["columns"]][["id"]]),
+    ids = c(if (intercept) "intercept", design[["columns"]][["id"]]),
     factor_levels = levels, factor_classes = classes,
     level_sql = info[["level_sql"]],
     factor_labels = factor_labels,
@@ -2195,13 +2316,13 @@ prediction_factor_class = function(design, name) {
   class
 }
 
-sql_prediction_source = function(object, context, conn, from_statement, row_id, raw_required, dataframe_labels = NULL) {
+sql_prediction_source = function(object, context, conn, from_statement, row_id, raw_required, dataframe_labels = NULL, dataframe_key_labels = dataframe_labels) {
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
   dictionaries = context[["state"]][["specification"]][["dictionaries"]]
   key_sources = lapply(dictionaries, function(dictionary) {
     columns = dictionary[["columns"]]
     for (j in seq_along(columns)) {
-      if (dictionary[["types"]][[j]] == "character" && !is.null(dataframe_labels)) columns[[j]] = dataframe_labels[[columns[[j]]]]
+      if (dictionary[["types"]][[j]] == "character" && !is.null(dataframe_key_labels)) columns[[j]] = dataframe_key_labels[[columns[[j]]]]
     }
     columns
   })

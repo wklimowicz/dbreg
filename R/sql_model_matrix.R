@@ -233,6 +233,10 @@ sql_model_matrix_from_info = function(term_labels, col_info, expand = "all", sep
   result[["columns"]][["label"]] = linear_column_labels(result[["columns"]], i_specs = col_info[["i_specs"]])
   result[["coef_names"]] = result[["columns"]][["label"]]
   result[["source_classes"]] = col_info[["classes"]]
+  result[["factor_sources"]] = stats::setNames(lapply(names(col_info[["levels"]]), function(key) {
+    source = col_info[["factor_sources"]][[key]]
+    if (is.null(source)) key else source
+  }), names(col_info[["levels"]]))
   attr(result, "sql_level_rows") = level_rows
   result[["i_specs"]] = lapply(col_info[["i_specs"]], function(spec) {
     spec[["source_type"]] = col_info[["types"]][[spec[["first"]]]]
@@ -499,7 +503,7 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
   if (length(lvls) < 2) {
     constant_row = col_info[["constant_rows"]][[var]]
     return(list(sql = "1", name = paste0(var, "_constant"), alias = col_info[["level_aliases"]][["alias"]][constant_row],
-      recipe = list(list(kind = "constant", variable = if (forced) unname(explicit_factor_sources(var)) else model_vars(str2lang(var))[[1L]], factor = forced)),
+      recipe = list(list(kind = "constant", variable = if (forced) unname(explicit_factor_sources(var)) else model_vars(str2lang(var))[[1L]], factor = forced, dictionary = var)),
       level_row = constant_row))
   }
   # Drop first level (reference) only if appropriate
@@ -517,7 +521,7 @@ expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRU
     level_row = which(col_info[["level_aliases"]][["var"]] == var)[match(lvls, la[["level"]])],
     recipe = lapply(seq_along(lvls), function(i) list(kind = "indicator",
       variable = if (forced) unname(explicit_factor_sources(var)) else model_vars(str2lang(var))[[1L]],
-      value = lvls[i], factor = forced))
+      value = lvls[i], factor = forced, dictionary = var))
   )
 }
 
@@ -868,7 +872,7 @@ explicit_factor_info = function(term_labels, info) {
 restore_term_names = function(names, map) {
   vapply(names, function(name) {
     expr = tryCatch(str2lang(name), error = function(e) NULL)
-    if (!is.call(expr)) return(restore_names(name, map))
+    if (!is.call(expr)) return(restore_coefficient_names(name, map))
     paste(deparse(rename_expr_vars(expr, map), width.cutoff = 500L), collapse = "")
   }, character(1), USE.NAMES = FALSE)
 }
@@ -986,7 +990,8 @@ fitted_model_matrix = function(formula, data) {
 
 # A single GLM design specification shared by SQL fitting and R prediction.
 build_model_spec = function(formula, conn, table, fe_vars = character(),
-                            factor_refs = NULL, reserved_names = character(), absorbed = FALSE) {
+                            factor_refs = NULL, reserved_names = character(), absorbed = FALSE,
+                            source_map = NULL, forced_factors = character()) {
   design = sql_model_matrix_internal(
     formula = formula,
     conn = conn,
@@ -1013,91 +1018,109 @@ build_model_spec = function(formula, conn, table, fe_vars = character(),
     )
   }
 
-  aliases = character(length(public_names))
-  reserved = unique(reserved_names)
-  for (i in seq_along(public_names)) {
-    candidate = sprintf("dbreg_internal_x_%04d__", i)
-    while (candidate %in% reserved) candidate = paste0(candidate, "_")
-    aliases[[i]] = candidate
-    reserved = c(reserved, candidate)
+  aliases = allocate_sql_aliases(
+    sprintf("dbreg_internal_x_%04d__", seq_along(public_names)),
+    rep(TRUE, length(public_names)), reserved_names = reserved_names,
+    fold_case = folds_identifier_case(conn)
+  )
+  rhs = if (inherits(formula, "Formula")) stats::formula(formula, lhs = 0, rhs = 1) else formula
+  physical_sources = model_vars(rhs)
+  if (is.null(source_map)) source_map = stats::setNames(physical_sources, physical_sources)
+  if (any(!physical_sources %in% names(source_map)) || anyNA(source_map[physical_sources])) stop("GLM design sources have no raw source binding.", call. = FALSE)
+  provenance = function(recipe) {
+    if (recipe[["kind"]] %in% c("indicator", "constant") &&
+        !is.null(recipe[["variable"]]) && recipe[["variable"]] %in% forced_factors) recipe[["factor"]] = TRUE
+    for (part in intersect(c("left", "right"), names(recipe))) recipe[[part]] = provenance(recipe[[part]])
+    recipe
   }
+  columns = design[["columns"]]
+  columns[["recipe"]] = lapply(columns[["recipe"]], provenance)
+  columns[["alias"]] = aliases
+  columns[["name"]] = public_names
+  columns[["sql"]] = design[["select_exprs"]]
+  columns[["label"]] = linear_column_labels(columns, source_map, design[["i_specs"]])
   list(
+    source_map = source_map,
     rhs = if (inherits(formula, "Formula")) {
       formula(formula, lhs = 0, rhs = 1)
     } else {
       formula
     },
-    source_vars = model_vars(if (inherits(formula, "Formula")) {
-      formula(formula, lhs = 0, rhs = 1)
-    } else {
-      formula
-    }),
-    columns = data.frame(
-      alias = aliases,
-      name = public_names,
-      sql = design[["select_exprs"]],
-      term = design[["terms"]],
-      stringsAsFactors = FALSE
-    ),
+    source_vars = unique(unname(source_map[physical_sources])),
+    columns = columns,
     factor_levels = design[["factor_levels"]],
     factor_classes = design[["factor_classes"]],
     source_classes = design[["source_classes"]],
-    i_specs = design[["i_specs"]],
-    ordinary_rhs = design[["ordinary_rhs"]],
-    factor_refs = factor_refs
+    i_specs = design[["i_specs"]]
   )
 }
 
-evaluate_model_spec = function(model_spec, newdata) {
-  # Public newdata always contains source variables. Extra columns must never
-  # bypass the fitted formula merely by matching generated SQL aliases.
-  missing_vars = setdiff(model_spec[["source_vars"]], names(newdata))
-  if (length(missing_vars)) {
-    stop(
-      "newdata is missing required regressor columns: ",
-      paste(missing_vars, collapse = ", "),
-      call. = FALSE
-    )
+# Validate this owner's complete compiler/source contract at both prediction
+# boundaries. All current GLM specs come from build_model_spec.
+validate_model_spec = function(model_spec) {
+  columns = model_spec[["columns"]]
+  source_map = model_spec[["source_map"]]
+  required = c("id", "term", "basis", "alias", "label", "role", "recipe", "cell_recipe", "name", "sql")
+  if (any(!required %in% names(columns)) || !is.character(columns[["id"]]) ||
+      anyNA(columns[["id"]]) || any(!nzchar(columns[["id"]])) || anyDuplicated(columns[["id"]]) ||
+      !is.list(columns[["recipe"]]) || length(columns[["recipe"]]) != nrow(columns) ||
+      any(vapply(columns[["recipe"]], is.null, logical(1)))) {
+    stop("Incomplete fitted GLM column descriptors.", call. = FALSE)
   }
-
-  for (variable in names(model_spec[["factor_levels"]])) {
-    if (variable %in% names(model_spec[["i_specs"]])) next
-    training_levels = model_spec[["factor_levels"]][[variable]]
-    values = as.character(newdata[[variable]])
-    unseen = setdiff(unique(values[!is.na(values)]), as.character(training_levels))
-    if (length(unseen)) {
-      stop(
-        "newdata contains unseen levels for `", variable, "`: ",
-        paste(unseen, collapse = ", "),
-        call. = FALSE
-      )
+  physical_sources = model_vars(model_spec[["rhs"]])
+  if (!is.character(source_map) || is.null(names(source_map)) || anyNA(source_map) ||
+      anyNA(names(source_map)) || any(!nzchar(source_map)) || any(!nzchar(names(source_map))) ||
+      anyDuplicated(tolower(names(source_map))) || any(!physical_sources %in% names(source_map)) ||
+      !identical(unique(unname(source_map[physical_sources])), model_spec[["source_vars"]])) {
+    stop("GLM design sources have no complete raw source binding.", call. = FALSE)
+  }
+  if ("fitted_ids" %in% names(model_spec)) {
+    ids = model_spec[["fitted_ids"]]
+    if (!is.character(ids) || anyNA(ids) || anyDuplicated(ids) ||
+        any(!ids %in% c("intercept", columns[["id"]]))) {
+      stop("Invalid fitted GLM coefficient IDs.", call. = FALSE)
     }
-    newdata[[variable]] = factor(values, levels = as.character(training_levels))
   }
+  invisible(TRUE)
+}
 
-  rhs = if (length(model_spec[["i_specs"]])) model_spec[["ordinary_rhs"]] else model_spec[["rhs"]]
-  design_data = model_matrix_data(rhs, newdata)
-  matrix = fitted_model_matrix(rhs, design_data)
-  if ("(Intercept)" %in% colnames(matrix)) {
-    matrix = matrix[, colnames(matrix) != "(Intercept)", drop = FALSE]
+evaluate_model_spec = function(model_spec, newdata) {
+  validate_model_spec(model_spec)
+  columns = model_spec[["columns"]]
+  physical_sources = model_vars(model_spec[["rhs"]])
+  source_map = model_spec[["source_map"]]
+  absent = setdiff(model_spec[["source_vars"]], names(newdata))
+  if (length(absent)) stop("newdata is missing required regressor columns: ", paste(absent, collapse = ", "), call. = FALSE)
+  # Every binding reads the original raw input. A safe alias may also be the
+  # name of another raw field, so sequential mutation would change its source.
+  data = as.data.frame(newdata)
+  for (physical in physical_sources) data[[physical]] = newdata[[source_map[[physical]]]]
+  i_sources = vapply(model_spec[["i_specs"]], `[[`, character(1), "first")
+  for (variable in setdiff(names(model_spec[["factor_levels"]]), i_sources)) {
+    levels = model_spec[["factor_levels"]][[variable]]
+    values = data[[variable]]
+    unseen = setdiff(unique(as.character(values[!is.na(values)])), as.character(levels))
+    if (length(unseen)) stop("newdata contains unseen levels for `", source_map[[variable]], "`: ", paste(unseen, collapse = ", "), call. = FALSE)
   }
-  for (spec in model_spec[["i_specs"]]) {
-    matrix = cbind(matrix, evaluate_i_spec(
-      spec, newdata[[spec[["first"]]]],
-      if (!is.null(spec[["second"]])) newdata[[spec[["second"]]]]
-    ))
+  validate = function(recipe) {
+    kind = recipe[["kind"]]
+    if (kind == "product") {
+      validate(recipe[["left"]])
+      validate(recipe[["right"]])
+    } else if (kind %in% c("numeric", "power") || kind == "i" && !is.null(recipe[["second"]])) {
+      variable = if (kind == "i") recipe[["second"]] else recipe[["variable"]]
+      value = data[[variable]]
+      valid = (is.numeric(value) || kind %in% c("power", "i") && is.logical(value)) &&
+        !is.factor(value) && !is.complex(value) && is.null(dim(value))
+      if (!valid) stop("newdata changes a fitted numeric term to an incompatible input type: ", source_map[[variable]], call. = FALSE)
+    }
+    invisible(NULL)
   }
-  expected = model_spec[["columns"]][["name"]]
-  missing_columns = setdiff(expected, colnames(matrix))
-  if (length(missing_columns)) {
-    stop(
-      "Could not reconstruct fitted design columns: ",
-      paste(missing_columns, collapse = ", "),
-      call. = FALSE
-    )
-  }
-  matrix = matrix[, expected, drop = FALSE]
-  colnames(matrix) = model_spec[["columns"]][["alias"]]
+  invisible(lapply(columns[["recipe"]], validate))
+  values = lapply(columns[["recipe"]], linear_recipe_value, data = data, i_specs = model_spec[["i_specs"]])
+  matrix = if (length(values)) do.call(cbind, values) else matrix(0, nrow(data), 0L)
+  colnames(matrix) = columns[["alias"]]
+  attr(matrix, "dbreg_column_ids") = columns[["id"]]
   matrix
 }
 
@@ -1174,65 +1197,248 @@ exact_integer_factor = function(x) {
 # Re-read only an exceptional lossy BIGINT result. Ordinary compression keeps
 # its single query. Cast after SQL grouping, preserving both exact group keys
 # and numeric level ordering, without changing the caller's DBI configuration.
-read_compressed_frame = function(inputs, sql, from_statement = inputs[["from_statement"]], integer_keys = inputs[["fe"]]) {
+read_compressed_frame = function(inputs, sql, from_statement = inputs[["from_statement"]], integer_keys = inputs[["fe"]], type_keys = character()) {
   conn = inputs[["conn"]]
+  backend = detect_backend(conn)
+  q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
+  key_types = key_sql_types = character()
+  metadata = character()
+  native_types = backend[["name"]] == "duckdb" || isTRUE(backend[["is_databricks"]])
+  if (length(type_keys) && native_types) {
+    metadata = safe_identifiers(paste0("dbreg_composite_type", seq_along(type_keys), "__"),
+      taken = c(sql_design_reserved(inputs), names(inputs[["linear_source_map"]]), integer_keys,
+        "n", "sum_w", "sum_wy", "sum_wy_sq", "sum_w2", "sum_w2y", "sum_w2y_sq", "mean_Y", "wts",
+        "dbreg_cell_center__", "dbreg_cell_scale__"), fold_case = folds_identifier_case(conn))
+    # Type inspection is over the already-compressed result, adding no source
+    # scan/query. Remove these internal constant fields before returning cells.
+    sql = paste0("SELECT dbreg_typed_cells.*, ", paste(paste0("typeof(", q(type_keys), ") AS ", q(metadata)), collapse = ","),
+      " FROM (", sql, ") dbreg_typed_cells")
+  }
   data = DBI::dbGetQuery(conn, sql)
+  if (length(type_keys)) {
+    if (native_types) {
+      key_sql_types = stats::setNames(vapply(metadata, function(name) {
+        values = unique(data[[name]])
+        if (length(values) != 1L || is.na(values)) stop("Compressed key native type receipt is incomplete.", call. = FALSE)
+        values[[1L]]
+      }, character(1)), type_keys)
+      key_types = vapply(key_sql_types, prediction_key_type, character(1))
+    } else if (backend[["name"]] %in% c("sqlserver", "mysql")) {
+      source = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
+      schema = read_i_schema(conn, sql_limit(paste("SELECT", paste(q(type_keys), collapse = ","), from_statement), 0, backend[["name"]]))
+      info = lapply(type_keys, function(column) i_native_metadata(conn, source, column, schema, backend))
+      # Classification only: do not promote these records to retained cast SQL.
+      key_types = stats::setNames(vapply(info, function(value) value[["types"]], character(1)), type_keys)
+    } else {
+      key_types = stats::setNames(vapply(data[type_keys], function(value) {
+        if (inherits(value, "integer64") || is.integer(value)) "integer" else if (inherits(value, "Date")) "date" else
+          if (is.logical(value)) "logical" else if (is.character(value) || is.factor(value)) "character" else NA_character_
+      }, character(1)), type_keys)
+    }
+    if (length(key_types) != length(type_keys) || anyNA(key_types)) {
+      stop("Cannot preserve composite keys without an exact native type receipt.", call. = FALSE)
+    }
+  }
   risky = integer_keys[vapply(integer_keys, function(f) {
     value = data[[f]]
     is.numeric(value) && !inherits(value, "integer64") && any(abs(value) >= 2^53, na.rm = TRUE)
   }, logical(1))]
-  integers = character()
-  if (length(risky)) {
-    backend = detect_backend(conn)
-    if (backend[["name"]] == "duckdb" || isTRUE(backend[["is_databricks"]])) {
-      q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
-      types = DBI::dbGetQuery(conn, paste0(
-        "SELECT ", paste0("typeof(", q(risky), ") AS t", seq_along(risky), collapse = ","),
-        " ", from_statement, " LIMIT 1"
-      ))
-      integers = risky[vapply(types, function(type) grepl("^(u?(bigint|hugeint)|decimal\\([0-9]+,0\\))$", tolower(type[[1]])), logical(1))]
-      if (length(integers)) {
-        cast = sql_text_type(conn, backend)
-        fields = c(q(setdiff(names(data), integers)), paste0("CAST(", q(integers), " AS ", cast, ") AS ", q(integers)))
-        sql = paste0("SELECT ", paste(fields, collapse = ","), " FROM (", sql, ") dbreg_exact_cells")
-        data = DBI::dbGetQuery(conn, sql)
-      }
+  integers = intersect(risky, names(key_types)[key_types == "integer"])
+  remaining = setdiff(risky, names(key_types))
+  if (length(remaining) && native_types) {
+    types = DBI::dbGetQuery(conn, paste0(
+      "SELECT ", paste0("typeof(", q(remaining), ") AS t", seq_along(remaining), collapse = ","),
+      " ", from_statement, " LIMIT 1"))
+    integers = c(integers, remaining[vapply(types, function(type) grepl("^(u?(bigint|hugeint)|decimal\\([0-9]+,0\\))$", tolower(type[[1]])), logical(1))])
+  }
+  if (length(integers)) {
+    cast = sql_text_type(conn, backend)
+    fields = c(q(setdiff(names(data), integers)), paste0("CAST(", q(integers), " AS ", cast, ") AS ", q(integers)))
+    sql = paste0("SELECT ", paste(fields, collapse = ","), " FROM (", sql, ") dbreg_exact_cells")
+    data = DBI::dbGetQuery(conn, sql)
+  }
+  if (length(metadata)) data[metadata] = NULL
+  for (column in names(key_types)[key_types == "logical"]) {
+    value = data[[column]]
+    if (!is.logical(value)) {
+      if (!is.numeric(value) || anyNA(value) || any(!value %in% c(0, 1))) stop("Native logical composite keys must be Boolean or exact 0/1.", call. = FALSE)
+      data[[column]] = as.logical(value)
     }
   }
-  # Keep typed identifiers intact, but cross the same numeric boundary used by
-  # cross_moments() for sufficient statistics. integer64 arithmetic otherwise
-  # truncates fractional residuals, even when cell means/coefficients are doubles.
   moments = intersect(c(
     "sum_w", "sum_wy", "sum_wy_sq", "sum_w2", "sum_w2y", "sum_w2y_sq",
     "sum_w_gc", "sum_wy_gc", "mean_Y", "wts"
   ), names(data))
   for (name in moments) data[[name]] = as.numeric(data[[name]])
-  list(data = data, sql = sql, integers = integers)
+  list(data = data, sql = sql, integers = integers, key_types = key_types)
+}
+
+# Completed linear fits retain the compiler namespace; public labels never key
+# dictionaries or bind input data. All fields are captured by actual producers.
+complete_linear_source_contract = function(layout, inputs) {
+  rhs = if (inherits(inputs[["fml"]], "Formula")) stats::formula(inputs[["fml"]], lhs = 0, rhs = 1) else
+    stats::formula(inputs[["structural_fml"]], lhs = 0, rhs = 1)
+  if (!is.null(inputs[["iv_blocks"]])) rhs = stats::formula(inputs[["structural_fml"]], lhs = 0, rhs = 1)
+  environment(rhs) = baseenv()
+  forced = explicit_factor_sources(attr(stats::terms(rhs), "term.labels"))
+  keys = names(inputs[["factor_levels"]])
+  sources = inputs[["factor_sources"]]
+  if (is.null(sources)) sources = list()
+  if (any(!keys %in% names(sources))) {
+    stop("The linear producer did not capture its dictionary source bindings.", call. = FALSE)
+  }
+  fe = as.character(inputs[["fe"]])
+  structural = model_vars(rhs, skip_factors = TRUE)
+  roles = stats::setNames(as.character(ifelse(keys %in% names(forced), "forced",
+    ifelse(keys %in% structural, "ordinary", ifelse(keys %in% fe, "fe", "ordinary")))), keys)
+  layout[["rhs"]] = rhs
+  layout[["source_map"]] = inputs[["linear_source_map"]]
+  layout[["factor_sources"]] = sources[keys]
+  layout[["factor_roles"]] = roles
+  layout[["source_classes"]] = inputs[["source_classes"]]
+  if (is.null(layout[["source_classes"]])) layout[["source_classes"]] = character()
+  layout[["fe_sources"]] = stats::setNames(restore_coefficient_names(fe, inputs[["source_map"]]), fe)
+  trends = as.character(unique(unlist(inputs[["fe_slopes"]], use.names = FALSE)))
+  layout[["trend_sources"]] = stats::setNames(restore_coefficient_names(trends, inputs[["source_map"]]), trends)
+  layout
+}
+
+validate_linear_source_contract = function(object) {
+  layout = object[["linear_design"]]
+  required = c("columns", "rhs", "source_map", "factor_sources", "factor_roles", "source_classes", "fe_sources", "trend_sources")
+  if (is.null(layout) || any(!required %in% names(layout))) {
+    stop("Incomplete fitted linear source descriptors.", call. = FALSE)
+  }
+  map = layout[["source_map"]]
+  columns = layout[["columns"]]
+  variables = model_vars(layout[["rhs"]])
+  keys = names(object[["factor_levels"]])
+  sources = layout[["factor_sources"]]
+  if (!is.character(map) || is.null(names(map)) || anyNA(map) || anyNA(names(map)) ||
+      any(!nzchar(map)) || any(!nzchar(names(map))) || anyDuplicated(tolower(names(map))) ||
+      any(!variables %in% names(map)) || !is.character(columns[["id"]]) ||
+      anyNA(columns[["id"]]) || anyDuplicated(columns[["id"]]) ||
+      any(!c("id", "term", "basis", "alias", "label", "role", "recipe", "cell_recipe") %in% names(columns)) ||
+      any(!nzchar(columns[["id"]])) || anyNA(columns[["role"]]) ||
+      any(!columns[["role"]] %in% c("intercept", "slope", "fe_intercept", "fe_slope", "mundlak_mean")) ||
+      anyDuplicated(columns[["alias"]]) || !is.character(layout[["fitted_ids"]]) ||
+      anyNA(layout[["fitted_ids"]]) || anyDuplicated(layout[["fitted_ids"]]) ||
+      any(!layout[["fitted_ids"]] %in% columns[["id"]]) ||
+      !is.character(layout[["slope_ids"]]) || anyNA(layout[["slope_ids"]]) ||
+      anyDuplicated(layout[["slope_ids"]]) || any(!layout[["slope_ids"]] %in% layout[["fitted_ids"]]) ||
+      length(columns[["recipe"]]) != nrow(columns) ||
+      any(vapply(columns[["recipe"]], is.null, logical(1))) ||
+      !identical(names(sources), keys) || !identical(names(layout[["factor_roles"]]), keys) ||
+      any(!layout[["factor_roles"]] %in% c("ordinary", "forced", "fe")) ||
+      any(!keys %in% names(object[["factor_classes"]]))) {
+    stop("Invalid fitted linear source or dictionary descriptors.", call. = FALSE)
+  }
+  fe = layout[["fe_sources"]]
+  expected_fe = as.character(object[["fe"]])
+  if (!is.character(fe) || length(fe) != length(expected_fe) ||
+      !identical(unname(fe), expected_fe) || anyNA(names(fe)) || anyDuplicated(names(fe)) ||
+      length(names(fe)) != length(fe)) {
+    stop("Fitted fixed-effect source descriptors are incomplete.", call. = FALSE)
+  }
+  for (physical in names(fe)) {
+    raw = fe[[physical]]
+    if (physical %in% names(map)) {
+      if (!identical(map[[physical]], raw)) stop("Fitted scalar fixed-effect source binding is invalid.", call. = FALSE)
+    } else if (!identical(physical, raw) || !raw %in% names(object[["composite_fes"]]) ||
+        any(!object[["composite_fes"]][[raw]] %in% unname(map))) {
+      stop("Derived fixed-effect sources have no fitted tuple owner.", call. = FALSE)
+    }
+  }
+  trends = layout[["trend_sources"]]
+  expected_trends = unique(as.character(unlist(object[["varying_slopes"]], use.names = FALSE)))
+  if (!is.character(trends) || !identical(unname(trends), expected_trends) ||
+      length(names(trends)) != length(trends) || anyNA(names(trends)) || anyDuplicated(names(trends)) ||
+      any(!names(trends) %in% names(map)) || !identical(unname(map[names(trends)]), expected_trends)) {
+    stop("Fitted varying-slope source descriptors are incomplete.", call. = FALSE)
+  }
+  bindings = c(names(map), names(layout[["fe_sources"]]), names(layout[["trend_sources"]]))
+  if (any(!unlist(sources, use.names = FALSE) %in% bindings) ||
+      any(!variables %in% names(layout[["source_classes"]]))) {
+    stop("Fitted linear dictionary sources are not completely bound.", call. = FALSE)
+  }
+  if (!is.list(object[["i_specs"]])) stop("Missing fitted typed indicator descriptors.", call. = FALSE)
+  for (spec in object[["i_specs"]]) {
+    if (any(!c("first", "term", "values", "labels", "selected") %in% names(spec)) ||
+        !spec[["first"]] %in% names(map) ||
+        !is.null(spec[["second"]]) && !spec[["second"]] %in% names(map) ||
+        length(spec[["values"]]) != length(spec[["labels"]])) {
+      stop("Incomplete fitted typed indicator source bindings.", call. = FALSE)
+    }
+  }
+  inspect = function(recipe) {
+    if (recipe[["kind"]] == "product") {
+      inspect(recipe[["left"]])
+      inspect(recipe[["right"]])
+    } else if (recipe[["kind"]] == "mean") {
+      inspect(recipe[["source"]])
+    } else if (recipe[["kind"]] == "i") {
+      index = which(vapply(object[["i_specs"]], function(spec) identical(spec[["term"]], recipe[["term"]]), logical(1)))
+      if (length(index) != 1L) stop("Missing fitted typed indicator source descriptor.", call. = FALSE)
+    } else if (recipe[["kind"]] %in% c("indicator", "constant") && !is.null(recipe[["variable"]])) {
+      key = recipe[["dictionary"]]
+      if (!is.character(key) || length(key) != 1L || !key %in% keys ||
+          !identical(sources[[key]], recipe[["variable"]]) ||
+          !identical(isTRUE(recipe[["factor"]]), identical(layout[["factor_roles"]][[key]], "forced"))) {
+        stop("Missing fitted factor dictionary identity.", call. = FALSE)
+      }
+    }
+    variable = recipe[["variable"]]
+    if (!is.null(variable) && !variable %in% bindings) stop("Unbound fitted linear recipe source.", call. = FALSE)
+    invisible(NULL)
+  }
+  invisible(lapply(columns[["recipe"]], inspect))
+  invisible(TRUE)
+}
+
+linear_prediction_source_data = function(object, newdata) {
+  validate_linear_source_contract(object)
+  layout = object[["linear_design"]]
+  variables = model_vars(layout[["rhs"]])
+  raw = unname(layout[["source_map"]][variables])
+  absent = setdiff(raw, names(newdata))
+  if (length(absent)) stop("newdata is missing required regressor columns: ", paste(absent, collapse = ", "), call. = FALSE)
+  data = as.data.frame(newdata)[, integer(), drop = FALSE]
+  # Always read original input: another raw field can also be a physical alias.
+  for (i in seq_along(variables)) data[[variables[[i]]]] = newdata[[raw[[i]]]]
+  typed = vapply(object[["i_specs"]], `[[`, character(1), "first")
+  for (key in names(layout[["factor_sources"]])) {
+    if (layout[["factor_roles"]][[key]] == "fe" || key %in% typed) next
+    source = layout[["factor_sources"]][[key]]
+    if (!source %in% variables) next
+    unseen = setdiff(unique(as.character(data[[source]][!is.na(data[[source]])])), as.character(object[["factor_levels"]][[key]]))
+    label = layout[["source_map"]][[source]]
+    if (layout[["factor_roles"]][[key]] == "forced") label = paste0("factor(", coef_var_name(label), ")")
+    if (length(unseen)) stop("newdata contains unseen levels for `", label, "`: ", paste(unseen, collapse = ", "), call. = FALSE)
+  }
+  for (spec in object[["i_specs"]]) i_match_values(spec, data[[spec[["first"]]]], strict = TRUE)
+  data
 }
 
 # Only compressed fits retain explicit FE coefficients. Their tuple-to-rank
 # mapping comes from cells already collected for estimation, with no extra scan.
 finalize_linear_design = function(result, inputs) {
   if (!is.null(result[["linear_design"]])) {
+    result[["linear_design"]] = complete_linear_source_contract(result[["linear_design"]], inputs)
     result[["linear_design"]] = restore_native_linear_layout(result[["linear_design"]],
-      inputs[["source_map"]], inputs[["i_specs"]])
+      inputs[["source_map"]], inputs[["i_specs"]], restore_sources = FALSE)
   }
-  result[["i_specs"]] = inputs[["i_specs"]]
+  result[["i_specs"]] = if (length(inputs[["i_specs"]])) inputs[["i_specs"]] else list()
   result[["offset"]] = inputs[["offset"]]
   result[["fixef_rm"]] = inputs[["fixef_rm"]]
   result[["pruning_rounds"]] = if (is.null(inputs[["pruning"]])) 0L else inputs[["pruning"]][["rounds"]]
   result[["exclusions"]] = if (is.null(inputs[["pruning"]])) c(singleton = 0, infinite_coef = 0) else inputs[["pruning"]][["counts"]]
-  levels = inputs[["factor_levels"]]
-  if (length(levels)) names(levels) = restore_term_names(names(levels), inputs[["source_map"]])
-  result[["factor_levels"]] = levels
-  classes = inputs[["factor_classes"]]
-  if (length(classes)) names(classes) = restore_term_names(names(classes), inputs[["source_map"]])
-  result[["factor_classes"]] = classes
+  result[["factor_levels"]] = inputs[["factor_levels"]]
+  result[["factor_classes"]] = inputs[["factor_classes"]]
   composites = inputs[["composite_fes"]]
-  result[["composite_fes"]] = lapply(composites, function(vars) restore_names(vars, inputs[["source_map"]]))
+  result[["composite_fes"]] = lapply(composites, function(vars) restore_coefficient_names(vars, inputs[["source_map"]]))
   result[["composite_levels"]] = inputs[["composite_levels"]]
   result[["fe_labels"]] = inputs[["fe_labels"]]
-  result[["varying_slopes"]] = lapply(inputs[["fe_slopes"]], restore_names, map = inputs[["source_map"]])
+  result[["varying_slopes"]] = lapply(inputs[["fe_slopes"]], restore_coefficient_names, map = inputs[["source_map"]])
   fml = if (!is.null(inputs[["original_fml"]])) inputs[["original_fml"]] else result[["fml"]]
   # The supported design uses columns and built-in transformations only.
   # Retaining the caller/strategy frame can capture the entire original panel
@@ -1245,7 +1451,7 @@ finalize_linear_design = function(result, inputs) {
     design[["columns"]] = setNames(rownames(result[["coeftable"]]), design[["columns"]])
     if (length(design[["trend_sources"]])) {
       design[["prediction_trends"]] = stats::setNames(
-        restore_names(unname(design[["trend_sources"]]), inputs[["source_map"]]), names(design[["trend_sources"]])
+        restore_coefficient_names(unname(design[["trend_sources"]]), inputs[["source_map"]]), names(design[["trend_sources"]])
       )
     }
     result[["compressed_design"]] = design
@@ -1298,26 +1504,39 @@ demean_prediction_data = function(matrix, groups, weights = NULL, tol = 1e-10, m
 
 # Length prefixes distinguish tuples containing delimiters, empty strings and
 # numeric/integer64 keys without enumerating the Cartesian product of levels.
-tuple_key = function(data, columns) {
-  values = lapply(columns, function(column) {
-    value = as.character(data[[column]])
-    paste0(nchar(value, type = "bytes"), ":", value)
+tuple_key = function(data, columns, types = NULL) {
+  values = lapply(data[columns], function(value) {
+    if (!is.factor(value)) return(value)
+    keys = attr(value, "dbreg_key_values")
+    if (is.null(keys)) as.character(value) else keys[as.integer(value)]
   })
-  do.call(paste, c(values, sep = "|"))
+  if (is.null(types)) types = vapply(values, function(value) {
+    if (inherits(value, "integer64") || is.integer(value)) "integer" else if (inherits(value, "Date")) "date" else
+      if (is.logical(value)) "logical" else if (is.numeric(value) && !is.complex(value)) "numeric" else
+        if (is.character(value)) "character" else NA_character_
+  }, character(1))
+  if (length(types) != length(columns) || anyNA(types) ||
+      any(!types %in% c("integer", "numeric", "float", "logical", "date", "character"))) {
+    stop("Tuple keys require complete fitted component types.", call. = FALSE)
+  }
+  prediction_tuple_key(values, unname(types))
 }
 
 prediction_factors = function(object, data) {
   for (fe in names(object[["composite_fes"]])) {
-    if (fe %in% names(data)) next
+    if (is.null(object[["linear_design"]]) && fe %in% names(data)) next
     columns = object[["composite_fes"]][[fe]]
     if (!all(columns %in% names(data))) stop("Missing composite fixed-effect columns: ", paste(setdiff(columns, names(data)), collapse = ", "), call. = FALSE)
-    key = tuple_key(data, columns)
     lookup = object[["composite_levels"]][[fe]]
+    types = if (!is.null(lookup)) attr(lookup, "types") else NULL
+    if (!is.null(lookup) && is.null(types)) stop("Fitted composite keys have no component type receipt.", call. = FALSE)
+    key = tuple_key(data, columns, types)
     if (!is.null(lookup)) {
       data[[fe]] = unname(lookup[key])
       if (anyNA(data[[fe]])) stop("newdata contains unseen composite fixed-effect levels.", call. = FALSE)
     } else data[[fe]] = key
   }
+  if (!is.null(object[["linear_design"]])) return(data)
   typed = unique(unlist(lapply(object[["i_specs"]], function(spec) c(spec[["first"]], spec[["second"]])), use.names = FALSE))
   for (variable in setdiff(names(object[["factor_levels"]]), typed)) {
     if (!variable %in% names(data)) next
@@ -1377,6 +1596,10 @@ build_newdata_design = function(fml, data, factor_levels = list(), i_columns = N
   for (term in names(prepared[["names"]])) {
     colnames(design) = gsub(term, prepared[["names"]][[term]], colnames(design), fixed = TRUE)
   }
+  restore_i_matrix_names(design, i_columns)
+}
+
+restore_i_matrix_names = function(design, i_columns) {
   if (NROW(i_columns)) {
     quoted = vapply(i_columns[["name"]], function(name) paste(deparse(as.name(name), backtick = TRUE), collapse = ""), character(1))
     matched = match(colnames(design), quoted)
@@ -1527,18 +1750,24 @@ model_matrix_recipes = function(X, formula, data, design = NULL, trend_sources =
     variables = rownames(factors)[factors[, term] != 0L]
     parts = lapply(variables, function(variable) {
       emitted = if (!is.null(compiled)) match(variable, compiled[["alias"]]) else NA_integer_
-      if (!is.na(emitted) && !identical(compiled[["recipe"]][[emitted]][["kind"]], "raw")) return(list(compiled[["recipe"]][[emitted]]))
+      if (!is.na(emitted)) {
+        recipe = compiled[["recipe"]][[emitted]]
+        if (!identical(recipe[["kind"]], "raw")) return(list(recipe))
+        if (is.numeric(data[[source_variable(variable)]]) && !is.factor(data[[source_variable(variable)]])) {
+          return(list(list(kind = "numeric", variable = recipe[["variable"]])))
+        }
+      }
       component = variable
       variable = source_variable(variable)
       value = data[[variable]]
       actual = if (variable %in% names(trend_sources)) trend_sources[[variable]] else variable
-      if (variable %in% constant_sources) return(list(list(kind = "constant", variable = actual)))
+      if (variable %in% constant_sources) return(list(list(kind = "constant", variable = actual, dictionary = variable)))
       power = if (is.null(value)) parse_power_term(variable) else NULL
       if (!is.null(power)) return(list(list(kind = "power", variable = power[["variable"]], exponent = power[["exponent"]])))
       if (is.factor(value) || is.character(value) || is.logical(value)) {
         levels = if (is.factor(value)) levels(value) else levels(factor(value))
         if (factors[component, term] == 1L) levels = levels[-1L]
-        return(lapply(levels, function(level) list(kind = "indicator", variable = actual, value = level)))
+        return(lapply(levels, function(level) list(kind = "indicator", variable = actual, dictionary = variable, value = level)))
       }
       list(list(kind = "numeric", variable = actual))
     })
@@ -1620,9 +1849,9 @@ compressed_linear_layout = function(X, formula, data, design, original_formula, 
         width = sum(assignment == term_id)
         selected = if (width == length(levels)) seq_along(levels) else seq.int(2L, length(levels))
         if (length(selected) != width) stop("Compressed factor coding does not match its emitted basis.", call. = FALSE)
-        recipe = list(kind = "indicator", variable = variable, value = levels[selected[[basis]]])
-      } else recipe = list(kind = "numeric", variable = variable)
-      source_term = match(variable, original)
+        recipe = list(kind = "indicator", variable = variable, dictionary = variable, value = levels[selected[[basis]]])
+      } else recipe = list(kind = "numeric", variable = if (!is.na(emitted)) compiled[["recipe"]][[emitted]][["variable"]] else variable)
+      source_term = if (!is.na(emitted)) compiled[["term"]][[emitted]] else match(variable, original)
       if (is.na(source_term)) stop("Compressed term has no fitted source identity.", call. = FALSE)
       column = data.frame(id = paste0("t", source_term, "b", basis), term = source_term,
         basis = basis, alias = colnames(X)[[j]], label = colnames(X)[[j]], role = "slope", stringsAsFactors = FALSE)
@@ -1655,17 +1884,6 @@ compressed_linear_layout = function(X, formula, data, design, original_formula, 
   list(columns = columns, aliases = aliases)
 }
 
-restore_linear_recipe = function(recipe, map) {
-  if (is.null(recipe)) return(NULL)
-  if (!is.null(recipe[["variable"]])) recipe[["variable"]] = restore_coefficient_names(recipe[["variable"]], map)
-  if (!is.null(recipe[["second"]])) recipe[["second"]] = restore_coefficient_names(recipe[["second"]], map)
-  if (!is.null(recipe[["term"]])) recipe[["term"]] = restore_term_names(recipe[["term"]], map)
-  if (!is.null(recipe[["source"]])) recipe[["source"]] = restore_linear_recipe(recipe[["source"]], map)
-  if (!is.null(recipe[["left"]])) recipe[["left"]] = restore_linear_recipe(recipe[["left"]], map)
-  if (!is.null(recipe[["right"]])) recipe[["right"]] = restore_linear_recipe(recipe[["right"]], map)
-  recipe
-}
-
 linear_recipe_value = function(recipe, data, i_specs) {
   kind = recipe[["kind"]]
   if (kind == "constant") return(rep(1, nrow(data)))
@@ -1692,14 +1910,20 @@ linear_recipe_value = function(recipe, data, i_specs) {
   stop("Unsupported internal native column recipe.", call. = FALSE)
 }
 
-native_linear_matrix = function(object, data, stored = FALSE) {
+native_linear_matrix = function(object, data, stored = FALSE, ids = NULL) {
   layout = object[["linear_design"]]
   columns = layout[["columns"]]
-  positions = match(layout[["fitted_ids"]], columns[["id"]])
+  explicit = !is.null(ids)
+  if (!explicit) ids = layout[["fitted_ids"]]
+  positions = match(ids, columns[["id"]])
+  if (explicit && (!is.character(ids) || anyNA(ids) || anyDuplicated(ids) ||
+      anyDuplicated(columns[["id"]]) || anyNA(positions) ||
+      any(columns[["role"]][positions] != "slope") ||
+      any(vapply(columns[["recipe"]][positions], is.null, logical(1))))) {
+    stop("Could not rebuild the full learned OLS design coordinates.", call. = FALSE)
+  }
   if (!stored) {
-    rhs = stats::formula(object[["fml"]], lhs = 0, rhs = 1)
-    forced = explicit_factor_sources(attr(stats::terms(rhs), "term.labels"))
-    for (term in names(forced)) explicit_prediction_levels(term, data[[forced[[term]]]], object[["factor_levels"]])
+    data = linear_prediction_source_data(object, data)
     validate_native_numeric_types(object, data, columns[["recipe"]][positions])
   }
   recipes = if (stored) columns[["cell_recipe"]] else columns[["recipe"]]
@@ -1707,13 +1931,18 @@ native_linear_matrix = function(object, data, stored = FALSE) {
     i_specs = object[["i_specs"]])
   out = if (length(values)) do.call(cbind, values) else matrix(0, nrow(data), 0L)
   colnames(out) = columns[["label"]][positions]
+  if (explicit) attr(out, "dbreg_column_ids") = ids
   out
 }
 
-restore_native_linear_layout = function(layout, source_map, i_specs = list()) {
-  layout[["columns"]][["label"]] = linear_column_labels(layout[["columns"]], source_map, i_specs)
-  layout[["columns"]][["recipe"]] = lapply(layout[["columns"]][["recipe"]],
-    restore_linear_recipe, map = source_map)
+restore_native_linear_layout = function(layout, source_map, i_specs = list(), restore_sources = TRUE) {
+  if (restore_sources && !is.null(layout[["source_map"]])) {
+    layout[["source_map"]] = restore_coefficient_names(layout[["source_map"]], source_map)
+    layout[["fe_sources"]] = restore_coefficient_names(layout[["fe_sources"]], source_map)
+    layout[["trend_sources"]] = restore_coefficient_names(layout[["trend_sources"]], source_map)
+  }
+  labels = if (is.null(layout[["source_map"]])) source_map else layout[["source_map"]]
+  layout[["columns"]][["label"]] = linear_column_labels(layout[["columns"]], labels, i_specs)
   layout
 }
 
@@ -1752,12 +1981,8 @@ validate_native_numeric_types = function(object, data, recipes) {
   if (!length(inputs) || !any(vapply(inputs, `[[`, logical(1), "exceptional"))) return(invisible(NULL))
   # This adapter validates/evaluates the existing formula semantics only. Its
   # columns are not used to align coefficients or replace fitted coordinates.
-  rhs = stats::formula(object[["fml"]], lhs = 0, rhs = 1)
-  legacy = build_newdata_design(rhs, data, object[["factor_levels"]],
-    object[["i_columns"]], object[["i_specs"]])
-  missing = setdiff(names(coef.dbreg(object, fe = TRUE)), colnames(legacy))
-  if (length(missing)) stop("predict() could not rebuild the design for coefficient(s): ",
-    paste(missing, collapse = ", "), call. = FALSE)
+  rhs = object[["linear_design"]][["rhs"]]
+  build_newdata_design(rhs, data, object[["factor_levels"]], object[["i_columns"]], object[["i_specs"]])
   if (any(vapply(inputs, `[[`, logical(1), "invalid"))) {
     stop("newdata changes a fitted numeric term to an incompatible input type.", call. = FALSE)
   }
@@ -1780,6 +2005,7 @@ native_linear_runtime = function(object) {
       stop("Fitted IV coordinates have no complete raw-data prediction adapter.", call. = FALSE)
     }
   }
+  if (active) validate_linear_source_contract(object)
   active
 }
 

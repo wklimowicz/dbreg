@@ -586,6 +586,8 @@ process_dbreg_inputs = function(inputs) {
   src = safe_source(conn, from_statement, c(source_vars, inputs[["row_id"]], inputs[["retained_source"]][["key"]]))
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
+  bound_sources = unique(c(source_vars, inputs[["row_id"]], inputs[["retained_source"]][["key"]]))
+  inputs[["linear_source_map"]] = stats::setNames(bound_sources, src[["to_safe"]](bound_sources))
   source_map = name_map
   inputs[["row_id_safe"]] = src[["to_safe"]](inputs[["row_id"]])
   inputs[["retained_key_safe"]] = src[["to_safe"]](inputs[["retained_source"]][["key"]])
@@ -613,7 +615,7 @@ process_dbreg_inputs = function(inputs) {
   from_statement = adjusted[["from_statement"]]
   fml_parsed = adjusted[["parsed"]]
   if (!is.null(adjusted[["alias"]])) {
-    public_y = restore_names(adjusted[["outcome"]], source_map)
+    public_y = restore_coefficient_names(adjusted[["outcome"]], source_map)
     name_map[[adjusted[["alias"]]]] = public_y
     source_map[[adjusted[["alias"]]]] = public_y
   }
@@ -1324,7 +1326,7 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   coordinates = rownames(result[["coeftable"]])
   dimnames(V) = rep(list(coordinates), 2L)
   coefficients = stats::setNames(result[["coeftable"]][, "estimate"], coordinates)
-  clusters = if (attr(V, "type") == "cluster") list(restore_names(inputs[["cluster_var"]], inputs[["source_map"]])) else list()
+  clusters = if (attr(V, "type") == "cluster") list(restore_coefficient_names(inputs[["cluster_var"]], inputs[["source_map"]])) else list()
   inference = new_inference_result(V, attr(V, "type"), coordinates, clusters,
     attr(V, "n_clusters"), attr(V, "ssc"), attr(V, "n_params"), attr(V, "df.t"), "t", attr(V, "repair"),
     coefficient_ids = result[["linear_design"]][["fitted_ids"]])
@@ -1335,7 +1337,7 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
     inputs[["own_conn"]] = FALSE
   }
   result[["strategy"]] = chosen_strategy
-  # i() columns (display names), for predict()
+  # Physical i() columns and their actual aliases, for predict()
   result[["i_columns"]] = inputs[["i_columns"]]
   result
 }

@@ -769,9 +769,9 @@ retain_linear_score_frame = function(fit, frame, y, inputs) {
   )
   query = paste(frame[["cte_sql"]], "SELECT", paste(select, collapse = ","), "FROM", frame[["cte_name"]])
   original = inputs[["retained_source"]]
-  public_y = restore_names(y, inputs[["source_map"]])
-  weights = restore_names(inputs[["weights"]], inputs[["source_map"]])
-  components = lapply(inputs[["prediction_fe_components"]], function(columns) restore_names(unique(columns), inputs[["source_map"]]))
+  public_y = restore_coefficient_names(y, inputs[["source_map"]])
+  weights = restore_coefficient_names(inputs[["weights"]], inputs[["source_map"]])
+  components = lapply(inputs[["prediction_fe_components"]], function(columns) restore_coefficient_names(unique(columns), inputs[["source_map"]]))
   state = retain_score_sample(conn, original, inputs[["sample_resources"]], query, "dbreg_fit_key__",
     if (length(scores)) paste0("s.", score_names) else character(),
     paste0("CAST(r.", q(public_y), " AS DOUBLE)-s.dbreg_fit_residual__"), "s.dbreg_fit_residual__",
@@ -813,8 +813,10 @@ finalize_linear_inference = function(result, inputs) {
   state[["fe_df"]] = fe_intercept_df(state[["fe_sizes"]])
   state[["K_model"]] = length(names) + linear_fe_df(inputs, state[["fe_sizes"]])
   state[["default_ssc"]] = inputs[["ssc"]]
-  state[["default_vcov"]] = if (inputs[["vcov_type_req"]] == "cluster")
-    stats::reformulate(restore_names(inputs[["cluster_var"]], inputs[["source_map"]]), env = baseenv()) else inputs[["vcov_type_req"]]
+  state[["default_vcov"]] = if (inputs[["vcov_type_req"]] == "cluster") {
+    raw_cluster = restore_coefficient_names(inputs[["cluster_var"]], inputs[["source_map"]])
+    stats::as.formula(call("~", as.name(raw_cluster)), env = baseenv())
+  } else inputs[["vcov_type_req"]]
   result = attach_inference_state(result, state)
   result
 }
@@ -865,6 +867,10 @@ retain_glm_score_frame = function(
   if (state[["nobs"]] != result[["nobs_orig"]]) stop("Retained GLM scores differ from the fitted sample.", call. = FALSE)
   state[["bread"]] = if (length(x)) dbglm_solve(fit[["H"]])[["inverse"]] else matrix(numeric(), 0L, 0L)
   state[["coefficient_names"]] = names(stats::coef(structure(result, class = c("dbglm", "dbreg"))))
+  state[["coefficient_ids"]] = result[["model_spec"]][["fitted_ids"]]
+  if (length(state[["coefficient_ids"]]) != length(x)) {
+    stop("Retained GLM scores do not match the fitted coefficient IDs.", call. = FALSE)
+  }
   dimnames(state[["bread"]]) = rep(list(state[["coefficient_names"]]), 2L)
   state[["kind"]] = if (result[["family"]][["family"]] == "gaussian") "gaussian" else "glm"
   state[["dispersion_scaled"]] = result[["dispersion_scaled"]]
@@ -872,7 +878,7 @@ retain_glm_score_frame = function(
   state[["K_model"]] = counts[["model"]]
   state[["fe_df"]] = fe_intercept_df(state[["fe_sizes"]])
   state[["default_ssc"]] = ssc
-  state[["default_vcov"]] = if (result[["vcov_type"]] == "cluster") stats::reformulate(result[["cluster_var"]], env = baseenv()) else result[["vcov_type"]]
+  state[["default_vcov"]] = if (result[["vcov_type"]] == "cluster") stats::as.formula(call("~", as.name(result[["cluster_var"]])), env = baseenv()) else result[["vcov_type"]]
   attach_inference_state(result, state)
 }
 
@@ -1194,14 +1200,14 @@ retain_compressed_score_sample = function(
     " FROM (SELECT * ", from_statement, ") f", join
   )
   original = inputs[["retained_source"]]
-  public_y = restore_names(y, inputs[["source_map"]])
-  components = lapply(inputs[["prediction_fe_components"]], function(columns) restore_names(unique(columns), inputs[["source_map"]]))
+  public_y = restore_coefficient_names(y, inputs[["source_map"]])
+  components = lapply(inputs[["prediction_fe_components"]], function(columns) restore_coefficient_names(unique(columns), inputs[["source_map"]]))
   materialize = inputs[["retain"]] == "all"
   state = retain_score_sample(conn, original, resources, query, "dbreg_fit_key__",
     if (length(scores)) paste0("s.", score_names) else character(),
     paste0("CAST(r.", q(public_y), " AS DOUBLE)-s.dbreg_fit_residual__"), "s.dbreg_fit_residual__",
     row_id = inputs[["row_id"]], fe_components = components,
-    weights = restore_names(inputs[["weights"]], inputs[["source_map"]]), materialize = materialize
+    weights = restore_coefficient_names(inputs[["weights"]], inputs[["source_map"]]), materialize = materialize
   )
   if (!is.finite(state[["rss"]]) || abs(state[["rss"]] - fit[["rss"]]) > 1e-6 * max(1, abs(fit[["rss"]]))) {
     stop("Retained compressed scores do not reproduce the fitted RSS.", call. = FALSE)

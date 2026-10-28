@@ -65,8 +65,8 @@
 #'   `"auto"` (the default) selects a strategy from the bin design's cardinality;
 #'   `"compress"` explicitly requests cell aggregation. With fixed effects,
 #'   `"auto"` uses compression to retain level coefficients and their covariance.
-#'   Ignored when smoothness `s > 0`, since spline basis construction requires
-#'   row-level data (i.e., no pre-aggregation).
+#'   For smoothness `s > 0`, the spline basis is constructed on row-level data
+#'   before the selected strategy fits the regression.
 #' @param plot Logical. If `TRUE` (default), a plot is produced as a side effect.
 #'   Set to `FALSE` to suppress plotting.
 #' @param ... Additional arguments passed to \code{\link{plot.dbbinsreg}}, which
@@ -635,8 +635,8 @@ dbbinsreg = function(
 
   # Map internal (safe) names back to display names
   if (length(name_map)) {
-    result[["opt"]][["x_var"]] = restore_names(result[["opt"]][["x_var"]], name_map)
-    result[["opt"]][["y_var"]] = restore_names(result[["opt"]][["y_var"]], name_map)
+    result[["opt"]][["x_var"]] = restore_coefficient_names(result[["opt"]][["x_var"]], name_map)
+    result[["opt"]][["y_var"]] = restore_coefficient_names(result[["opt"]][["y_var"]], name_map)
     result[["opt"]][["formula"]] = rename_expr_vars(result[["opt"]][["formula"]], name_map)
     # A single fit, or separate points/line fits
     restore_fit = function(fit) {
@@ -646,17 +646,7 @@ dbbinsreg = function(
         fit[["linear_design"]] = restore_native_linear_layout(fit[["linear_design"]],
           name_map, fit[["i_specs"]])
       }
-      fit[["fe_labels"]] = restore_names(fit[["fe_labels"]], name_map)
-      fit[["i_specs"]] = restore_i_sources(fit[["i_specs"]], name_map)
-      if (NROW(fit[["i_columns"]])) {
-        for (field in c("var", "by")) fit[["i_columns"]][[field]] = restore_coefficient_names(fit[["i_columns"]][[field]], name_map)
-        columns = fit[["i_columns"]]
-        fit[["i_columns"]][["name"]] = paste0(columns[["var"]], "::", columns[["level"]],
-          ifelse(is.na(columns[["by"]]), "", paste0(":", columns[["by"]])))
-      }
-      for (field in c("factor_levels", "factor_classes")) {
-        if (length(fit[[field]])) names(fit[[field]]) = restore_term_names(names(fit[[field]]), name_map)
-      }
+      fit[["fe_labels"]] = restore_coefficient_names(fit[["fe_labels"]], name_map)
       design = fit[["compressed_design"]]
       if (!is.null(design)) {
         names(design[["source_names"]]) = restore_coefficient_names(names(design[["source_names"]]), name_map)
@@ -1344,6 +1334,8 @@ execute_constrained_binsreg = function(inputs) {
     fml = fml,
     table = spline_table, # Pass table name
     conn = conn,
+    # Level plots require the fitted intercept and joint FE covariance.
+    strategy = if (length(fe)) "compress" else inputs[["strategy"]],
     vcov = vcov_type,
     verbose = FALSE
   )
@@ -1390,8 +1382,8 @@ evaluate_spline_at_bins = function(fit, geo, knots, degree, smooth, basis_names,
   # Get intercept
   intercept = if ("(Intercept)" %in% names(coefs)) coefs["(Intercept)"] else 0
 
-  # Get variance-covariance matrix if CI requested
-  V = if (isTRUE(inputs[["ci"]])) stats::vcov(fit) else NULL
+  # Include the fitted intercept and FE coordinates in each level contrast.
+  V = if (isTRUE(inputs[["ci"]])) stats::vcov(fit, fe = TRUE) else NULL
 
   # Function to build basis vector at a given x value
   build_basis_vector = function(x_val) {

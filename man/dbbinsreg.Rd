@@ -125,8 +125,8 @@ Default is 500. Only used when \code{cb = TRUE}.}
 \code{"auto"} (the default) selects a strategy from the bin design's cardinality;
 \code{"compress"} explicitly requests cell aggregation. With fixed effects,
 \code{"auto"} uses compression to retain level coefficients and their covariance.
-Ignored when smoothness \code{s > 0}, since spline basis construction requires
-row-level data (i.e., no pre-aggregation).}
+For smoothness \code{s > 0}, the spline basis is constructed on row-level data
+before the selected strategy fits the regression.}
 
 \item{plot}{Logical. If \code{TRUE} (default), a plot is produced as a side effect.
 Set to \code{FALSE} to suppress plotting.}

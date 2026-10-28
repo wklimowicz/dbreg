@@ -13,7 +13,9 @@ register_factor_display(
   factor_classes = NULL,
   i_columns = NULL,
   i_specs = list(),
-  columns = NULL
+  columns = NULL,
+  source_classes = NULL,
+  factor_sources = NULL
 )
 }
 \arguments{
@@ -26,12 +28,16 @@ and `level` (the `level_aliases` element of [sql_model_matrix()]).}
 
 \item{i_columns}{Optional data frame of `i()` column aliases (the
 `i_columns` element of [sql_model_matrix()]). Their display names, e.g.
-`period::5:treat`, are also recorded in `inputs$i_columns` for
-`predict()`.}
+`period::5:treat`, contribute presentation mappings. Physical columns are
+retained in `inputs$i_columns` for prediction.}
 
 \item{i_specs}{Typed fitted i() dictionaries shared by R and SQL prediction.}
 
 \item{columns}{Canonical fitted columns with typed source/basis recipes.}
+
+\item{source_classes}{Actual compiler or collected-cell source classes.}
+
+\item{factor_sources}{Actual physical dictionary-to-source bindings.}
 }
 \description{
 Adds entries to `inputs$name_map` so that factor dummies named after their

@@ -255,21 +255,8 @@ process_dbglm_inputs = function(inputs) {
   if (family[["family"]] != "binomial" && separation == "prediction") {
     stop("Boundary prediction mode supports binomial families only.", call. = FALSE)
   }
+  fml = freeze_i_selectors(Formula::Formula(fml))
   normalized = dbglm_formula(fml)
-  # Replace only display names; fitted SQL/R design continues to use aliases.
-  display = function(names) {
-    names = as.character(names)
-    i_columns = rep(FALSE, length(names))
-    for (a in normalized[["i_aliases"]]) {
-      selected = startsWith(names, paste0(a, "::"))
-      i_columns = i_columns | selected
-      names[selected] = paste0(normalized[["factor_display"]][[a]], substring(names[selected], nchar(a) + 1L))
-    }
-    for (a in setdiff(names(normalized[["factors"]]), normalized[["i_aliases"]])) {
-      names[!i_columns] = gsub(a, normalized[["factor_display"]][[a]], names[!i_columns], fixed = TRUE)
-    }
-    names
-  }
   parsed = parse_regression_formula(normalized[["fml"]], allow_empty = TRUE, allow_i = TRUE)
   unique_fe = !duplicated(parsed[["fe_labels"]])
   parsed[["fe"]] = parsed[["fe"]][unique_fe]
@@ -335,10 +322,42 @@ process_dbglm_inputs = function(inputs) {
   variables = unique(c(parsed[["yvar"]], parsed[["xvars"]], unlist(parsed[["fe_components"]]), weights, offset, covariance[["cluster_var"]], unlist(normalized[["slopes"]])))
   real_vars = unique(c(setdiff(variables, names(normalized[["factors"]])), unlist(normalized[["factors"]]), row_id, subset_variables(subset)))
   if (any(startsWith(real_vars, "__dbglm_")) || any(startsWith(real_vars, "dbglm_factor_"))) stop("Source names use a reserved GLM prefix.", call. = FALSE)
+  # Capture public roles before a single source projection gives every SQL
+  # consumer the same safe physical namespace. Original retained rows stay raw.
+  raw_roles = list(weights = weights, offset = offset, cluster = covariance[["cluster_var"]],
+    row_id = row_id, slopes = normalized[["slopes"]])
+  raw_factor_sources = normalized[["factors"]]
+  reserved = c(names(normalized[["factors"]]), fe, unname(trend_aliases),
+    "__dbglm_key", "__dbglm_y", "__dbglm_a", "__dbglm_o", "__dbglm_cluster",
+    "__dbglm_intercept", "__dbglm_single", "__dbglm_infinite")
+  raw_sources = unique(c(real_vars, retained_source[["key"]]))
+  source = safe_source(conn, source_from, raw_sources, reserved = reserved)
+  source_from = source[["from_statement"]]
+  source_map = stats::setNames(raw_sources, source[["to_safe"]](raw_sources))
+  if (length(raw_factor_sources)) source_map[names(raw_factor_sources)] = unlist(raw_factor_sources, use.names = FALSE)
+  normalized[["fml"]] = source[["to_safe"]](normalized[["fml"]])
+  normalized[["factors"]] = lapply(normalized[["factors"]], source[["to_safe"]])
+  normalized[["slopes"]] = stats::setNames(lapply(normalized[["slopes"]], source[["to_safe"]]),
+    source[["to_safe"]](names(normalized[["slopes"]])))
+  parsed = parse_regression_formula(normalized[["fml"]], allow_empty = TRUE, allow_i = TRUE)
+  parsed[["fe"]] = parsed[["fe"]][unique_fe]
+  parsed[["fe_labels"]] = parsed[["fe_labels"]][unique_fe]
+  parsed[["fe_components"]] = parsed[["fe_components"]][unique_fe]
+  variables = source[["to_safe"]](variables)
+  real_vars = source[["to_safe"]](real_vars)
+  weights = source[["to_safe"]](weights)
+  offset = source[["to_safe"]](offset)
+  covariance[["cluster_var"]] = source[["to_safe"]](covariance[["cluster_var"]])
+  row_id = source[["to_safe"]](row_id)
+  if (length(factor_refs)) names(factor_refs) = source[["to_safe"]](names(factor_refs))
+  trend_sources = source[["to_safe"]](trend_sources)
+  names(trend_aliases) = trend_sources
+  display = function(terms) dbglm_display_terms(terms, source_map,
+    setdiff(names(normalized[["factors"]]), normalized[["i_aliases"]]))
   snapshot = create(paste("SELECT", paste(c(
     quote_id(real_vars),
     vapply(names(normalized[["factors"]]), function(a) paste(quote_id(normalized[["factors"]][[a]]), "AS", a), character(1)),
-    if (!is.null(retained_source)) paste(quote_id(retained_source[["key"]]), "AS __dbglm_key") else if (isTRUE(backend_info[["is_databricks"]])) "monotonically_increasing_id() AS __dbglm_key" else "ROW_NUMBER() OVER () AS __dbglm_key"
+    if (!is.null(retained_source)) paste(quote_id(source[["to_safe"]](retained_source[["key"]])), "AS __dbglm_key") else if (isTRUE(backend_info[["is_databricks"]])) "monotonically_increasing_id() AS __dbglm_key" else "ROW_NUMBER() OVER () AS __dbglm_key"
   ), collapse = ", "), source_from), materialize = !is.null(sample_table) && is.null(row_id))
   validate_source_row_id(conn, paste("FROM", snapshot), row_id)
   schema = DBI::dbGetQuery(conn, paste("SELECT * FROM", snapshot, "LIMIT 0"))
@@ -351,7 +370,7 @@ process_dbglm_inputs = function(inputs) {
   numeric_vars = variables[vapply(schema[variables], is.numeric, logical(1))]
   eligible = c(eligible, sql_is_finite(conn, quote_id(numeric_vars), backend_info))
   if (!length(numeric_vars)) eligible = paste0(quote_id(variables), " IS NOT NULL")
-  if (!is.null(subset)) eligible = c(eligible, sql_subset_predicate(conn, subset, schema))
+  if (!is.null(subset)) eligible = c(eligible, sql_subset_predicate(conn, subset, schema, source[["to_safe"]]))
   if (!is.null(weights)) eligible = c(eligible, paste(quote_id(weights), "> 0"))
   elig_cond = paste(eligible, collapse = " AND ")
   outcome = quote_id(parsed[["yvar"]])
@@ -437,13 +456,15 @@ process_dbglm_inputs = function(inputs) {
     pure = DBI::dbGetQuery(conn, paste0("SELECT COUNT(*) AS n FROM (", paste(pure_queries, collapse = " UNION ALL "), ") t"))[["n"]]
     if (pure) stop("GLM fixed-effect separation remains under fixef_rm='", fixef_rm, "'; no finite solution.", call. = FALSE)
   }
-  spec = build_model_spec(parsed[["fml"]], conn, from, factor_refs = factor_refs, reserved_names = variables, absorbed = length(fe) > 0L)
+  spec = build_model_spec(parsed[["fml"]], conn, from, factor_refs = factor_refs, reserved_names = unique(c(variables, real_vars, reserved)), absorbed = length(fe) > 0L,
+    source_map = source_map, forced_factors = setdiff(names(normalized[["factors"]]), normalized[["i_aliases"]]))
   if (!has_intercept && length(setdiff(names(spec[["factor_levels"]]), names(spec[["i_specs"]])))) {
     stop("Categorical no-intercept designs are not implemented yet.", call. = FALSE)
   }
   has_intercept = has_intercept && !length(fe)
   public = c(if (has_intercept) "(Intercept)", spec[["columns"]][["name"]])
-  if (anyDuplicated(display(public))) stop("Formula terms produce duplicate public coefficient names.", call. = FALSE)
+  all_labels = c(if (has_intercept) "(Intercept)", spec[["columns"]][["label"]])
+  if (anyDuplicated(all_labels)) stop("Formula terms produce duplicate public coefficient names.", call. = FALSE)
   x = c(if (has_intercept) "__dbglm_intercept", spec[["columns"]][["alias"]])
   if (!length(x) && !length(fe)) stop("No GLM design columns were specified.", call. = FALSE)
   prediction_keys = if (retain_prediction(retain) && length(fe)) prediction_key_fields(conn, parsed[["fe_components"]]) else
@@ -524,6 +545,7 @@ process_dbglm_inputs = function(inputs) {
   } else keep = if (length(x)) dbglm_basis(dbglm_read_information(row, length(x)), control[["collin_tol"]]) else integer()
   all_names = public
   all_x = x
+  spec[["fitted_ids"]] = as.character(c(if (has_intercept) "intercept", spec[["columns"]][["id"]])[keep])
   public = public[keep]
   x = x[keep]
   beta = stats::setNames(rep(0, length(x)), public)
@@ -534,13 +556,14 @@ process_dbglm_inputs = function(inputs) {
       stop("`start` must contain one finite value per retained coefficient.", call. = FALSE)
     }
     if (!is.null(names(start))) {
-      if (anyDuplicated(names(start)) || !setequal(names(start), display(public))) {
+      if (anyDuplicated(names(start)) || !setequal(names(start), all_labels[keep])) {
         stop("Named `start` values must match retained coefficients.", call. = FALSE)
       }
-      start = start[display(public)]
+      start = start[all_labels[keep]]
     }
     beta[] = start
   }
+  env2env(environment(), inputs, c("all_labels", "raw_roles", "source_map"))
   env2env(environment(), inputs, c(
     "public", "all_names", "beta", "display", "all_x",
     "base", "cell", "compress_nmax", "compress_ratio", "compression",
@@ -558,6 +581,9 @@ process_dbglm_inputs = function(inputs) {
 }
 
 execute_dbglm_fit = function(inputs) {
+  all_labels = inputs[["all_labels"]]
+  raw_roles = inputs[["raw_roles"]]
+  source_map = inputs[["source_map"]]
   env2env(inputs, environment(), c(
     "public", "all_names", "beta", "display", "all_x",
     "base", "cell", "compress_nmax", "compress_ratio", "compression",
@@ -580,8 +606,8 @@ execute_dbglm_fit = function(inputs) {
     covariance_result = if (isFALSE(fit[["finite_mle"]])) list(matrix = matrix(NA_real_, length(x), length(x)), clusters = NULL) else
       dbglm_covariance(conn, base, x, fit, family, covariance[["vcov_type"]], ssc, n, cell = cell)
   }
-  public = display(public)
-  all_names = display(all_names)
+  public = all_labels[keep]
+  all_names = all_labels
   V = covariance_result[["matrix"]]
   dispersion_scaled = if (family[["family"]] == "gaussian") fit[["deviance"]] / max(n - counts[["model"]], 1) else 1
   dispersion = if (family[["family"]] == "gaussian") dispersion_scaled * weight_scale else 1
@@ -594,7 +620,7 @@ execute_dbglm_fit = function(inputs) {
   test_df = if (is.numeric(ssc[["t.df"]])) ssc[["t.df"]] else if (!is.null(covariance_result[["clusters"]]) && ssc[["t.df"]] == "min")
     max(covariance_result[["clusters"]] - 1, 1) else max(n - counts[["covariance"]], 1)
   full = stats::setNames(rep(NA_real_, length(all_names)), all_names)
-  full[public] = beta
+  full[keep] = beta
   saved_formula = Formula::Formula(stats::as.formula(paste(deparse(Formula::Formula(fml), width.cutoff = 500L), collapse = ""), env = baseenv()))
   # A do.call() call can contain literal data frames, connections and formulas
   # whose environments capture rows. Record resolved compact metadata instead.
@@ -607,14 +633,14 @@ execute_dbglm_fit = function(inputs) {
   if (!is.null(data)) call[["data"]] = as.name(".data")
   if (!is.null(table)) call[["table"]] = if (is.character(table)) as.character(table) else as.name(".relation")
   if (!is.null(path)) call[["path"]] = as.character(path)
-  call[["weights"]] = weights
-  call[["offset"]] = offset
-  call[["vcov"]] = if (covariance[["vcov_type"]] == "cluster") stats::reformulate(covariance[["cluster_var"]], env = baseenv()) else covariance[["vcov_type"]]
+  call[["weights"]] = raw_roles[["weights"]]
+  call[["offset"]] = raw_roles[["offset"]]
+  call[["vcov"]] = if (covariance[["vcov_type"]] == "cluster") stats::as.formula(call("~", as.name(raw_roles[["cluster"]])), env = baseenv()) else covariance[["vcov_type"]]
   call[["ssc"]] = ssc
   call[["control"]] = control
   call[["fixef_rm"]] = fixef_rm
   call[["separation"]] = separation
-  call[["row_id"]] = if (length(row_id)) as.character(row_id) else NULL
+  call[["row_id"]] = if (length(raw_roles[["row_id"]])) as.character(raw_roles[["row_id"]]) else NULL
   call[["sample_table"]] = sample_table
   call[["retain"]] = retain
   call[["strategy"]] = strategy
@@ -644,7 +670,8 @@ execute_dbglm_fit = function(inputs) {
     projection_diagnostics = resources[["projection_diagnostics"]],
     collin.var = setdiff(all_names, public), coef_names = public, coef_names_all = all_names,
     family = family, fml = saved_formula, model_spec = spec, has_intercept = has_intercept,
-    yvar = parsed[["yvar"]], xvars = public, offset = offset, weights = weights,
+    yvar = restore_coefficient_names(parsed[["yvar"]], source_map), xvars = public,
+    offset = raw_roles[["offset"]], weights = raw_roles[["weights"]],
     nobs_orig = n, nobs_input = as.numeric(count_input), nobs_dropped = as.numeric(count_input) - n,
     n_params_model = counts[["model"]], n_slopes = sum(public != "(Intercept)"),
     df_residual = n - counts[["model"]],
@@ -660,19 +687,19 @@ execute_dbglm_fit = function(inputs) {
     design_center = stats::setNames(unname(design_center[keep]), public),
     nobs_eligible = n_eligible, nobs_pruned = n_eligible - n,
     pruning_rounds = pruning[["rounds"]], exclusions = pruning[["counts"]], fixef_rm = fixef_rm,
-    factor_sources = normalized[["factors"]], design_names = c(if (has_intercept) "(Intercept)", spec[["columns"]][["name"]])[keep],
-    varying_slopes = normalized[["slopes"]], row_id = row_id, sample_table = sample_table, ap_cycles = fit[["ap_cycles"]], ap_residual = fit[["ap_residual"]],
+    design_names = c(if (has_intercept) "(Intercept)", spec[["columns"]][["name"]])[keep],
+    varying_slopes = raw_roles[["slopes"]], row_id = raw_roles[["row_id"]], sample_table = sample_table, ap_cycles = fit[["ap_cycles"]], ap_residual = fit[["ap_residual"]],
     projection_iterations = fit[["ap_cycles"]], projection_residual = fit[["ap_residual"]],
     projection_method = if (!is.null(fit[["projection_method"]])) fit[["projection_method"]] else if (length(fe)) "group" else "none", call = call
   )
   class(result) = c("dbglm", "dbreg")
   unavailable = isFALSE(fit[["finite_mle"]])
   inference = new_inference_result(V, covariance[["vcov_type"]], public,
-    if (covariance[["vcov_type"]] == "cluster") list(covariance[["cluster_var"]]) else list(),
+    if (covariance[["vcov_type"]] == "cluster") list(raw_roles[["cluster"]]) else list(),
     covariance_result[["clusters"]], ssc, counts[["covariance"]], test_df,
     if (family[["family"]] == "gaussian") "t" else "normal",
     status = if (unavailable) "unavailable" else "available",
-    reason = if (unavailable) "nonfinite_mle" else NULL)
+    reason = if (unavailable) "nonfinite_mle" else NULL, coefficient_ids = spec[["fitted_ids"]])
   result = install_inference_result(result, inference, beta)
   if (null_model) result[["null_diagnostics"]] = dbglm_null_diagnostics(
     result, conn, original_base, family, control, has_intercept || length(fe) > 0L,
@@ -684,9 +711,16 @@ execute_dbglm_fit = function(inputs) {
   if (retain_prediction(retain) && length(fe)) {
     prediction_beta = numeric(length(all_x))
     prediction_beta[keep] = fit[["beta"]]
+    prediction_trends = trend_aliases
+    names(prediction_trends) = restore_coefficient_names(names(prediction_trends), source_map)
+    trend_centers = attr(prediction_trends, "centers")
+    if (!is.null(trend_centers)) {
+      names(trend_centers) = restore_coefficient_names(names(trend_centers), source_map)
+      attr(prediction_trends, "centers") = trend_centers
+    }
     result[["fitted_state"]] = dbglm_prediction_state(conn, fit[["working"]], original_base,
-      fe, parsed[["fe_components"]], all_x, spec[["columns"]][["name"]],
-      design_center, trend_aliases, counts[["sizes"]], create, drop, n,
+      fe, lapply(parsed[["fe_components"]], restore_coefficient_names, map = source_map), all_x, spec[["columns"]][["name"]],
+      design_center, prediction_trends, counts[["sizes"]], create, drop, n,
       dictionary_components = prediction_keys[["columns"]], fitted_beta = prediction_beta,
       recovery_control = list(tol = control[["fe_tol"]], max_iter = control[["fe_max_iter"]])
     )
@@ -698,12 +732,14 @@ execute_dbglm_fit = function(inputs) {
     )
     result = retain_glm_score_frame(
       result, fit, conn, original_base, x, fe, retained_source, resources,
-      parsed[["fe_components"]], row_id, weights, weight_scale, counts, ssc
+      lapply(parsed[["fe_components"]], restore_coefficient_names, map = source_map),
+      raw_roles[["row_id"]], raw_roles[["weights"]], weight_scale, counts, ssc
     )
   }
   if (!is.null(sample_table)) {
     keys = if (length(row_id)) row_id else "__dbglm_key"
-    export_retained_sample(conn, sample_table, keys, from)
+    export_retained_sample(conn, sample_table, keys, from,
+      public_names = if (length(row_id)) raw_roles[["row_id"]] else keys)
   }
   result = finalize_retained_resources(result, resources)
   result
@@ -715,7 +751,6 @@ dbglm_formula = function(fml) {
   if (length(fml)[1] != 1 || length(fml)[2] > 2) stop("Use one outcome and at most one fixed-effect block.", call. = FALSE)
   state = new.env(parent = emptyenv())
   state[["factors"]] = list()
-  state[["factor_display"]] = character()
   state[["i_aliases"]] = character()
   state[["i_terms"]] = character()
   state[["slopes"]] = list()
@@ -730,7 +765,6 @@ dbglm_formula = function(fml) {
       }
       name = paste0("dbglm_factor_i", index, "__")
       state[["factors"]][[name]] = declaration[["first"]]
-      state[["factor_display"]][name] = declaration[["first"]]
       state[["i_aliases"]] = unique(c(state[["i_aliases"]], name))
       result = declaration[["call"]]
       result[["factor_var"]] = as.name(name)
@@ -744,7 +778,6 @@ dbglm_formula = function(fml) {
       source = as.character(e[[2]])
       name = paste0("dbglm_factor_", match(source, unique(c(unlist(state[["factors"]]), source))), "__")
       state[["factors"]][[name]] = source
-      state[["factor_display"]][name] = paste0("factor(", source, ")")
       return(as.name(name))
     }
     as.call(lapply(as.list(e), replace))
@@ -769,8 +802,24 @@ dbglm_formula = function(fml) {
   normalized = stats::as.formula(call("~", lhs, if (is.null(fe)) rhs else call("|", rhs, fe)), env = baseenv())
   list(
     fml = normalized, factors = state[["factors"]], slopes = state[["slopes"]],
-    factor_display = state[["factor_display"]], i_aliases = state[["i_aliases"]]
+    i_aliases = state[["i_aliases"]]
   )
+}
+
+# Virtual forced-factor leaves have syntax provenance; source spelling is opaque.
+dbglm_display_terms = function(terms, source_map, forced_factors) {
+  restore = function(expr) {
+    if (is.symbol(expr)) {
+      variable = as.character(expr)
+      raw = restore_coefficient_names(variable, source_map)
+      return(if (variable %in% forced_factors) call("factor", as.name(raw)) else as.name(raw))
+    }
+    if (is.call(expr) && length(expr) > 1L) for (i in seq_along(expr)[-1L]) {
+      if (!is.null(expr[[i]])) expr[[i]] = restore(expr[[i]])
+    }
+    expr
+  }
+  vapply(terms, function(term) paste(deparse(restore(str2lang(term)), width.cutoff = 500L), collapse = ""), character(1), USE.NAMES = FALSE)
 }
 
 # A raw-key preflight avoids ranking and joining every FE dictionary just to

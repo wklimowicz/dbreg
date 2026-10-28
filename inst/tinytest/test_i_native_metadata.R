@@ -130,12 +130,19 @@ local({
   expect_false(any(grepl("LIMIT", state[["sql"]], fixed = TRUE)))
 
   # SQL prediction recompilation must retain BIT predicates and frozen levels.
-  object = list(model_spec = list(rhs = ~i(key, flag), source_vars = c("key", "flag"),
-    factor_levels = info[["levels"]], factor_classes = info[["factor_classes"]],
-    i_specs = info[["i_specs"]], source_classes = info[["classes"]],
-    columns = data.frame(name = compiled[["coef_names"]])), fe = character(), has_intercept = TRUE)
+  # Build the same complete spec as the production GLM adapter, through the
+  # existing scoped native-metadata owner. This tests SQL compilation only;
+  # SQL Server GLM fitting remains outside the public backend gate.
+  build_spec = dbreg:::build_model_spec
+  environment(build_spec) = scope
+  specification = build_spec(~i(key, flag), conn, "i_data",
+    reserved_names = c("key", "flag"), source_map = c(key = "key", flag = "flag"))
+  specification[["fitted_ids"]] = c("intercept", specification[["columns"]][["id"]])
+  object = list(model_spec = specification, fe = character(), has_intercept = TRUE,
+    inference_result = list(coefficient_ids = specification[["fitted_ids"]]))
   class(object) = "dbglm"
   design = dbreg:::sql_fitted_prediction_design(object, conn)
+  expect_identical(design[["ids"]], specification[["fitted_ids"]])
   expect_true(all(grepl("AND ([flag] = 1)", design[["expressions"]][-1L], fixed = TRUE)))
 
   # Decimal/FLOAT probes use native evidence only, over a quoted filtered source.

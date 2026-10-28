@@ -29,7 +29,7 @@ execute_moments_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]], source_classes = sql_design[["source_classes"]], factor_sources = sql_design[["factor_sources"]])
 
   frame = build_base_frame(inputs, xvars_sql, xvar_names)
   moments_sql = frame_moments_sql(frame, yvar, xvar_names, conn)
@@ -124,7 +124,7 @@ execute_demean_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]], source_classes = sql_design[["source_classes"]], factor_sources = sql_design[["factor_sources"]])
 
   frame = build_demean_frame(inputs, xvars_sql, xvar_names)
   if (inherits(frame, "dbreg_query_plan")) return(frame)
@@ -244,7 +244,7 @@ execute_mundlak_strategy = function(inputs) {
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]])
+  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]], source_classes = sql_design[["source_classes"]], factor_sources = sql_design[["factor_sources"]])
 
   weights_expr_base = sql_weight_expr(weights)
   weights_expr_aug = if (is.null(weights)) NULL else sql_weight_expr("weights")
@@ -432,20 +432,19 @@ execute_compress_strategy = function(inputs) {
     )
   ) else character()
   trend_sources = stats::setNames(trends, trend_aliases)
-  nuisance = unlist(lapply(seq_along(fe), function(i) {
-    slopes = inputs[["fe_slopes"]][[i]]
-    if (length(slopes)) paste(fe[i], trend_aliases[match(slopes, trends)], sep = ":") else character()
-  }), use.names = FALSE)
   if (length(trends)) inputs[["name_map"]] = c(inputs[["name_map"]], stats::setNames(
-    coef_var_name(restore_names(trends, inputs[["source_map"]])), trend_aliases
+    coef_var_name(restore_coefficient_names(trends, inputs[["source_map"]])), trend_aliases
   ))
   # catch for sampled (limited) queries
   if (grepl("LIMIT\\s+\\d+\\s*$", from_statement, ignore.case = TRUE)) {
     from_statement = glue("FROM (SELECT * {from_statement})")
   }
 
+  # A formerly generic RHS/composite overlap needs actual compiler recipes
+  # before separating its structural output from the native component payload.
+  generic_composite = !data_only && !isTRUE(has_interactions) && !length(inputs[["factor_refs"]]) && length(intersect(xvars, composite_columns)) > 0L
   # Handle interactions: expand to SQL expressions
-  if (isTRUE(has_interactions) || length(inputs[["factor_refs"]])) {
+  if (isTRUE(has_interactions) || length(inputs[["factor_refs"]]) || generic_composite) {
     # Extract table name from FROM statement for sql_model_matrix
     table_ref = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
 
@@ -454,18 +453,74 @@ execute_compress_strategy = function(inputs) {
       fml,
       conn,
       table_ref,
-      expand = "interactions",
+      expand = if (generic_composite) "all" else "interactions",
       fe_vars = fe,
       intercept = intercept,
       factor_refs = inputs[["factor_refs"]],
       reserved_names = c(sql_design_reserved(inputs), trend_aliases)
     )
+  }
 
+  # A direct RHS source and its FE need distinct prepared columns: ordinary
+  # numeric values must not be factorized while constructing the FE basis.
+  passthrough = if (is.null(sql_design)) xvars else sql_design[["aliases"]][vapply(
+    seq_len(nrow(sql_design[["columns"]])), function(i) {
+      recipe = sql_design[["columns"]][["recipe"]][[i]]
+      recipe[["kind"]] %in% c("raw", "numeric") && identical(recipe[["variable"]], sql_design[["aliases"]][[i]])
+    }, logical(1)
+  )]
+  shared_fe = if (!data_only) intersect(as.character(fe), passthrough) else character()
+  if (length(shared_fe)) {
+    native_columns = unique(c(names(inputs[["linear_source_map"]]), yvar, xvars, fe,
+      weights, inputs[["cluster_var"]], composite_columns, trends,
+      inputs[["row_id_safe"]], inputs[["retained_key_safe"]]))
+    aliases = safe_identifiers(paste0("dbreg_compress_fe", seq_along(shared_fe), "__"),
+      taken = c(native_columns, sql_design[["aliases"]], trend_aliases,
+        sql_design_reserved(inputs), names(inputs[["source_map"]]), names(inputs[["name_map"]])),
+      fold_case = folds_identifier_case(conn))
+    raw_sources = inputs[["linear_source_map"]][shared_fe]
+    if (anyNA(raw_sources)) stop("Shared FE sources have no fitted raw binding.", call. = FALSE)
+    q = function(value) as.character(DBI::dbQuoteIdentifier(conn, value))
+    # Project only actual computational sources, excluding unused raw extras.
+    # Copy native FE values before the RHS compiler applies numeric casts.
+    from_statement = paste0("FROM (SELECT ", paste(c(q(native_columns),
+      paste(q(shared_fe), "AS", q(aliases))), collapse = ", "), " ",
+      from_statement, ") dbreg_compress_fe_source")
+    inputs[["from_statement"]] = from_statement
+    fe[match(shared_fe, fe)] = aliases
+    inputs[["fe"]] = fe
+    inputs[["source_map"]] = c(inputs[["source_map"]], stats::setNames(unname(raw_sources), aliases))
+    inputs[["linear_source_map"]] = c(inputs[["linear_source_map"]], stats::setNames(unname(raw_sources), aliases))
+  }
+  nuisance = unlist(lapply(seq_along(fe), function(i) {
+    slopes = inputs[["fe_slopes"]][[i]]
+    if (length(slopes)) paste(fe[i], trend_aliases[match(slopes, trends)], sep = ":") else character()
+  }), use.names = FALSE)
+
+  if (!is.null(sql_design)) {
+    # Keep native composite keys when a numeric RHS projection casts the same
+    # source: the structural prepared output gets its own actual target.
+    shared_components = if (data_only) integer() else which(sql_design[["aliases"]] %in% composite_columns & vapply(
+      sql_design[["columns"]][["recipe"]], function(recipe) identical(recipe[["kind"]], "numeric") ||
+        identical(recipe[["kind"]], "raw") && sql_design[["source_classes"]][[recipe[["variable"]]]] %in% c("numeric", "double", "integer", "integer64"), logical(1)))
+    if (length(shared_components)) {
+      targets = safe_identifiers(paste0("dbreg_compress_rhs", seq_along(shared_components), "__"),
+        taken = c(sql_design[["aliases"]], sql_design_reserved(inputs), names(inputs[["linear_source_map"]]), trend_aliases),
+        fold_case = folds_identifier_case(conn))
+      sql_design[["aliases"]][shared_components] = targets
+      sql_design[["columns"]][["alias"]][shared_components] = targets
+    }
     # Build SELECT expressions with aliases
     select_exprs = paste0(sql_design[["select_exprs"]], " AS ", sql_design[["aliases"]])
     xvars_sql = paste(select_exprs, collapse = ", ")
     xvar_names = sql_design[["aliases"]]
-    register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]])
+    register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["col_names"]], sql_design[["aliases"]], i_specs = sql_design[["i_specs"]], i_columns = sql_design[["i_columns"]], factor_classes = sql_design[["factor_classes"]], columns = sql_design[["columns"]], source_classes = sql_design[["source_classes"]], factor_sources = sql_design[["factor_sources"]])
+    if (length(shared_components)) {
+      # These are private prepared payload columns beside native components;
+      # coefficient labels come from recipes, not duplicate public cell names.
+      map = inputs[["name_map"]]
+      inputs[["name_map"]] = map[!names(map) %in% sql_design[["aliases"]][shared_components]]
+    }
     # Both the compression and clustered score passes must read the expanded
     # columns. Aliases from a SELECT list do not exist in the original source.
     projection = frame_select(yvar, sql_design[["select_exprs"]], xvar_names,
@@ -517,7 +572,8 @@ execute_compress_strategy = function(inputs) {
   if (verbose) {
     message(if (!is.null(weights)) "[dbreg] Executing weighted compress strategy SQL\n" else "[dbreg] Executing compress strategy SQL\n")
   }
-  compressed_frame = read_compressed_frame(inputs, query_string, from_statement)
+  compressed_frame = read_compressed_frame(inputs, query_string, from_statement,
+    integer_keys = unique(c(fe, composite_columns)), type_keys = composite_columns)
   compressed_dat = compressed_frame[["data"]]
   compressed_classes = vapply(compressed_dat, function(column) class(column)[[1L]], character(1))
   query_string = compressed_frame[["sql"]]
@@ -537,10 +593,27 @@ execute_compress_strategy = function(inputs) {
 
   if (length(inputs[["composite_fes"]])) {
     inputs[["composite_levels"]] = lapply(names(inputs[["composite_fes"]]), function(f) {
-      keys = tuple_key(compressed_dat, inputs[["composite_fes"]][[f]])
-      setNames(as.character(compressed_dat[[f]][!duplicated(keys)]), keys[!duplicated(keys)])
+      components = inputs[["composite_fes"]][[f]]
+      types = unname(compressed_frame[["key_types"]][components])
+      keys = tuple_key(compressed_dat, components, types)
+      lookup = setNames(compressed_dat[[f]][!duplicated(keys)], keys[!duplicated(keys)])
+      attr(lookup, "types") = types
+      lookup
     })
     names(inputs[["composite_levels"]]) = names(inputs[["composite_fes"]])
+  }
+  if (length(shared_fe)) {
+    known_classes = inputs[["source_classes"]]
+    known_levels = inputs[["factor_levels"]]
+    known_factor_classes = inputs[["factor_classes"]]
+    for (i in seq_along(aliases)) {
+      source = shared_fe[[i]]
+      if (source %in% names(known_classes)) compressed_classes[[aliases[[i]]]] = known_classes[[source]]
+      if (!is.null(known_levels[[source]])) {
+        inputs[["factor_levels"]][[aliases[[i]]]] = known_levels[[source]]
+        inputs[["factor_classes"]][[aliases[[i]]]] = known_factor_classes[[source]]
+      }
+    }
   }
   if (length(fe)) {
     for (f in fe) {
@@ -553,9 +626,28 @@ execute_compress_strategy = function(inputs) {
     inputs[["i_specs"]]
   ), `[[`, character(1), "first")
   for (nm in intersect(names(inputs[["factor_levels"]]), names(compressed_dat))) {
-    if (!nm %in% fe && restore_names(nm, inputs[["source_map"]]) %in% numeric_i) next
+    if (!nm %in% fe && nm %in% numeric_i) next
     previous = compressed_dat[[nm]]
-    compressed_dat[[nm]] = factor(previous, levels = inputs[["factor_levels"]][[nm]])
+    requested = inputs[["factor_levels"]][[nm]]
+    raw_keys = attr(previous, "dbreg_key_values")
+    if (nm %in% fe && !is.null(raw_keys)) {
+      type = attr(previous, "dbreg_key_type")
+      if (!is.factor(previous) || length(type) != 1L || is.na(type) ||
+          !type %in% c("integer", "numeric") || length(raw_keys) != length(levels(previous))) {
+        stop("Fitted compressed FE keys have an incomplete typed receipt.", call. = FALSE)
+      }
+      actual_keys = prediction_key_part(raw_keys, type)
+      requested_keys = prediction_key_part(requested, type)
+      order = match(requested_keys, actual_keys)
+      if (length(requested_keys) != length(actual_keys) || anyNA(actual_keys) ||
+          anyDuplicated(actual_keys) || anyNA(requested_keys) || anyDuplicated(requested_keys) || anyNA(order)) {
+        stop("Compressed FE dictionary keys do not match their typed receipt.", call. = FALSE)
+      }
+      # Keep the exact labels produced with these typed values, in the requested
+      # reference order; factor() would otherwise stringify nearby DOUBLE keys.
+      requested = levels(previous)[order]
+    }
+    compressed_dat[[nm]] = factor(previous, levels = requested)
     if (!is.null(attr(previous, "dbreg_key_values"))) {
       attr(compressed_dat[[nm]], "dbreg_key_values") = attr(previous, "dbreg_key_values")[match(levels(compressed_dat[[nm]]), levels(previous))]
       attr(compressed_dat[[nm]], "dbreg_key_type") = attr(previous, "dbreg_key_type")
@@ -567,7 +659,7 @@ execute_compress_strategy = function(inputs) {
 
   # Build design matrix
   # Use expanded column names if interactions were present
-  design_vars = if (isTRUE(has_interactions)) xvar_names else xvars
+  design_vars = if (!is.null(sql_design)) xvar_names else xvars
   # Factor dummies (incl. FE) built in R are named after their (safe) variable
   # and level; register display names for them
   is_cat = vapply(c(design_vars, fe), function(v) {
@@ -579,7 +671,15 @@ execute_compress_strategy = function(inputs) {
     if (!is.null(saved)) return(saved)
     if (is.logical(compressed_dat[[v]])) sort(unique(compressed_dat[[v]])) else levels(factor(compressed_dat[[v]]))
   })
-  register_factor_display(inputs, factor_levels, factor_classes = compressed_classes[categorical])
+  # Compiler classes describe original sources. Expanded prepared cells may
+  # cast integer regressors to DOUBLE; their classes cannot overwrite that owner.
+  # Generic grouping and previously unseen FE/components still expose actual
+  # source fields. Exclude summaries/private emitted columns from this metadata.
+  new_sources = intersect(setdiff(names(compressed_classes), names(inputs[["source_classes"]])),
+    names(inputs[["linear_source_map"]]))
+  new_categories = setdiff(categorical, names(inputs[["factor_classes"]]))
+  register_factor_display(inputs, factor_levels, factor_classes = compressed_classes[new_categories],
+    source_classes = compressed_classes[new_sources], factor_sources = stats::setNames(as.list(categorical), categorical))
   matrix_formula = reformulate(if (length(c(design_vars, fe, nuisance))) c(design_vars, fe, nuisance) else "1", intercept = intercept)
   matrix_data = compressed_trend_data(compressed_dat, trend_sources)
   # Group intercepts absorb any common trend location. Remove it before
@@ -618,8 +718,20 @@ execute_compress_strategy = function(inputs) {
   )
   ordinary = colnames(X)[attr(X, "assign") %in% slope_terms]
   absorbed = compressed_slope_rank(X, matrix_data, inputs, ordinary, trend_sources)
-  fit = fit_ols(S, yvar, setdiff(colnames(X), absorbed), drop_collinear = TRUE, verbose = verbose)
-  fit[["dropped"]] = c(absorbed, fit[["dropped"]])
+  eligible = setdiff(colnames(X), absorbed)
+  if (length(fe)) {
+    # Nuisance effects define the absorbed span. Choose its basis before slopes,
+    # then restore compiler order before solving and recording fitted axes.
+    rank_order = c(setdiff(eligible, ordinary), intersect(eligible, ordinary))
+    selected = detect_collinearity(S[rank_order, rank_order, drop = FALSE],
+      S[rank_order, yvar, drop = FALSE], verbose = verbose)
+    kept = eligible[eligible %in% selected[["keep_names"]]]
+    fit = fit_ols(S, yvar, kept, drop_collinear = FALSE, verbose = verbose)
+    fit[["dropped"]] = c(absorbed, eligible[!eligible %in% kept])
+  } else {
+    fit = fit_ols(S, yvar, eligible, drop_collinear = TRUE, verbose = verbose)
+    fit[["dropped"]] = c(absorbed, fit[["dropped"]])
+  }
   layout = native_linear_layout(list(columns = compressed_layout[["columns"]]), fit[["x"]], FALSE)
   collin_vars = fit[["dropped"]]
   X = X[, fit[["x"]], drop = FALSE]

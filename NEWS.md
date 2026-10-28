@@ -1,5 +1,27 @@
-# dbreg (development version)
+# News
 
+_This NEWS file is best viewed on our [website](https://grantmcdermott.com/dbreg/NEWS.html)._
+
+## dbreg 0.0.3.9901
+
+Local research release.
+
+- Raw compressed predictions use saved column identities, and compound fixed-effect keys preserve native component precision.
+
+- Keep fitted factor dictionaries distinct from display labels when rebuilding OLS and IV predictions.
+- Drop compressed regressors absorbed by fixed effects before counting parameters for covariance corrections.
+- Preserve raw values when a source supplies regressor, fixed-effect, weight or offset roles, including nearby numeric FE levels.
+- Restore compressed composite-FE prediction and support nonstandard FE names.
+- Include fitted levels and their joint covariance in constrained spline plots with fixed effects.
+
+- Retained clustering accepts nonstandard column names, and source names
+  containing `_x_` or `:` remain literal in sample and fixed-effect metadata.
+- GLM fitting and R/SQL prediction handle nonstandard source names consistently,
+  including retained samples and later clustering on original columns.
+- Learned fixed-effect predictions preserve distinct columns with the same
+  displayed coefficient name, including dropped-column estimability checks.
+- GLMs report nonfinite initial information as an error instead of silently
+  dropping an overflowed predictor as collinear.
 - Compressed linear fits handle an ordinary categorical regressor with one
   observed level without changing the compressed grouping keys.
 - IV fits keep structural and instrument coordinates separate. R prediction
@@ -216,7 +238,7 @@
   and preserve precise cluster IDs. Only exceptional lossy integer results need
   another SQL fetch; caller connection conversion settings are unchanged.
 
-## Additional linear-model improvements
+### Additional linear-model improvements
 
 - OLS supports restricted square/cube terms, explicit factor references and
   composite fixed effects. Predictions retain factor coding and missing-row
@@ -227,11 +249,7 @@
 - OLS/IV gain optional sample audits, per-fit projection controls, and executable
   SQL inspection plans. These additions build on PR80 without changing its head.
 
-# News
-
-_This NEWS file is best viewed on our [website](https://grantmcdermott.com/dbreg/NEWS.html)._
-
-## Development
+### Upstream development changes
 
 New features
 

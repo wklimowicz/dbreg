@@ -9,7 +9,7 @@
 #'   Inner solves tighten this further when needed for outer score convergence.
 #' @param fe_max_iter Maximum projection iterations per WLS solve.
 #' @param projection_method `"auto"` permits bounded FE-summary projection for
-#'   large two-way categorical effects; `"sql"` uses the existing SQL projector.
+#'   one-way categorical effects on DuckDB and large two-way categorical effects; `"sql"` uses the existing SQL projector.
 #' @return A validated list of numerical controls.
 #' @export
 dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,

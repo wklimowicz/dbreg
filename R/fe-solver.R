@@ -384,7 +384,7 @@ project_fe_moments = function(conn, table, columns, identifiers, ops, scales, ta
     B_extra = if (n_extra) precomputed[["B_extra"]][, seq_len(n_extra), drop = FALSE] else matrix(0, precomputed[["n"]], 0L)
     n = precomputed[["n"]]
     moment_rows = precomputed[["rows"]]
-  } else if (all_intercepts && length(ops) >= 2L) {
+  } else if (all_intercepts && length(ops) >= 1L) {
     fe = vapply(ops, `[[`, character(1), "f")
     unpacked = query_fe_moments(conn, table, fe, columns, extra_sums,
       max_cells = projection_limits()[["transfer_cells"]], fe_sizes = cache[["fe_sizes"]]
@@ -432,7 +432,7 @@ project_fe_moments = function(conn, table, columns, identifiers, ops, scales, ta
   ids = unlist(lapply(seq_along(ops), function(i) paste(i, info[[i]][["id"]], sep = "/")), use.names = FALSE)
   if (!is.null(cache[["moment_keys"]]) && !identical(ids, cache[["moment_keys"]])) stop("The fixed-effect sample changed within fitting.", call. = FALSE)
   cache[["moment_keys"]] = ids
-  if (all_intercepts && length(ops) >= 2L && !is.null(moment_rows)) {
+  if (all_intercepts && length(ops) >= 1L && !is.null(moment_rows)) {
     # The owned base snapshot is fixed before IRLS; working expressions only
     # change values, never FE keys or row membership. Thus group/pair support
     # has a fixed, already bounded cardinality for subsequent evaluations.
@@ -1400,7 +1400,7 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
   sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   slopes = attr(fe, "slopes")
   if (is.null(cache)) cache = new.env(parent = emptyenv())
-  if (length(fe) > 1) {
+  if (length(fe) > 1L || (length(fe) == 1L && !length(unlist(slopes)))) {
     dbglm_moments_enabled(conn, table, fe, control, cache, length(columns))
     if (!cache[["moment_enabled"]] && length(fe) == 2L && !length(unlist(slopes)) &&
       identical(control[["projection_method"]], "auto") && length(columns)) {
@@ -1463,7 +1463,7 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
       if (!is.null(ans)) return(ans)
       cache[["moment_enabled"]] = FALSE
     }
-    if (isTRUE(backend_info[["is_databricks"]]) && !length(unlist(slopes))) {
+    if (length(fe) > 1L && isTRUE(backend_info[["is_databricks"]]) && !length(unlist(slopes))) {
       return(dbglm_project_window(conn, table, columns, fe, control, create, drop, response))
     }
   }
@@ -1530,6 +1530,12 @@ solve_partial_wls = function(conn, table, x, fe, control, create, drop, response
 # Direct FE moments need the non-absorbed levels to fit a dense solve in R;
 # see fe_dense_feasible(). The decision is cached for the whole fit.
 dbglm_moments_enabled = function(conn, table, fe, control, cache, columns = 1L) {
+  # The fused single-family global payload currently has a DuckDB codec.
+  # Decline before cached enablement or discovery; native K1 keeps SQL rows.
+  if (length(fe) == 1L && !identical(detect_backend(conn)[["name"]], "duckdb")) {
+    cache[["moment_enabled"]] = FALSE
+    return(FALSE)
+  }
   if (!is.null(cache[["moment_enabled"]])) return(cache[["moment_enabled"]])
   if (identical(control[["projection_method"]], "sql")) {
     cache[["moment_enabled"]] = FALSE

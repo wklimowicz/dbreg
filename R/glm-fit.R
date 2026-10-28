@@ -131,8 +131,9 @@ dbglm_fe_fit = function(conn, base, x, fe, beta, family, control, create, drop, 
   intercept = family[["linkfun"]](ybar)
   slopes = attr(fe, "slopes")
   if (is.null(cache)) cache = new.env(parent = emptyenv())
-  if (length(fe) > 1L) dbglm_moments_enabled(conn, base, fe, control, cache, length(x) + 1L)
-  use_moments = length(fe) > 1L && isTRUE(cache[["moment_enabled"]])
+  moment_eligible = length(fe) > 1L || (length(fe) == 1L && !length(unlist(slopes)))
+  if (moment_eligible) dbglm_moments_enabled(conn, base, fe, control, cache, length(x) + 1L)
+  use_moments = moment_eligible && isTRUE(cache[["moment_enabled"]])
   collect_fe_moments = use_moments && !length(unlist(slopes))
   evaluate_working = function(table, collect = FALSE) {
     bound = if (identical(cache[["moment_fe"]], as.character(fe))) cache[["moment_rows"]] else NULL
@@ -435,7 +436,7 @@ dbglm_fe_evaluate = function(conn, working, x, fe, collect_fe_moments = FALSE, m
       sprintf("ABS(%s)/SQRT(SUM(w*%s*%s)) AS s%d", x_score, x, x, seq_along(x))
     )
   }
-  if (collect_fe_moments && length(fe) >= 2L && !length(unlist(attr(fe, "slopes")))) {
+  if (collect_fe_moments && length(fe) >= 1L && !length(unlist(attr(fe, "slopes")))) {
     max_edges = limits[["summary_rows"]]
     max_entries = limits[["design_entries"]]
     # Six wire fields include the marginal/global payload slots. Reserve their

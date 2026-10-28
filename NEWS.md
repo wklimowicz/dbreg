@@ -2,6 +2,10 @@
 
 _This NEWS file is best viewed on our [website](https://grantmcdermott.com/dbreg/NEWS.html)._
 
+## dbreg 0.0.3.9903
+
+- Use bounded FE moments for single-intercept-FE GLMs on DuckDB, reusing the diagonal projection and coefficient-state IRLS path. Preserve native Databricks, varying-slope, forced-SQL and capacity fallbacks.
+
 ## dbreg 0.0.3.9901
 
 Local research release.

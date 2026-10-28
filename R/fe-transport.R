@@ -11,7 +11,7 @@ fe_moments_sql = function(conn, source, fe, value_terms, global_terms = characte
     if (!is.null(sql)) return(if (compact) pack_fe_moments_sql(conn, sql, length(fe), value_terms, global_terms, globals_packed = TRUE) else sql)
   }
   K = length(fe)
-  pairs = utils::combn(K, 2L, simplify = FALSE)
+  pairs = if (K > 1L) utils::combn(K, 2L, simplify = FALSE) else list()
   alias = function(terms) sub(".* AS ([A-Za-z_0-9]+)$", "\\1", terms)
   null = function(terms) if (length(terms)) paste0("CAST(NULL AS DOUBLE) AS ", alias(terms)) else character()
   id_type = if (text_keys) sql_text_type(conn) else "BIGINT"
@@ -111,7 +111,7 @@ decode_fe_moments = function(res, K, n_cols, n_extra) {
     if (anyNA(res[["__i"]][rows]) || anyDuplicated(res[["__i"]][rows]) || any(!is.finite(h)) || any(h <= 0) || any(!is.finite(b)) || any(!is.finite(ex))) return(NULL)
     info[[i]] = list(id = res[["__i"]][rows], h = h, b = unname(b), ex = unname(ex))
   }
-  combos = utils::combn(K, 2L, simplify = FALSE)
+  combos = if (K > 1L) utils::combn(K, 2L, simplify = FALSE) else list()
   pairs = vector("list", length(combos))
   for (k in seq_along(combos)) {
     p = combos[[k]]

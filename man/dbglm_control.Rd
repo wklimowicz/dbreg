@@ -32,7 +32,7 @@ Inner solves tighten this further when needed for outer score convergence.}
 \item{fe_max_iter}{Maximum projection iterations per WLS solve.}
 
 \item{projection_method}{`"auto"` permits bounded FE-summary projection for
-large two-way categorical effects; `"sql"` uses the existing SQL projector.}
+one-way categorical effects on DuckDB and large two-way categorical effects; `"sql"` uses the existing SQL projector.}
 }
 \value{
 A validated list of numerical controls.

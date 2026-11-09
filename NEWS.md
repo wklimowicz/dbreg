@@ -51,6 +51,9 @@ Bug fixes
   empty or dropped for having too few observations (fitted points used the
   slope of a different bin), and no longer returns `NaN` for a bin with a
   single `x` value.
+- Infinite weights in DuckDB and Spark database sources now produce an early
+  validation error, consistent with in-memory inputs.
+
 - Alternating projections no longer fail with an SQL error when a fixed-effect
   or cluster variable also appears as a regressor. Invalid `dbreg.ap_max_iter`
   and `dbreg.ap_tol` options now produce a clear error.

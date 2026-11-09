@@ -509,7 +509,7 @@ resolve_compress_ratio = function(compress_ratio, fe) {
 #' Validate a weights argument
 #'
 #' Checks that `weights` names a single column and, where cheap, that its
-#' values are finite (in-memory data) and non-negative.
+#' values are finite (in-memory data, DuckDB and Spark) and non-negative.
 #' @keywords internal
 validate_weights = function(weights, data, conn, from_statement) {
   if (is.null(weights)) {
@@ -530,16 +530,22 @@ validate_weights = function(weights, data, conn, from_statement) {
       stop("Weights must be non-negative.")
     }
   } else {
-    neg_sql = sql_limit(
-      glue("SELECT 1 AS neg FROM (SELECT * {from_statement}) t WHERE {weights} < 0"),
+    backend = detect_backend(conn)[["name"]]
+    invalid = glue("{weights} < 0")
+    if (backend %in% c("duckdb", "spark")) {
+      invalid = glue("({invalid}) OR ABS({weights}) = CAST('Infinity' AS DOUBLE)")
+    }
+    sql = sql_limit(
+      glue("SELECT CASE WHEN {weights} < 0 THEN 1 ELSE 2 END AS invalid FROM (SELECT * {from_statement}) t WHERE {invalid}"),
       1,
-      detect_backend(conn)[["name"]]
+      backend
     )
-    has_neg = tryCatch(nrow(dbGetQuery(conn, neg_sql)) > 0, error = function(e) {
+    bad = tryCatch(dbGetQuery(conn, sql), error = function(e) {
       stop("Could not validate weight column '", weights, "': ", conditionMessage(e), call. = FALSE)
     })
-    if (isTRUE(has_neg)) {
-      stop("Weights must be non-negative.")
+    if (nrow(bad)) {
+      if (bad[["invalid"]][1] == 1) stop("Weights must be non-negative.")
+      stop("Weights must be finite.")
     }
   }
   invisible(NULL)

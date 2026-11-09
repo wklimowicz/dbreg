@@ -15,6 +15,9 @@ New features
   On the NYC taxi data (178M rows, DuckDB), the README example drops from 76s
   to 21s, and a degree-1 fit with a control from 714s to 6s, with peak R
   memory falling from 15-72 GB to under 0.25 GB.
+- HC1 score queries now project residual and score expressions once, reducing
+  generated SQL size for wide models without an additional database query.
+
 - Alternating projections on Spark/Databricks now use sequential SQL window
   functions (both unweighted and weighted) and batch three cycles per temporary
   table write, controlled by the new `dbreg.ap_method` and

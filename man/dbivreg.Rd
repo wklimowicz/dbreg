@@ -116,8 +116,10 @@ keys. See \code{\link[=dbreg]{dbreg()}}.}
 \item{fe_tol}{Positive per-fit tolerance for fixed-effect projection. Defaults
 to \code{getOption("dbreg.ap_tol", 1e-10)} without changing that option.}
 
-\item{fe_max_iter}{Positive maximum number of projection cycles for this fit.
-Defaults to \code{getOption("dbreg.ap_max_iter", 100L)} without changing it.}
+\item{fe_max_iter}{Positive maximum AP cycles or bounded solve/refinement
+steps for this fit. Defaults to \code{getOption("dbreg.ap_max_iter", 100L)}
+without changing it. Bounded refinement uses at most eight steps; inner
+PCG has a separate cap. See \link{dbreg-options}.}
 
 \item{...}{Additional unused arguments.}
 }

@@ -27,6 +27,10 @@ New features
   accelerate with certified Irons-Tuck steps, accept per-fit `fe_tol` and
   `fe_max_iter` controls in `dbreg()` and `dbivreg()`, and expose executable
   `dbreg_query_plan` objects under `sql_only = TRUE`.
+- Added bounded fixed-effect moment projection (`R/fe-moments.R`,
+  `R/fe-system.R`), batched packet transport (`R/fe-transport.R`), and
+  FWL fixed-effect sufficient-statistic fitting (`R/fe-fwl.R`) with
+  certified fallback to iterative AP.
 - Added `dbivreg()` for instrumental-variables (2SLS) regression on database
   backends. Uses `fixest`-style IV formulas, e.g. `y ~ x | d ~ z` or
   `y ~ x | fe1 + fe2 | d ~ z`, and supports multiple endogenous regressors,

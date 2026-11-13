@@ -141,7 +141,7 @@ execute_demean_strategy = function(inputs) {
   if (verbose) {
     message(if (!is.null(weights)) "[dbreg] Executing weighted demean SQL\n" else "[dbreg] Executing demean SQL\n")
   }
-  demean_df = dbGetQuery(conn, demean_sql)
+  demean_df = if (!is.null(frame[["moments"]])) frame[["moments"]] else dbGetQuery(conn, demean_sql)
   if (data_only) {
     return(demean_df)
   }

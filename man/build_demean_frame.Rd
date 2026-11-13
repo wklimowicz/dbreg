@@ -17,7 +17,8 @@ build_demean_frame(inputs, x_sql, x_names, tag = "dbreg")
 Sweeps out the fixed effects from the outcome and regressors, producing
 `<var>_tilde` columns in a `demeaned` CTE. One FE and balanced, unweighted
 two-way panels are demeaned analytically in SQL. Otherwise (3+ FE, or two
-FE that are weighted or unbalanced) alternating projections are run into a
-temp table, which `cleanup()` drops.
+FE that are weighted or unbalanced) a bounded FE sufficient-statistic solve
+keeps transformed rows inline over an owned source snapshot. An expected
+decline falls back to observation-table AP. `cleanup()` releases owned state.
 }
 \keyword{internal}

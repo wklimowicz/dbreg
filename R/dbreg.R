@@ -154,10 +154,18 @@
 #'   prunes observations belonging to singleton fixed-effect groups.
 #' @param fe_tol Positive per-fit tolerance for fixed-effect projection. Defaults
 #'   to `getOption("dbreg.ap_tol", 1e-10)` without changing that option.
-#' @param fe_max_iter Positive maximum number of projection cycles for this fit.
-#'   Defaults to `getOption("dbreg.ap_max_iter", 100L)` without changing it.
+#' @param fe_max_iter Positive maximum AP cycles or bounded solve/refinement
+#'   steps for this fit. Defaults to `getOption("dbreg.ap_max_iter", 100L)`
+#'   without changing it. Bounded refinement uses at most eight steps; inner
+#'   PCG has a separate cap. See [dbreg-options].
 #' @param ... Additional arguments. Currently ignored, except to handle
 #'   superseded arguments for backwards compatibility.
+#'
+#' @section Bounded fixed-effect projection:
+#' DuckDB/native Databricks can use bounded FE moment projection before AP;
+#' see [dbreg-options] for capacity limits, explicit solver selection and
+#' projection diagnostics. Source keys stay in SQL and private tables are
+#' released on success, decline and errors.
 #'
 #' @section Sample audits:
 #' With `diagnostics = TRUE`, `sample_diagnostics` reports original source rows
@@ -867,7 +875,19 @@ dbreg_alternating_projections = function(
   if (!positive(tol)) {
     stop("[dbreg] dbreg.ap_tol must be a positive number.", call. = FALSE)
   }
-  backend = detect_backend(conn)[["name"]]
+  backend_info = detect_backend(conn)
+  backend = backend_info[["name"]]
+  solver = getOption("dbreg.ap_solver", "auto")
+  if (!is.character(solver) || length(solver) != 1L || is.na(solver) || !solver %in% c("auto", "moments", "iterative")) {
+    stop("dbreg.ap_solver must be auto, moments or iterative.", call. = FALSE)
+  }
+  inputs[["projection_limits"]] = projection_limits()
+  explicit_method = !is.null(getOption("dbreg.ap_method"))
+  if (solver == "moments" || (solver == "auto" && !explicit_method)) {
+    attempt = projection_attempt("bounded_moments", dbreg_moment_projections(inputs, xvars_sql, xvar_names, max_iter, tol, materialize = FALSE))
+    projected = record_projection_attempt(inputs, attempt)
+    if (!is.null(projected)) return(projected)
+  }
   use_windows = ap_method(backend) == "window"
   batch_size = 1L
   if (use_windows) {
@@ -913,7 +933,7 @@ dbreg_alternating_projections = function(
     sprintf("%s AS __w", weights_expr)
   )
   base_sql = paste0("SELECT ", paste(base_select, collapse = ", "), " ", from_statement)
-  create_temp_table_as(conn, base_table, base_sql, backend)
+  create_projection_table_as(conn, base_table, base_sql, backend)
 
   vars_all = c(yvar, xvar_names)
   original = dbGetQuery(conn, sql_ap_original_scale(base_table, vars_all, conn))
@@ -924,7 +944,7 @@ dbreg_alternating_projections = function(
   # Iterate in double precision (e.g. averaging DECIMAL inputs keeps their
   # fixed scale on some backends)
   init_sql = sql_ap_initialization(base_table, vars_all, id_cols, conn)
-  create_temp_table_as(conn, cur_table, init_sql, backend)
+  create_projection_table_as(conn, cur_table, init_sql, backend)
 
   # Windows run `batch_size` cycles per table write (fewer writes, but up to
   # batch_size - 1 extra cycles past convergence); joins check every cycle.
@@ -940,7 +960,7 @@ dbreg_alternating_projections = function(
       iter = iter + 2L
       accelerated_steps = accelerated_steps + 1L
       if (use_windows) {
-        create_temp_table_as(conn, alt_table, sql_ap_window_irons_tuck(cur_table, c(id_cols, "__w"), tilde_names, fe), backend)
+        create_projection_table_as(conn, alt_table, sql_ap_window_irons_tuck(cur_table, c(id_cols, "__w"), tilde_names, fe), backend)
         drop_table_if_exists(conn, cur_table, backend)
         tmp = cur_table
         cur_table = alt_table
@@ -949,10 +969,10 @@ dbreg_alternating_projections = function(
         carried = character()
         for (snapshot in c("ita", "itb")) {
           for (k in seq_along(fe)) {
-            create_temp_table_as(conn, mean_table, sql_ap_group_means(cur_table, vars_all, fe[[k]]), backend)
+            create_projection_table_as(conn, mean_table, sql_ap_group_means(cur_table, vars_all, fe[[k]]), backend)
             update_sql = sql_ap_join_projection(cur_table, mean_table, c(id_cols, carried), vars_all, fe[[k]],
               snapshot = if (k == 1L) snapshot else NULL)
-            create_temp_table_as(conn, alt_table, update_sql, backend)
+            create_projection_table_as(conn, alt_table, update_sql, backend)
             drop_table_if_exists(conn, cur_table, backend)
             drop_table_if_exists(conn, mean_table, backend)
             tmp = cur_table
@@ -963,7 +983,7 @@ dbreg_alternating_projections = function(
         }
       }
       alpha = ap_irons_tuck_alpha(dbGetQuery(conn, sql_ap_irons_tuck_moments(cur_table, tilde_names)), length(tilde_names))
-      create_temp_table_as(conn, alt_table, sql_ap_irons_tuck_step(cur_table, c(id_cols, "__w"), tilde_names, alpha), backend)
+      create_projection_table_as(conn, alt_table, sql_ap_irons_tuck_step(cur_table, c(id_cols, "__w"), tilde_names, alpha), backend)
       drop_table_if_exists(conn, cur_table, backend)
       tmp = cur_table
       cur_table = alt_table
@@ -973,7 +993,7 @@ dbreg_alternating_projections = function(
       iter = iter + cycles
       if (use_windows) {
         window_sql = sql_ap_window_sweeps(cur_table, c(id_cols, "__w"), tilde_names, fe, cycles)
-        create_temp_table_as(conn, alt_table, window_sql, backend)
+        create_projection_table_as(conn, alt_table, window_sql, backend)
         drop_table_if_exists(conn, cur_table, backend)
         tmp = cur_table
         cur_table = alt_table
@@ -981,10 +1001,10 @@ dbreg_alternating_projections = function(
       } else {
         for (fe_k in fe) {
           mean_sql = sql_ap_group_means(cur_table, vars_all, fe_k)
-          create_temp_table_as(conn, mean_table, mean_sql, backend)
+          create_projection_table_as(conn, mean_table, mean_sql, backend)
 
           update_sql = sql_ap_join_projection(cur_table, mean_table, id_cols, vars_all, fe_k)
-          create_temp_table_as(conn, alt_table, update_sql, backend)
+          create_projection_table_as(conn, alt_table, update_sql, backend)
 
           drop_table_if_exists(conn, cur_table, backend)
           drop_table_if_exists(conn, mean_table, backend)
@@ -1244,6 +1264,7 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   result[["strategy"]] = chosen_strategy
   result[["ap_tolerance"]] = inputs[["fe_tol"]]
   result[["ap_max_iter"]] = inputs[["fe_max_iter"]]
+  result[["projection_diagnostics"]] = inputs[["projection_diagnostics"]]
   diagnostics = inputs[["ap_diagnostics"]]
   for (field in names(diagnostics)) result[[paste0("ap_", field)]] = diagnostics[[field]]
   # i() columns (display names), for predict()

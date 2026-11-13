@@ -201,8 +201,10 @@ Cannot be combined with \code{sql_only} or \code{data_only}.}
 \item{fe_tol}{Positive per-fit tolerance for fixed-effect projection. Defaults
 to \code{getOption("dbreg.ap_tol", 1e-10)} without changing that option.}
 
-\item{fe_max_iter}{Positive maximum number of projection cycles for this fit.
-Defaults to \code{getOption("dbreg.ap_max_iter", 100L)} without changing it.}
+\item{fe_max_iter}{Positive maximum AP cycles or bounded solve/refinement
+steps for this fit. Defaults to \code{getOption("dbreg.ap_max_iter", 100L)}
+without changing it. Bounded refinement uses at most eight steps; inner
+PCG has a separate cap. See \link{dbreg-options}.}
 
 \item{...}{Additional arguments. Currently ignored, except to handle
 superseded arguments for backwards compatibility.}
@@ -217,6 +219,14 @@ which may not fit into R's memory. Various acceleration strategies allow for
 highly efficient computation, while robust standard errors are computed from
 sufficient statistics.
 }
+\section{Bounded fixed-effect projection}{
+
+DuckDB/native Databricks can use bounded FE moment projection before AP;
+see \link{dbreg-options} for capacity limits, explicit solver selection and
+projection diagnostics. Source keys stay in SQL and private tables are
+released on success, decline and errors.
+}
+
 \section{Sample audits}{
 
 With \code{diagnostics = TRUE}, \code{sample_diagnostics} reports original source rows

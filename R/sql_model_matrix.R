@@ -182,7 +182,8 @@ sql_model_matrix = function(
     } else {
       expanded = expand_term(
         term, col_info, expand, sep,
-        all_terms = unique(c(term_labels, fe_vars)),
+        all_terms = unique(c(term_labels, vapply(fe_vars, function(name)
+          paste(deparse(as.name(name), backtick = TRUE), collapse = ""), character(1)))),
         fe_vars = fe_vars,
         keep_all_levels = identical(term, full_factor), conn = conn
       )

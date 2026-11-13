@@ -58,8 +58,9 @@ build_base_frame = function(inputs, x_sql, x_names) {
 #' Sweeps out the fixed effects from the outcome and regressors, producing
 #' `<var>_tilde` columns in a `demeaned` CTE. One FE and balanced, unweighted
 #' two-way panels are demeaned analytically in SQL. Otherwise (3+ FE, or two
-#' FE that are weighted or unbalanced) alternating projections are run into a
-#' temp table, which `cleanup()` drops.
+#' FE that are weighted or unbalanced) a bounded FE sufficient-statistic solve
+#' keeps transformed rows inline over an owned source snapshot. An expected
+#' decline falls back to observation-table AP. `cleanup()` releases owned state.
 #'
 #' @inheritParams build_base_frame
 #' @param tag Prefix for messages, e.g. `"dbreg"`.
@@ -97,17 +98,23 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
 
   cleanup = function() invisible(NULL)
   if (use_ap) {
-    ap_res = dbreg_alternating_projections(inputs, x_sql, x_names)
-    inputs[["ap_diagnostics"]] = ap_res[c("iterations", "accelerated_steps", "max_abs", "max_relative", "method")]
+    bound = projection_frame_inputs(inputs, x_sql, x_names)
+    ap_res = dbreg_alternating_projections(bound[["inputs"]], bound[["x"]], bound[["x"]])
+    inputs[["projection_diagnostics"]] = bound[["inputs"]][["projection_diagnostics"]]
+    inputs[["projection_limits"]] = bound[["inputs"]][["projection_limits"]]
+    names(ap_res[["original_scale"]]) = vars
+    inputs[["ap_diagnostics"]] = ap_res[c("iterations", "accelerated_steps", "max_abs", "max_relative", "method", "transfer_cells", "summary_rows", "upload_bytes", "estimated_bytes", "solver", "solver_iterations", "preconditioner", "transport", "summary_statements", "wire_rows", "wire_bytes", "observation_tables", "transformed_observation_tables", "moment_method", "fwl_recomputed")]
     ap_tables = c(ap_res[["table"]], ap_res[["base_table"]])
-    cleanup = function() {
+    cleanup = if (!is.null(ap_res[["resources"]])) function() release_fit_resources(ap_res[["resources"]]) else function() {
       backend = detect_backend(conn)[["name"]]
       for (tbl in ap_tables) {
         drop_table_if_exists(conn, tbl, backend)
       }
     }
-    cte_sql = paste0("WITH demeaned AS (SELECT * FROM ", ap_res[["table"]], ")")
-    weights_expr = "__w"
+    mapped = projection_frame_columns(conn, ap_res[["table"]], bound, vars)
+    cte_sql = paste0("WITH demeaned AS (", mapped[["sql"]], ")")
+    projected_columns = mapped[["columns"]]
+    weights_expr = mapped[["weights"]]
   } else {
     # Analytic demeaning: subtract group means for each FE (and add back the
     # overall mean for two-way panels).
@@ -180,7 +187,7 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
   list(
     cte_sql = cte_sql,
     cte_name = "demeaned",
-    cols = setNames(paste0(vars, "_tilde"), vars),
+    cols = if (use_ap) projected_columns else setNames(paste0(vars, "_tilde"), vars),
     weights_expr = weights_expr,
     intercept = FALSE,
     cast = TRUE,
@@ -189,6 +196,7 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
       fe_count_terms
     ),
     cleanup = cleanup,
+    moments = if (use_ap) ap_res[["moments"]] else NULL,
     rank_values = if (use_ap) ap_res[["original_scale"]] else NULL,
     rank_columns = if (!use_ap && length(x_names)) rank_names else NULL
   )

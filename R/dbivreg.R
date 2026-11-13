@@ -78,8 +78,10 @@
 #'   keys. See [dbreg()].
 #' @param fe_tol Positive per-fit tolerance for fixed-effect projection. Defaults
 #'   to `getOption("dbreg.ap_tol", 1e-10)` without changing that option.
-#' @param fe_max_iter Positive maximum number of projection cycles for this fit.
-#'   Defaults to `getOption("dbreg.ap_max_iter", 100L)` without changing it.
+#' @param fe_max_iter Positive maximum AP cycles or bounded solve/refinement
+#'   steps for this fit. Defaults to `getOption("dbreg.ap_max_iter", 100L)`
+#'   without changing it. Bounded refinement uses at most eight steps; inner
+#'   PCG has a separate cap. See [dbreg-options].
 #' @param ... Additional unused arguments.
 #'
 #' @return A list of class `"dbivreg"` and `"dbreg"`.
@@ -462,7 +464,7 @@ dbivreg_run_frame = function(inputs, frame, label) {
   if (verbose) {
     message(sprintf("[dbivreg] Executing %s%s SQL\n", if (!is.null(weights)) "weighted " else "", label))
   }
-  moments_df = dbGetQuery(conn, moments_sql)
+  moments_df = if (!is.null(frame[["moments"]])) frame[["moments"]] else dbGetQuery(conn, moments_sql)
   if (data_only) {
     return(moments_df)
   }

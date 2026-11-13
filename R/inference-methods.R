@@ -14,6 +14,23 @@ inference_labels = function(object) {
   else c("Estimate", "Std. Error", "t value", "Pr(>|t|)")
 }
 
+coefficient_view = function(object, fe, collin = FALSE) {
+  layout = object[["linear_design"]]
+  columns = layout[["columns"]]
+  index = if (collin) seq_len(nrow(columns)) else match(layout[["fitted_ids"]], columns[["id"]])
+  if (!isTRUE(fe) && length(object[["fe"]])) {
+    index = index[columns[["role"]][index] == "slope" & columns[["alias"]][index] != "(Intercept)"]
+  }
+  list(labels = columns[["label"]][index], fitted = match(columns[["id"]][index], layout[["fitted_ids"]]))
+}
+
+coefficient_limits = function(table, level, df, normal) {
+  tail = (1 - level) / 2
+  critical = if (normal) stats::qnorm(1 - tail) else stats::qt(1 - tail, df)
+  half = critical * table[, "std.error"]
+  cbind(table[, "estimate"] - half, table[, "estimate"] + half)
+}
+
 visible_coefficient_table = function(object, fe = FALSE) {
   table = object[["coeftable"]]
   if (isTRUE(fe) || !length(object[["fe"]])) return(table)
@@ -94,12 +111,17 @@ coeftable.dbreg = function(object, keep = NULL, drop = NULL, order = NULL, ...) 
 
 #' @rdname coefficient-summaries
 #' @exportS3Method fixest::se
-se.dbreg = function(object, ...) coeftable.dbreg(object, ...)[, 2L]
+se.dbreg = function(object, ...) coefficient_statistic(object, 2L, ...)
 
 #' @rdname coefficient-summaries
 #' @exportS3Method fixest::tstat
-tstat.dbreg = function(object, ...) coeftable.dbreg(object, ...)[, 3L]
+tstat.dbreg = function(object, ...) coefficient_statistic(object, 3L, ...)
 
 #' @rdname coefficient-summaries
 #' @exportS3Method fixest::pvalue
-pvalue.dbreg = function(object, ...) coeftable.dbreg(object, ...)[, 4L]
+pvalue.dbreg = function(object, ...) coefficient_statistic(object, 4L, ...)
+
+coefficient_statistic = function(object, column, ...) {
+  table = coeftable.dbreg(object, ...)
+  setNames(as.numeric(table[, column]), rownames(table))
+}

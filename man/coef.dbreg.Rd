@@ -4,7 +4,7 @@
 \alias{coef.dbreg}
 \title{Extract coefficients from dbreg objects}
 \usage{
-\method{coef}{dbreg}(object, fe = FALSE, ...)
+\method{coef}{dbreg}(object, fe = FALSE, ..., collin = FALSE)
 }
 \arguments{
 \item{object}{A `dbreg` object.}
@@ -13,6 +13,8 @@
 
 \item{...}{Additional arguments. Currently unused, except to capture
 superseded arguments.}
+
+\item{collin}{Include columns dropped for collinearity with missing estimates.}
 }
 \description{
 Extract coefficients from dbreg objects

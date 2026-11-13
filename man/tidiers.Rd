@@ -15,7 +15,8 @@
   vcov = NULL,
   cluster = NULL,
   ssc = NULL,
-  vcov_fix = TRUE
+  vcov_fix = TRUE,
+  collin = FALSE
 )
 
 \method{glance}{dbreg}(x, ...)
@@ -34,12 +35,18 @@ Default is `FALSE`.}
 \item{...}{Additional arguments to tidying method. Currently unused except to
 handle superseded arguments.}
 
-\item{vcov, cluster}{Covariance type or cluster terms as in \link{vcov.dbreg}.}
+\item{vcov}{Optional covariance request or a supplied numeric covariance
+matrix. Named axes are aligned to uniquely named coefficients. Duplicate
+names require both axes in fitted order.}
+
+\item{cluster}{Optional cluster formula or column names for covariance.}
 
 \item{ssc}{Optional small-sample correction policy. A list may specify
 `K.adj`, `K.fixef`, `G.adj`, `G.df` and `t.df`.}
 
 \item{vcov_fix}{Repair an indefinite two-way covariance matrix.}
+
+\item{collin}{Include columns dropped for collinearity as missing rows.}
 }
 \description{
 Provides \code{broom::tidy} and \code{broom::glance} methods for

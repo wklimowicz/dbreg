@@ -16,6 +16,7 @@ nobs.dbreg = function(object, ...) as.numeric(object[["nobs_orig"]])
 #'
 #' @param object A `dbreg` object.
 #' @param fe Should the fixed effects be included? Default is `FALSE`.
+#' @param collin Include columns dropped for collinearity with missing estimates.
 #' @param ... Additional arguments. Currently unused, except to capture
 #' superseded arguments.
 #' @examples
@@ -35,7 +36,7 @@ nobs.dbreg = function(object, ...) as.numeric(object[["nobs_orig"]])
 #' head(predict(mod, newdata = airquality))
 #' head(predict(mod, newdata = airquality, interval = "confidence"))
 #' @export
-coef.dbreg = function(object, fe = FALSE, ...) {
+coef.dbreg = function(object, fe = FALSE, ..., collin = FALSE) {
   
   # superseded args handled through ...
   dots = list(...)
@@ -47,6 +48,10 @@ coef.dbreg = function(object, fe = FALSE, ...) {
     }
   }
   
+  if (isTRUE(collin) && !is.null(object[["linear_design"]])) {
+    positions = coefficient_view(object, fe, collin = TRUE)
+    return(stats::setNames(object[["coeftable"]][positions[["fitted"]], "estimate"], positions[["labels"]]))
+  }
   ct = object[["coeftable"]]
   
   if (!isTRUE(fe) && !is.null(object[["fe"]])) {
@@ -391,6 +396,12 @@ linear_reported_positions = function(object, n) {
 
 vcov.dbreg = function(object, fe = FALSE, ..., vcov = NULL, cluster = NULL,
                       ssc = NULL, vcov_fix = TRUE) {
+  if (is.character(vcov) && length(vcov) == 1L) {
+    vcov = tolower(vcov)
+    if (is.na(vcov) || !vcov %in% c("iid", "hc1", "cluster", "twoway")) {
+      stop("Unsupported covariance type.", call. = FALSE)
+    }
+  }
   dots = list(...)
   if (length(dots)) {
     if (!is.null(dots[["fes"]]) && !identical(fe, dots[["fes"]])) {
@@ -458,11 +469,8 @@ confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...,
 
   object = summary.dbreg(object, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)
   ct = visible_coefficient_table(object, fe)
-  cf = ct[, "estimate"]
-  ses = ct[, "std.error"]
   a = (1 - level) / 2
-  critical = if (normal_inference(object)) stats::qnorm(1 - a) else qt(1 - a, linear_test_df(object))
-  ci = cbind(cf - critical * ses, cf + critical * ses)
+  ci = coefficient_limits(ct, level, linear_test_df(object), normal_inference(object))
   rownames(ci) = rownames(ct)
   colnames(ci) = sprintf("%.1f %%", 100 * c(a, 1 - a))
   

@@ -12,7 +12,7 @@ gof(object, ...)
 \item{...}{Additional arguments (currently unused)}
 }
 \value{
-Named vector with r2, adj_r2, and rmse
+Named OLS fit statistics or GLM likelihood and deviance statistics.
 }
 \description{
 Calculate goodness-of-fit metrics for dbreg objects

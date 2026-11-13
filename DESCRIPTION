@@ -58,10 +58,13 @@ Imports:
   utils
 Suggests:
   binsreg,
+  broom,
   bit64,
   here,
   fixest (>= 0.13.0),
+  insight,
   knitr,
+  modelsummary,
   quarto,
   RSQLite,
   tinytest

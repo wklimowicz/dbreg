@@ -54,6 +54,9 @@ New features
 - Added database-resident learned effect dictionaries for oversized one- and
   two-family additive fixed effects (`R/database-effects.R`,
   `R/database-two-effects.R`, `R/sql-prediction-upload.R`).
+- Added ecosystem integrations for `insight::get_varcov()`, `modelsummary`
+  custom covariance/gof metrics, and `fixest::etable()`/`coeftable()`
+  (`R/tidiers.R`, `R/gof.R`, `R/inference-methods.R`).
 - Added `dbivreg()` for instrumental-variables (2SLS) regression on database
   backends. Uses `fixest`-style IV formulas, e.g. `y ~ x | d ~ z` or
   `y ~ x | fe1 + fe2 | d ~ z`, and supports multiple endogenous regressors,

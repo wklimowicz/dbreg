@@ -15,6 +15,7 @@ generics::tidy
 #' @param fe Should the fixed effects be tidied too? Default is `FALSE`.
 #' @param ... Additional arguments to tidying method. Currently unused except to
 #' handle superseded arguments.
+#' @inheritParams summary.dbreg
 #' @examples
 #' mod = dbreg(Temp ~ Wind | Month, data = airquality)
 #' tidy(mod, conf.int = TRUE)
@@ -23,7 +24,8 @@ generics::tidy
 #' @name tidiers
 #' @rdname tidiers
 #' @export
-tidy.dbreg = function(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE, ...) {
+tidy.dbreg = function(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE, ...,
+                      vcov = NULL, cluster = NULL, ssc = NULL, vcov_fix = TRUE) {
   # superseded args handled through ...
   dots = list(...)
   if (length(dots)) {
@@ -34,16 +36,8 @@ tidy.dbreg = function(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE, ...) {
       )
     }
   }
-  ct = x[["coeftable"]]
-  if (!isTRUE(fe) && !is.null(x[["fe"]])) {
-    coef_names = x[["coef_names"]]
-    if (!is.null(coef_names)) {
-      ct = ct[coef_names, , drop = FALSE]
-    } else {
-      xvars = x[["xvars"]]
-      ct = ct[xvars, , drop = FALSE]
-    }
-  }
+  x = summary.dbreg(x, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)
+  ct = visible_coefficient_table(x, fe)
   out = data.frame(term = rownames(ct), ct, row.names = NULL)
   
   if (isTRUE(conf.int)) {

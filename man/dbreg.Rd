@@ -30,6 +30,7 @@ dbreg(
   sample_table = NULL,
   fe_tol = getOption("dbreg.ap_tol", 1e-10),
   fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
+  retain = c("none", "prediction", "inference", "all"),
   ...
 )
 }
@@ -217,6 +218,9 @@ to \code{getOption("dbreg.ap_tol", 1e-10)} without changing that option.}
 steps for this fit. Defaults to \code{getOption("dbreg.ap_max_iter", 100L)}
 without changing it. Bounded refinement uses at most eight steps; inner
 PCG has a separate cap. See \link{dbreg-options}.}
+
+\item{retain}{Keep keyed original fitted values and residuals. Use
+\code{close()} to release the fit. Compressed fits use bounded SQL lookup state.}
 
 \item{...}{Additional arguments. Currently ignored, except to handle
 superseded arguments for backwards compatibility.}

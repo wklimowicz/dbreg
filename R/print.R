@@ -22,21 +22,20 @@ print.dbreg = function(x, fe = FALSE, ...) {
     }
   }
 
-  ct = x[["coeftable"]]
-  colnames(ct) = c("Estimate", "Std. Error", "t value", "Pr(>|t|)")
-  if (!isTRUE(fe) && !is.null(x[["fe"]])) {
-    # Use coef_names if available (handles interactions), fall back to xvars
-    coef_names = x[["coef_names"]]
-    if (!is.null(coef_names)) {
-      ct = ct[coef_names, , drop = FALSE]
-    } else {
-      xvars = x[["xvars"]]
-      ct = ct[xvars, , drop = FALSE]
-    }
-  }
+  ct = visible_coefficient_table(x, fe)
+  colnames(ct) = inference_labels(x)
   se_type = attr(x[["vcov"]], "type")
   n_clusters = attr(x[["vcov"]], "n_clusters")
   se_type = format_vcov_label(se_type, n_clusters)
+  if (inherits(x, "dbglm")) {
+    family = x[["family"]]
+    cat("GLM estimation, Dep. Var.:", x[["yvar"]], "\n")
+    cat("Family:", family[["family"]], "(", family[["link"]], ")\n")
+    cat("Observations:", prettyNum(nobs(x), big.mark = ","), "\n")
+    cat("Standard Errors:", se_type, "\n")
+    print_coeftable(ct, has_fes = length(x[["fe"]]) > 0)
+    return(invisible(ct))
+  }
   if (x[["strategy"]] == "compress") {
     cat("Compressed OLS estimation, Dep. Var.:", x[["yvar"]], "\n")
     cat(

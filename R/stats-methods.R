@@ -79,6 +79,9 @@ coef.dbreg = function(object, fe = FALSE, ...) {
 #'   \code{\link[stats]{predict.lm}} for details.
 #' @param level One finite numeric confidence level strictly between zero and
 #'   one. Default is 0.95.
+#' @param sample Without `newdata`, a retained fit returns the estimation
+#'   sample by default. Use `"original"` to include omitted observations as
+#'   missing predictions.
 #' @param ... Additional arguments (currently unused).
 #'
 #' Fitted column construction and category coding are retained independently of
@@ -114,10 +117,20 @@ predict.dbreg = function(
   newdata = NULL,
   interval = c("none", "confidence", "prediction"),
   level = 0.95,
-  ...
+  ...,
+  sample = c("estimation", "original")
 ) {
   interval = match.arg(interval)
+  sample = match.arg(sample)
+  if (sample == "original" && !is.null(newdata)) {
+    stop("Original-sample prediction uses the retained fitting source.", call. = FALSE)
+  }
   if (interval != "none") validate_confidence_level(level)
+  if (sample == "original") require_inference_rows(object)
+  if (is.null(newdata) && isTRUE(object[["retain"]] %in% c("inference", "all"))) {
+    if (interval != "none") stop("Retained-sample prediction requires interval = 'none'.", call. = FALSE)
+    return(retained_row_values(object, "__dbreg_saved_fit", ".fitted", na.rm = sample == "estimation"))
+  }
   strategy = object[["strategy"]] 
 
   # Demean strategy doesn't support intervals (FE uncertainty not available)
@@ -316,11 +329,23 @@ predict.dbreg = function(
 #' @param object A `dbreg` object.
 #' @param fe Include covariance rows and columns for explicit fixed effects?
 #'   Default is `FALSE`, matching [coef()].
+#' @param vcov Post-fit covariance type or cluster formula for a retained OLS fit.
+#' @param cluster One or two cluster terms from the original fitted source.
+#' @param ssc Optional post-fit small-sample correction policy.
+#' @param vcov_fix Repair an indefinite two-way covariance matrix.
 #' @param ... Additional arguments (currently unused, except to capture
 #'   superseded arguments).
 #' @inherit coef.dbreg examples
 #' @export
-vcov.dbreg = function(object, fe = FALSE, ...) {
+# Positions of the reported (non-FE) coefficients in a fitted-order covariance.
+linear_reported_positions = function(object, n) {
+  if (!length(object[["fe"]])) return(seq_len(n))
+  if (!is.null(object[["linear_design"]])) return(visible_linear_positions(object, FALSE))
+  match(names(coef(object)), rownames(object[["coeftable"]]))
+}
+
+vcov.dbreg = function(object, fe = FALSE, ..., vcov = NULL, cluster = NULL,
+                      ssc = NULL, vcov_fix = TRUE) {
   dots = list(...)
   if (length(dots)) {
     if (!is.null(dots[["fes"]]) && !identical(fe, dots[["fes"]])) {
@@ -328,18 +353,31 @@ vcov.dbreg = function(object, fe = FALSE, ...) {
       warning('The `fes` argument has been superseded by `fe` (without the "s") and will be deprecated in a future `dbreg` release.\n')
     }
   }
-  out = object[["vcov"]]
-  fields = c("type", "n_clusters", "n_params", "ssc", "df.K", "df.t", "rss", "tss")
+  requested = !is.null(vcov) || !is.null(cluster) || !is.null(ssc) || !identical(vcov_fix, TRUE)
+  if (requested && is.null(vcov) && is.null(cluster)) {
+    request = object[["postfit_request"]]
+    vcov = request[["vcov"]]
+    cluster = request[["cluster"]]
+  }
+  out = if (requested) retained_linear_covariance(object, vcov, cluster, ssc, vcov_fix) else object[["vcov"]]
+  fields = c("type", "n_clusters", "n_params", "ssc", "df.K", "df.t", "rss", "tss", "repair")
   metadata = lapply(fields, function(name) attr(out, name))
   names(metadata) = fields
   # Public labels may differ from SQL aliases. Both objects share the fitted
   # parameter order; without FE filtering, retain positions even if labels repeat.
   dimnames(out) = rep(list(rownames(object[["coeftable"]])), 2L)
-  if (!isTRUE(fe) && length(object[["fe"]])) {
-    visible = if (!is.null(object[["linear_design"]])) visible_linear_positions(object, fe) else names(coef(object))
-    out = out[visible, visible, drop = FALSE]
+  visible = linear_reported_positions(object, nrow(out))
+  # As in fixest, repair two-way covariance on the reported slope coefficients:
+  # fitting coordinates can include absorbed FE directions that need not be PSD.
+  repair = metadata[["repair"]]
+  if (requested && !inherits(object, "dbglm") && identical(metadata[["type"]], "twoway") && is.null(repair)) {
+    block = retained_vcov_psd(out[visible, visible, drop = FALSE], vcov_fix)
+    out[visible, visible] = block
+    repair = attr(block, "repair")
   }
+  if (!isTRUE(fe) && length(object[["fe"]])) out = out[visible, visible, drop = FALSE]
   for (name in names(metadata)) if (!is.null(metadata[[name]])) attr(out, name) = metadata[[name]]
+  if (!is.null(repair)) attr(out, "repair") = repair
   out
 }
 
@@ -352,12 +390,15 @@ vcov.dbreg = function(object, fe = FALSE, ...) {
 #' @param level One finite numeric confidence level strictly between zero and
 #'   one. Default is 0.95.
 #' @param fe Should the fixed effects be included? Default is `FALSE`.
+#' @param vcov,cluster,ssc,vcov_fix Optional post-fit covariance arguments
+#'   forwarded to [summary.dbreg()].
 #' @param ... Additional arguments. Currently unused, except to capture
 #' superseded arguments.
 #' @inherit coef.dbreg examples
 #' @importFrom stats qt
 #' @export
-confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...) {
+confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...,
+                         vcov = NULL, cluster = NULL, ssc = NULL, vcov_fix = TRUE) {
   validate_confidence_level(level)
 
   # superseded args handled through ...
@@ -370,24 +411,13 @@ confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...) {
     }
   }
 
-  ct = object[["coeftable"]]
-  
-  if (!isTRUE(fe) && !is.null(object[["fe"]])) {
-    if (!is.null(object[["linear_design"]])) {
-      ct = ct[visible_linear_positions(object, fe), , drop = FALSE]
-    } else if (!is.null(object[["coef_names"]])) {
-      ct = ct[object[["coef_names"]], , drop = FALSE]
-    } else {
-      ct = ct[object[["xvars"]], , drop = FALSE]
-    }
-  }
+  object = summary.dbreg(object, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)
+  ct = visible_coefficient_table(object, fe)
   cf = ct[, "estimate"]
   ses = ct[, "std.error"]
-  df = linear_test_df(object)
-  
   a = (1 - level) / 2
-  t_crit = qt(1 - a, df)
-  ci = cbind(cf - t_crit * ses, cf + t_crit * ses)
+  critical = if (normal_inference(object)) stats::qnorm(1 - a) else qt(1 - a, linear_test_df(object))
+  ci = cbind(cf - critical * ses, cf + critical * ses)
   rownames(ci) = rownames(ct)
   colnames(ci) = sprintf("%.1f %%", 100 * c(a, 1 - a))
   

@@ -53,7 +53,10 @@ varying_compress_frame = function(inputs, resources) {
     taken = c(reserved, f),
     fold_case = folds_identifier_case(conn)
   )
+  keys = if (!is.null(inputs[["retained_original"]])) inputs[["row_id_safe"]]
+  key_aliases = if (length(keys)) paste0("ck", seq_along(keys)) else character()
   fields = c(
+    if (length(keys)) paste(q(keys), "AS", key_aliases),
     if (length(x)) {
       paste(sql_cast_double(design[["select_exprs"]], conn), "AS", x)
     },
@@ -73,6 +76,7 @@ varying_compress_frame = function(inputs, resources) {
   groups = c(x, f, t)
   select = paste("SELECT", paste(fields, collapse = ","), from)
   context = list2env(as.list(inputs), parent = emptyenv())
+  context[["retained_compression_keys"]] = key_aliases
   context[["yvar"]] = "cy"
   context[["weights"]] = if (is.null(inputs[["weights"]])) NULL else "cw"
   context[["cluster_var"]] = if (length(inputs[["cluster_var"]])) {
@@ -99,7 +103,7 @@ varying_compress_frame = function(inputs, resources) {
   snapshot = fe_projection_tables(conn, resources)
   table = snapshot(
     select,
-    c(groups, payload, "cy", "cw", context[["cluster_var"]])
+    c(groups, payload, "cy", "cw", context[["cluster_var"]], key_aliases)
   )
   key_fields = c(groups, payload)
   # Payloads also carry numeric regressors (e.g. DECIMAL money columns), which
@@ -585,6 +589,9 @@ execute_varying_compress = function(inputs) {
     sandwich_bread = fit[["sandwich_bread"]],
     ssc = inputs[["ssc"]]
   )
+  retain_compressed_linear_rows(inputs, ctx[["from_statement"]], frame[["groups"]],
+    dat[["dbreg_cell"]], yhat, "cy", attr(dat, "moment_center"), rss, n,
+    ctx[["retained_compression_keys"]], fit, score_X, frame[["sizes"]])
   attr(V, "rss") = rss
   attr(V, "tss") = moment_tss(S, "cy")
   internal = list(

@@ -75,6 +75,7 @@ execute_moments_strategy = function(inputs) {
   attr(vcov_mat, "tss") = tss
 
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
+  retain_linear_rows(inputs, frame, fit, n_total)
   layout = linear_fit_layout(inputs[["design_columns"]], fit[["x"]])
 
   list(
@@ -184,6 +185,7 @@ execute_demean_strategy = function(inputs) {
   attr(vcov_mat, "tss") = source_tss(inputs)
 
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
+  retain_linear_rows(inputs, frame, fit, n_total, n_fe_levels)
   layout = linear_fit_layout(inputs[["design_columns"]], fit[["x"]])
 
   list(
@@ -264,7 +266,8 @@ execute_mundlak_strategy = function(inputs) {
 
 
   # Build base CTE with expanded columns AND original xvars (for group means)
-  base_select = c(fe, yvar, xvars)
+  keys = if (!is.null(inputs[["retained_original"]])) inputs[["row_id_safe"]]
+  base_select = c(fe, yvar, xvars, keys)
   for (i in seq_along(xvar_names)) {
     # Only add expanded terms that aren't already in original xvars
     if (!xvar_names[i] %in% xvars) {
@@ -304,7 +307,7 @@ execute_mundlak_strategy = function(inputs) {
   }
 
   # Select columns for augmented table (include FE for counting)
-  aug_select_parts = c(sprintf("b.%s", fe), sprintf("b.%s", yvar), sprintf("b.%s", xvar_names))
+  aug_select_parts = paste0("b.", unique(c(fe, yvar, xvar_names, keys)))
   if (!is.null(cluster_var) && !cluster_var %in% c(fe, yvar, xvar_names)) {
     aug_select_parts = c(aug_select_parts, sprintf("b.%s AS %s", cluster_var, cluster_var))
   }
@@ -415,6 +418,7 @@ execute_mundlak_strategy = function(inputs) {
   attr(vcov_mat, "tss") = tss
 
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
+  retain_linear_rows(inputs, frame, fit, n_total)
   layout = linear_fit_layout(inputs[["design_columns"]], fit[["x"]])
 
   list(
@@ -534,8 +538,9 @@ execute_compress_strategy = function(inputs) {
   source_map = inputs[["source_map"]]
   reserved_sources = intersect(group_cols, names(source_map)[tolower(source_map) %in% tolower(moment_fields)])
   inputs[["composite_cell_sources"]] = c(cell_sources, setNames(reserved_sources, reserved_sources))
+  retained_keys = if (!is.null(inputs[["retained_original"]])) inputs[["row_id_safe"]]
   expanded_from = if (isTRUE(has_interactions)) paste0("FROM (SELECT ", paste(c(select_exprs,
-    setdiff(unique(c(fe, yvar, weights, component_columns)), emitted_names)), collapse = ","), " ", from_statement, ") dbreg_compress_source") else from_statement
+    setdiff(unique(c(fe, yvar, weights, component_columns, retained_keys)), emitted_names)), collapse = ","), " ", from_statement, ") dbreg_compress_source") else from_statement
   packet = compressed_moment_query(conn, expanded_from, group_cols, yvar, weights, intercept)
   query_string = packet[["sql"]]
 
@@ -714,6 +719,10 @@ execute_compress_strategy = function(inputs) {
     rss_g = rss_g,
     meat = meat
   )
+  retain_compressed_linear_rows(inputs, expanded_from, group_cols,
+    compressed_dat[["dbreg_cell"]], yhat, yvar,
+    attr(compressed_dat, "moment_center"), rss_total, nobs_orig, retained_keys, fit,
+    score_X, vapply(compressed_dat[fe], nlevels, integer(1)))
   attr(vcov_mat, "rss") = rss_total
   attr(vcov_mat, "tss") = tss
 

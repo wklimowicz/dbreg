@@ -4,7 +4,15 @@
 \alias{vcov.dbreg}
 \title{Variance-covariance matrix for dbreg objects}
 \usage{
-\method{vcov}{dbreg}(object, fe = FALSE, ...)
+\method{vcov}{dbreg}(
+  object,
+  fe = FALSE,
+  ...,
+  vcov = NULL,
+  cluster = NULL,
+  ssc = NULL,
+  vcov_fix = TRUE
+)
 }
 \arguments{
 \item{object}{A `dbreg` object.}
@@ -14,6 +22,14 @@ Default is `FALSE`, matching [coef()].}
 
 \item{...}{Additional arguments (currently unused, except to capture
 superseded arguments).}
+
+\item{vcov}{Post-fit covariance type or cluster formula for a retained OLS fit.}
+
+\item{cluster}{One or two cluster terms from the original fitted source.}
+
+\item{ssc}{Optional post-fit small-sample correction policy.}
+
+\item{vcov_fix}{Repair an indefinite two-way covariance matrix.}
 }
 \description{
 Variance-covariance matrix for dbreg objects

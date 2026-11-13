@@ -6,7 +6,17 @@
 \alias{glance.dbreg}
 \title{Tidiers for `dbreg` objects}
 \usage{
-\method{tidy}{dbreg}(x, conf.int = FALSE, conf.level = 0.95, fe = FALSE, ...)
+\method{tidy}{dbreg}(
+  x,
+  conf.int = FALSE,
+  conf.level = 0.95,
+  fe = FALSE,
+  ...,
+  vcov = NULL,
+  cluster = NULL,
+  ssc = NULL,
+  vcov_fix = TRUE
+)
 
 \method{glance}{dbreg}(x, ...)
 }
@@ -23,6 +33,13 @@ Default is `FALSE`.}
 
 \item{...}{Additional arguments to tidying method. Currently unused except to
 handle superseded arguments.}
+
+\item{vcov, cluster}{Covariance type or cluster terms as in \link{vcov.dbreg}.}
+
+\item{ssc}{Optional small-sample correction policy. A list may specify
+`K.adj`, `K.fixef`, `G.adj`, `G.df` and `t.df`.}
+
+\item{vcov_fix}{Repair an indefinite two-way covariance matrix.}
 }
 \description{
 Provides \code{broom::tidy} and \code{broom::glance} methods for

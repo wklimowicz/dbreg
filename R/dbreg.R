@@ -170,6 +170,8 @@
 #'   The caller owns the export; private intermediates are cleaned on errors
 #'   and success. Unacknowledged cleanup remains queued for synchronous retry.
 #'   Cannot be combined with `sql_only` or `data_only`.
+#' @param retain Keep keyed original fitted values and residuals. Use
+#'   `close()` to release the fit. Compressed fits use bounded SQL lookup state.
 #' @param diagnostics Logical. Run an additional source aggregate for input,
 #'   subset-selected, missing-by-role, nonpositive-weight and invalid-offset
 #'   counts? Default is `FALSE`. Counts may overlap. Fitted objects return
@@ -467,9 +469,11 @@ dbreg = function(
   sample_table = NULL,
   fe_tol = getOption("dbreg.ap_tol", 1e-10),
   fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
+  retain = c("none", "prediction", "inference", "all"),
   ...
 ) {
 
+  retain = match.arg(retain)
   fixef_rm = match.arg(fixef_rm)
   # superseded args handled through ...
   dots = list(...)
@@ -499,6 +503,16 @@ dbreg = function(
   if (strategy == "within") strategy = "demean"  # alias
 
 
+  source_id = row_id
+  generated_row_id = NULL
+  if (retain != "none" && is.data.frame(data) && !length(row_id)) {
+    requested = c(model_vars(Formula::Formula(fml)), weights, offset, cluster_var, subset_variables(subset))
+    source_id = safe_identifiers("dbreg_input_position", taken = c(names(data), requested))
+    generated_row_id = source_id
+    data = as.data.frame(data)
+    data[[source_id]] = seq_len(nrow(data))
+  }
+
   # Collect the (normalised) arguments into the `inputs` environment, which
   # the rest of the pipeline reads from and writes to (reference semantics)
   inputs = new.env(parent = emptyenv())
@@ -513,7 +527,13 @@ dbreg = function(
   )
   inputs[["factor_refs"]] = factor_refs
   validate_sample_args(row_id, sample_table, conn, table, sql_only, data_only)
-  inputs[["row_id"]] = row_id
+  if (retain != "none" && (sql_only || data_only || !drop_missings)) {
+    stop("Retained linear fits require an estimation result and missing-row filtering.", call. = FALSE)
+  }
+  inputs[["retain"]] = retain
+  inputs[["public_row_id"]] = row_id
+  inputs[["generated_row_id"]] = generated_row_id
+  inputs[["row_id"]] = source_id
   inputs[["sample_table"]] = sample_table
   inputs[["resources"]] = fit_resources()
   inputs[["subset"]] = subset
@@ -540,10 +560,12 @@ dbreg = function(
 
   # Choose strategy (mutates inputs[["is_balanced"]], inputs[["compression_ratio_est"]])
   chosen_strategy = choose_strategy(inputs)
-
-  # Auto may select small varying cells; a documented capacity decline can
-  # still use the certified within engine, after releasing the failed snapshot.
-  if (chosen_strategy == "compress" && strategy == "auto" && !sql_only && length(unlist(inputs[["fe_slopes"]]))) {
+  # Auto may select small varying cells, and retained compressed rows upload
+  # their cell scores; a documented capacity decline can still use the
+  # certified within engine, after releasing the failed snapshot.
+  retained_fe = !is.null(inputs[["retained_original"]]) && length(inputs[["fe"]]) > 0L
+  if (chosen_strategy == "compress" && !sql_only &&
+      ((strategy == "auto" && length(unlist(inputs[["fe_slopes"]]))) || retained_fe)) {
     attempt = projection_attempt("compressed_coordinates", execute_compress_strategy(inputs))
     result = record_projection_attempt(inputs, attempt)
     if (is.null(result)) {
@@ -601,7 +623,12 @@ process_dbreg_inputs = function(inputs) {
 
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
   # results are mapped back to display names at the end
-  from_statement = prepare_linear_sample(inputs, from_statement, c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]])))
+  variables = c(model_vars(fml_parsed[["fml"]]), weights, cluster_var,
+    inputs[["offset"]], subset_variables(inputs[["subset"]]))
+  if (!is.null(inputs[["retain"]]) && inputs[["retain"]] != "none") {
+    from_statement = prepare_linear_retention(inputs, from_statement, variables)
+  }
+  from_statement = prepare_linear_sample(inputs, from_statement, variables)
   src = safe_source(conn, from_statement,
     c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]],
       subset_variables(inputs[["subset"]]), inputs[["row_id"]]),
@@ -1000,7 +1027,7 @@ dbreg_alternating_projections = function(
 
   # FE and cluster identifiers must survive every AP table, including when
   # they are also regressors (which are otherwise replaced by `_tilde` columns).
-  id_cols = unique(c(fe, cluster_var))
+  id_cols = projection_id_columns(inputs)
   id_cols = id_cols[!is.na(id_cols) & id_cols != ""]
 
   seed = paste0(
@@ -1378,5 +1405,14 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   # i() columns (display names), for predict()
   result[["i_columns"]] = inputs[["i_columns"]]
   class(result) = c(class, class(result))
-  finalize_linear_sample(result, inputs)
+  result = finalize_linear_sample(result, inputs)
+  state = inputs[["linear_retained_state"]]
+  if (!is.null(state)) {
+    result[["retained_rows"]] = state[["rows"]]
+    result[["retained_inference"]] = state[["inference"]]
+    result[["resource_state"]] = retain_fit_resources(inputs[["resources"]], state[["name"]])
+    result[["retain"]] = inputs[["retain"]]
+    result[["row_id"]] = inputs[["public_row_id"]]
+  }
+  result
 }

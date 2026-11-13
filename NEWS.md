@@ -40,6 +40,11 @@ New features
   SQL CG, and compressed OLS (`R/fe-coordinates.R`, `R/compress-varying.R`),
   giving ordinary compressed fixed effects rank priority and preserving exact
   double keys and source column names.
+- Added retained estimation-row inference (`retain = "prediction" | "inference" | "all"`),
+  `fitted()`, `residuals()`, `augment()`, `case.names()`, post-fit `vcov()`
+  recomputation, and consistent coefficient inference methods across `summary()`,
+  `confint()`, `tidy()`, and `fixest` helpers (`R/linear-retained.R`,
+  `R/linear-postfit.R`, `R/inference-methods.R`, `R/augment.R`).
 - Added `dbivreg()` for instrumental-variables (2SLS) regression on database
   backends. Uses `fixest`-style IV formulas, e.g. `y ~ x | d ~ z` or
   `y ~ x | fe1 + fe2 | d ~ z`, and supports multiple endogenous regressors,

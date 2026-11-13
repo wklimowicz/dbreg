@@ -37,7 +37,7 @@ build_base_frame = function(inputs, x_sql, x_names) {
     c("yvar", "weights", "cluster_var", "from_statement", "conn", "intercept")
   )
   y = yvar
-  sel = frame_select(y, x_sql, x_names, extra = c(weights, cluster_var))
+  sel = frame_select(y, x_sql, x_names, extra = c(weights, cluster_var, if (!is.null(inputs[["retained_original"]])) inputs[["row_id_safe"]]))
   base_sql = paste0("SELECT ", paste(sel, collapse = ", "), " ", from_statement)
   cte_qual = if (identical(detect_backend(conn)[["name"]], "duckdb")) "NOT MATERIALIZED " else ""
   list(
@@ -162,7 +162,7 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     }
     weight_alias = safe_identifiers("weights", taken = c(fe, keys, cluster_var))
     passthrough = c(
-      if (!is.null(weights)) sprintf("b.%s AS weights", weights),
+      if (!is.null(weights)) sprintf("b.%s AS %s", weights, weight_alias),
       if (!is.null(cluster_var) && !cluster_var %in% fe) sprintf("b.%s AS %s", cluster_var, cluster_var)
     )
     key_columns = setdiff(keys, c(fe, cluster_var))
@@ -173,7 +173,7 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
       "demeaned AS (\n  SELECT ", paste(c(paste0("b.", fe), tilde, passthrough), collapse = ",\n    "),
       "\n  FROM ", local_from, "\n  ", paste(joins, collapse = "\n  "), "\n)"
     )
-    weights_expr = if (is.null(weights)) NULL else sql_weight_expr("weights")
+    weights_expr = if (is.null(weights)) NULL else sql_weight_expr(weight_alias)
   }
 
   fe_count_terms = if (use_ap) {

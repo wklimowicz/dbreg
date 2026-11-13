@@ -113,3 +113,13 @@ restore_compressed_data = function(data) {
   attr(data, "weight_scale") = NULL
   data
 }
+
+
+# Ordinals use the same ordered, distinct keys as compressed_moment_query().
+compressed_cell_index_sql = function(from, groups) {
+  if (!length(groups)) return("SELECT 1 AS dbreg_cell")
+  columns = paste(groups, collapse = ",")
+  paste0("SELECT ", columns, ",ROW_NUMBER() OVER (ORDER BY ", columns,
+    ") AS dbreg_cell FROM (SELECT ", columns, " ", from, " GROUP BY ",
+    columns, ") dbreg_distinct_cells")
+}

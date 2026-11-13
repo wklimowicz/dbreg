@@ -28,6 +28,8 @@ format_vcov_label = function(vcov_type, n_clusters = NULL) {
     "iid" = "IID",
     "hc1" = "Heteroskedasticity-robust",
     "cluster" = if (!is.null(n_clusters)) sprintf("Clustered (%d clusters)", n_clusters) else "Clustered",
+    "twoway" = if (length(n_clusters) == 2L) sprintf("Two-way clustered (%d and %d clusters)",
+      n_clusters[1L], n_clusters[2L]) else "Two-way clustered",
     vcov_type
   )
 }
@@ -37,12 +39,9 @@ format_vcov_label = function(vcov_type, n_clusters = NULL) {
 gen_coeftable = function(betahat, vcov_mat, df_residual) {
   coefs = as.numeric(betahat)
   names(coefs) = standardize_coef_names(rownames(betahat))
-  ses = sqrt(Matrix::diag(vcov_mat))
-  tstats = coefs / ses
   df_t = attr(vcov_mat, "df.t")
   if (is.null(df_t)) df_t = df_residual
-  pvals = 2 * pt(-abs(tstats), df_t)
-  cbind(estimate = coefs, std.error = ses, statistic = tstats, p.value = pvals)
+  inference_table(coefs, vcov_mat, df_t)
 }
 
 #' Detect and handle collinearity in design matrix

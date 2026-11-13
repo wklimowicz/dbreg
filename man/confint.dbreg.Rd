@@ -4,7 +4,17 @@
 \alias{confint.dbreg}
 \title{Confidence intervals for dbreg objects}
 \usage{
-\method{confint}{dbreg}(object, parm, level = 0.95, fe = FALSE, ...)
+\method{confint}{dbreg}(
+  object,
+  parm,
+  level = 0.95,
+  fe = FALSE,
+  ...,
+  vcov = NULL,
+  cluster = NULL,
+  ssc = NULL,
+  vcov_fix = TRUE
+)
 }
 \arguments{
 \item{object}{A `dbreg` object.}
@@ -20,6 +30,9 @@ one. Default is 0.95.}
 
 \item{...}{Additional arguments. Currently unused, except to capture
 superseded arguments.}
+
+\item{vcov, cluster, ssc, vcov_fix}{Optional post-fit covariance arguments
+forwarded to [summary.dbreg()].}
 }
 \description{
 Confidence intervals for dbreg objects

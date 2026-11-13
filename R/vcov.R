@@ -326,10 +326,7 @@ compute_meat_cluster_compress_sql = function(inputs, cells_from, group_cols, cel
   fk = expand.grid(k = k, f = fits)
   ij = which(upper.tri(diag(length(k)), diag = TRUE), arr.ind = TRUE)
   fij = data.frame(f = rep(fits, each = nrow(ij)), i = ij[, 1], j = ij[, 2])
-  gc = paste(group_cols, collapse = ", ")
-  cells_sql = if (length(group_cols)) paste0("SELECT ", gc,
-    ", ROW_NUMBER() OVER (ORDER BY ", gc, ") AS dbreg_cell FROM (SELECT ", gc,
-    " ", cells_from, " GROUP BY ", gc, ") dbreg_d") else "SELECT 1 AS dbreg_cell"
+  cells_sql = compressed_cell_index_sql(cells_from, group_cols)
   cell_join = if (length(group_cols)) paste0("JOIN cells c ON ",
     paste(sprintf("s.%s = c.%s", group_cols, group_cols), collapse = " AND ")) else "CROSS JOIN cells c"
   sql = paste0(

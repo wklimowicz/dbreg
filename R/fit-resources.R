@@ -26,7 +26,8 @@ resource_same_connection = function(a, b) {
 
 resource_pending = function(resources) {
   isTRUE(resources[["own_conn"]]) || !is.null(resources[["registered_table"]]) ||
-    length(resources[["tables"]]) > 0L || length(resources[["views"]]) > 0L
+    length(resources[["tables"]]) > 0L || length(resources[["views"]]) > 0L ||
+    !is.null(resources[["session"]])
 }
 
 resource_clear = function(resources) {
@@ -67,6 +68,22 @@ release_fit_resources = function(resources, quiet = TRUE, retire = TRUE) {
       }
     }
   }
+  session = resources[["session"]]
+  if (!is.null(session) && !length(resources[["tables"]]) &&
+      !length(resources[["views"]]) && is.null(resources[["registered_table"]])) {
+    resources[["session"]] = NULL
+    session[["leases"]] = session[["leases"]] - 1L
+    if (session[["leases"]] == 0L && session[["own_conn"]] &&
+        resource_connection_valid(session[["conn"]])) {
+      error = tryCatch({DBI::dbDisconnect(session[["conn"]], shutdown = TRUE); NULL},
+        error = identity)
+      if (!is.null(error)) {
+        resources[["conn"]] = session[["conn"]]
+        resources[["own_conn"]] = TRUE
+        errors = c(errors, conditionMessage(error))
+      }
+    }
+  }
   resources[["cleanup_errors"]] = errors
   key = resources[["retired_key"]]
   if (isTRUE(retire)) {
@@ -89,7 +106,8 @@ flush_retired_resources = function(conn = NULL, quiet = FALSE) {
   errors = character()
   for (key in ls(.dbreg_retired_resources, all.names = TRUE)) {
     resources = .dbreg_retired_resources[[key]]
-    if (!isTRUE(resources[["own_conn"]]) && resource_connection_valid(resources[["conn"]]) &&
+    owns_session = isTRUE(resources[["session"]][["own_conn"]])
+    if (!isTRUE(resources[["own_conn"]]) && !owns_session && resource_connection_valid(resources[["conn"]]) &&
         (is.null(conn) || !resource_same_connection(conn, resources[["conn"]]))) next
     rm(list = key, envir = .dbreg_retired_resources)
     release_fit_resources(resources, quiet = TRUE, retire = FALSE)
@@ -97,5 +115,59 @@ flush_retired_resources = function(conn = NULL, quiet = FALSE) {
     errors = c(errors, resources[["cleanup_errors"]])
   }
   if (length(errors) && !quiet) stop("Could not release retired fit resources: ", paste(errors, collapse = "; "), call. = FALSE)
+  invisible(NULL)
+}
+
+# A lease takes ownership of selected physical tables and, when applicable,
+# the fit-created connection. The temporary fit tracker still owns all other
+# tables and the R registration.
+retain_fit_resources = function(resources, tables, session = NULL) {
+  if (!all(tables %in% resources[["tables"]])) {
+    stop("Cannot retain tables the fit does not own.", call. = FALSE)
+  }
+  lease = fit_resources()
+  lease[["conn"]] = resources[["conn"]]
+  if (is.null(session)) {
+    session = list2env(list(conn = resources[["conn"]], own_conn = resources[["own_conn"]],
+      leases = 0L), parent = emptyenv())
+  }
+  session[["leases"]] = session[["leases"]] + 1L
+  lease[["session"]] = session
+  lease[["tables"]] = tables
+  lease[["closed"]] = FALSE
+  resources[["tables"]] = setdiff(resources[["tables"]], tables)
+  resources[["own_conn"]] = FALSE
+  reg.finalizer(lease, function(state) {
+    if (resource_pending(state)) {
+      key = state[["retired_key"]]
+      if (is.null(key)) key = basename(tempfile("retired_"))
+      state[["retired_key"]] = key
+      .dbreg_retired_resources[[key]] = state
+    }
+  }, onexit = FALSE)
+  lease
+}
+
+retained_fit_connection = function(lease) {
+  if (is.null(lease) || isTRUE(lease[["closed"]]) ||
+      !resource_connection_valid(lease[["conn"]])) {
+    stop("The retained fit has no live database session.", call. = FALSE)
+  }
+  lease[["conn"]]
+}
+
+#' Release tables owned by a fitted database regression
+#'
+#' @param con A fitted database regression object.
+#' @param ... Unused.
+#' @return Invisibly, NULL.
+#' @export
+close.dbreg = function(con, ...) close_retained_lease(con[["resource_state"]])
+
+close_retained_lease = function(lease) {
+  if (!is.null(lease)) {
+    lease[["closed"]] = TRUE
+    release_fit_resources(lease, quiet = FALSE)
+  }
   invisible(NULL)
 }

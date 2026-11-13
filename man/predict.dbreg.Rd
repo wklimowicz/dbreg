@@ -9,7 +9,8 @@
   newdata = NULL,
   interval = c("none", "confidence", "prediction"),
   level = 0.95,
-  ...
+  ...,
+  sample = c("estimation", "original")
 )
 }
 \arguments{
@@ -34,6 +35,10 @@ Fitted column construction and category coding are retained independently of
 public labels. Missing values and unknown fitted categories return `NA` in
 their input positions. Numeric predictors require numeric or logical input.
 The original row order is preserved; unrelated columns do not affect it.}
+
+\item{sample}{Without `newdata`, a retained fit returns the estimation
+sample by default. Use `"original"` to include omitted observations as
+missing predictions.}
 }
 \description{
 Predict method for dbreg objects

@@ -133,7 +133,7 @@ prepare_fe_projection = function(inputs, x_sql, x_names, materialize = TRUE, coe
   columns = paste0("v", seq_along(vars))
   trends = unique(unlist(inputs[["fe_slopes"]], use.names = FALSE))
   trend_columns = setNames(if (length(trends)) paste0("t", seq_along(trends)) else character(), trends)
-  ids = unique(c(fe, inputs[["cluster_var"]]))
+  ids = projection_id_columns(inputs)
   id_columns = paste0("id", seq_along(ids))
   fe_ids = id_columns[match(fe, ids)]
   fe_columns = paste0("f", seq_along(fe))
@@ -259,7 +259,7 @@ dbreg_moment_projections = function(inputs, x_sql, x_names, max_iter, tol, mater
 projection_frame_inputs = function(inputs, x_sql, x_names) {
   conn = inputs[["conn"]]
   q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
-  ids = unique(c(inputs[["fe"]], inputs[["cluster_var"]]))
+  ids = projection_id_columns(inputs)
   id_map = setNames(paste0("dbreg_p_id", seq_along(ids)), ids)
   x = paste0("dbreg_p_x", seq_along(x_names))
   y = "dbreg_p_y"
@@ -273,6 +273,7 @@ projection_frame_inputs = function(inputs, x_sql, x_names) {
   bound[["fe_slopes"]] = lapply(inputs[["fe_slopes"]], function(x) unname(trend_map[x]))
   bound[["fe"]] = unname(id_map[inputs[["fe"]]])
   bound[["cluster_var"]] = if (length(inputs[["cluster_var"]])) unname(id_map[inputs[["cluster_var"]]]) else NULL
+  bound[["row_id_safe"]] = unname(id_map[inputs[["row_id_safe"]]])
   bound[["yvar"]] = y
   bound[["weights"]] = w
   list(inputs = bound, x = x, y = y, ids = id_map)
@@ -287,4 +288,10 @@ projection_frame_columns = function(conn, table, bound, variables) {
   fields = c(paste(q(unname(bound[["ids"]])), "AS", q(names(bound[["ids"]]))),
     paste(q(paste0(c(bound[["y"]], bound[["x"]]), "_tilde")), "AS", q(projected)), paste("__w AS", q(weight)))
   list(sql = paste("SELECT", paste(fields, collapse = ","), "FROM", table), columns = projected, weights = weight)
+}
+
+
+projection_id_columns = function(inputs) {
+  unique(c(inputs[["fe"]], inputs[["cluster_var"]],
+    if (!is.null(inputs[["retained_original"]])) inputs[["row_id_safe"]]))
 }

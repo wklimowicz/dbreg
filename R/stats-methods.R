@@ -225,7 +225,7 @@ predict.dbreg = function(
   }
  
   if (interval != "none") {
-    vcovm = vcov(object)
+    vcovm = vcov(object, fe = TRUE)
     dof = object[["df_residual"]]
     if (interval == "confidence") {
       ses = sqrt(Matrix::rowSums((mm %*% vcovm) * mm))
@@ -251,11 +251,33 @@ predict.dbreg = function(
 #' Variance-covariance matrix for dbreg objects
 #'
 #' @param object A `dbreg` object.
-#' @param ... Additional arguments (currently unused).
+#' @param fe Include covariance rows and columns for explicit fixed effects?
+#'   Default is `FALSE`, matching [coef()].
+#' @param ... Additional arguments (currently unused, except to capture
+#'   superseded arguments).
 #' @inherit coef.dbreg examples
 #' @export
-vcov.dbreg = function(object, ...) {
-  object[["vcov"]]
+vcov.dbreg = function(object, fe = FALSE, ...) {
+  dots = list(...)
+  if (length(dots)) {
+    if (!is.null(dots[["fes"]]) && !identical(fe, dots[["fes"]])) {
+      fe = dots[["fes"]]
+      warning('The `fes` argument has been superseded by `fe` (without the "s") and will be deprecated in a future `dbreg` release.\n')
+    }
+  }
+  out = object[["vcov"]]
+  fields = c("type", "n_clusters", "n_params", "rss", "tss")
+  metadata = lapply(fields, function(name) attr(out, name))
+  names(metadata) = fields
+  # Public labels may differ from SQL aliases. Both objects share the fitted
+  # parameter order; without FE filtering, retain positions even if labels repeat.
+  dimnames(out) = rep(list(rownames(object[["coeftable"]])), 2L)
+  if (!isTRUE(fe) && length(object[["fe"]])) {
+    visible = names(coef(object))
+    out = out[visible, visible, drop = FALSE]
+  }
+  for (name in names(metadata)) if (!is.null(metadata[[name]])) attr(out, name) = metadata[[name]]
+  out
 }
 
 #' Confidence intervals for dbreg objects

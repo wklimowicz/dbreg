@@ -60,6 +60,10 @@ Bug fixes
 - Generated SQL identifiers now avoid existing names and case-insensitive
   duplicates, including collisions between factor dummies and regressors.
 
+- `vcov()` now returns the covariance of the coefficients exposed by `coef()`,
+  with matching names. Use `vcov(model, fe = TRUE)` to include explicit fixed
+  effects. Prediction intervals continue to use the full covariance.
+
 - Alternating projections no longer fail with an SQL error when a fixed-effect
   or cluster variable also appears as a regressor. Invalid `dbreg.ap_max_iter`
   and `dbreg.ap_tol` options now produce a clear error.

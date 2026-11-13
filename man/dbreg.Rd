@@ -16,7 +16,7 @@ dbreg(
   compress_ratio = NULL,
   compress_nmax = 1e+06,
   cluster = NULL,
-  ssc = c("full", "nested"),
+  ssc = "full",
   sql_only = FALSE,
   data_only = FALSE,
   drop_missings = TRUE,
@@ -119,16 +119,20 @@ cluster-robust standard errors (i.e., instead of \code{vcov = ~cluster_var}).
 Either a one-sided formula (e.g., \code{~firm}) or character string giving the
 variable name. Only single-variable clustering is currently supported.}
 
-\item{ssc}{Character string controlling the small-sample correction for
-clustered standard errors. Options are \code{"full"} (default) or \code{"nested"}.
-With \code{"full"}, all parameters (including fixed effect dummies) are counted
-in K for the CR1 correction. With \code{"nested"}, fixed effects that are nested
-within the cluster variable are excluded from K, matching the default
-behavior of \code{fixest::feols}. Only applies to \code{"compress"} and \code{"demean"}
-strategies (Mundlak uses explicit group mean regressors, not FE dummies).
-This distinction only matters for small samples. For large datasets
-(\code{dbreg}'s target use case), the difference is negligible and hence we
-default to the simple \code{"full"} option.}
+\item{ssc}{Small-sample policy: \code{"full"} (default), \code{"nested"}, \code{"none"},
+or a named list with \code{K.adj}, \code{K.fixef}, \code{K.exact}, \code{G.adj}, \code{G.df}, and
+\code{t.df}, as in \code{\link[fixest]{ssc}}. \code{"full"} counts all fixed-effect parameters;
+\code{"nested"} excludes effects nested in the cluster; \code{"none"} excludes
+fixed-effect parameters. Mundlak group means remain ordinary regressors.
+List defaults are \code{K.adj=TRUE}, \code{K.fixef="nonnested"}, \code{K.exact=FALSE},
+\code{G.adj=TRUE}, \code{G.df="min"}, \code{t.df="min"}. \code{K.exact=TRUE} is unsupported.
+A finite numeric \code{t.df} of at least one overrides the test degrees of
+freedom; otherwise clustered tests use G-1 (\code{"min"}) or N-K
+(\code{"conventional"}). Coefficient tables and intervals share this test df.
+Residual df always counts the full declared model. Inference requires
+positive residual df and, for clustering, at least two clusters. Under
+\code{K.exact=FALSE}, clustering directly on an FE uses the declared matching-FE
+nesting convention; external cluster columns use functional nesting checks.}
 
 \item{sql_only}{Logical indicating whether only the underlying compression
 SQL query should be returned (i.e., no computation will be performed).

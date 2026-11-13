@@ -16,7 +16,7 @@ dbivreg(
   compress_ratio = NULL,
   compress_nmax = 1e+06,
   cluster = NULL,
-  ssc = c("full", "nested"),
+  ssc = "full",
   sql_only = FALSE,
   data_only = FALSE,
   drop_missings = TRUE,
@@ -66,11 +66,20 @@ maximum compressed rows) that decide whether \code{strategy = "auto"} chooses
 \item{cluster}{Optional clustering variable, supplied as a one-sided formula
 or character string.}
 
-\item{ssc}{Character string controlling the small-sample correction for
-clustered standard errors. Options are \code{"full"} (default) or \code{"nested"}.
-With \code{"nested"}, fixed effects nested within the cluster variable are
-excluded from K, matching the default behavior of \code{fixest::feols}. See
-\code{\link[=dbreg]{dbreg()}} for details.}
+\item{ssc}{Small-sample policy: \code{"full"} (default), \code{"nested"}, \code{"none"},
+or a named list with \code{K.adj}, \code{K.fixef}, \code{K.exact}, \code{G.adj}, \code{G.df}, and
+\code{t.df}, as in \code{\link[fixest]{ssc}}. \code{"full"} counts all fixed-effect parameters;
+\code{"nested"} excludes effects nested in the cluster; \code{"none"} excludes
+fixed-effect parameters. Mundlak group means remain ordinary regressors.
+List defaults are \code{K.adj=TRUE}, \code{K.fixef="nonnested"}, \code{K.exact=FALSE},
+\code{G.adj=TRUE}, \code{G.df="min"}, \code{t.df="min"}. \code{K.exact=TRUE} is unsupported.
+A finite numeric \code{t.df} of at least one overrides the test degrees of
+freedom; otherwise clustered tests use G-1 (\code{"min"}) or N-K
+(\code{"conventional"}). Coefficient tables and intervals share this test df.
+Residual df always counts the full declared model. Inference requires
+positive residual df and, for clustering, at least two clusters. Under
+\code{K.exact=FALSE}, clustering directly on an FE uses the declared matching-FE
+nesting convention; external cluster columns use functional nesting checks.}
 
 \item{sql_only}{Logical indicating whether to return only the underlying SQL
 query.}

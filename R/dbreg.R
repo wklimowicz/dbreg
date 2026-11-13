@@ -87,16 +87,20 @@
 #' cluster-robust standard errors (i.e., instead of `vcov = ~cluster_var`).
 #' Either a one-sided formula (e.g., `~firm`) or character string giving the
 #' variable name. Only single-variable clustering is currently supported.
-#' @param ssc Character string controlling the small-sample correction for
-#' clustered standard errors. Options are `"full"` (default) or `"nested"`.
-#' With `"full"`, all parameters (including fixed effect dummies) are counted
-#' in K for the CR1 correction. With `"nested"`, fixed effects that are nested
-#' within the cluster variable are excluded from K, matching the default
-#' behavior of `fixest::feols`. Only applies to `"compress"` and `"demean"`
-#' strategies (Mundlak uses explicit group mean regressors, not FE dummies).
-#' This distinction only matters for small samples. For large datasets
-#' (`dbreg`'s target use case), the difference is negligible and hence we
-#' default to the simple `"full"` option.
+#' @param ssc Small-sample policy: `"full"` (default), `"nested"`, `"none"`,
+#'   or a named list with `K.adj`, `K.fixef`, `K.exact`, `G.adj`, `G.df`, and
+#'   `t.df`, as in `fixest::ssc()`. `"full"` counts all fixed-effect parameters;
+#'   `"nested"` excludes effects nested in the cluster; `"none"` excludes
+#'   fixed-effect parameters. Mundlak group means remain ordinary regressors.
+#'   List defaults are `K.adj=TRUE`, `K.fixef="nonnested"`, `K.exact=FALSE`,
+#'   `G.adj=TRUE`, `G.df="min"`, `t.df="min"`. `K.exact=TRUE` is unsupported.
+#'   A finite numeric `t.df` of at least one overrides the test degrees of
+#'   freedom; otherwise clustered tests use G-1 (`"min"`) or N-K
+#'   (`"conventional"`). Coefficient tables and intervals share this test df.
+#'   Residual df always counts the full declared model. Inference requires
+#'   positive residual df and, for clustering, at least two clusters. Under
+#'   `K.exact=FALSE`, clustering directly on an FE uses the declared matching-FE
+#'   nesting convention; external cluster columns use functional nesting checks.
 #' @param sql_only Logical indicating whether only the underlying compression
 #'   SQL query should be returned (i.e., no computation will be performed).
 #'   Default is `FALSE`.
@@ -390,7 +394,7 @@ dbreg = function(
   compress_ratio = NULL,
   compress_nmax = 1e6,
   cluster = NULL,
-  ssc = c("full", "nested"),
+  ssc = "full",
   sql_only = FALSE,
   data_only = FALSE,
   drop_missings = TRUE,
@@ -426,7 +430,7 @@ dbreg = function(
   offset = linear_offset_column(offset)
   subset_variables(subset)
   verbose = isTRUE(verbose)
-  ssc = match.arg(ssc)
+  ssc = normalize_ssc(ssc)
   vcov_parsed = parse_vcov_args(vcov, cluster)
   vcov_type_req = vcov_parsed[["vcov_type"]]
   cluster_var = vcov_parsed[["cluster_var"]]

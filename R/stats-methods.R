@@ -277,7 +277,7 @@ predict.dbreg = function(
       ses = sqrt(Matrix::rowSums((mm %*% vcovm) * mm) + sig2)
     }
     a = (1 - level) / 2
-    t_crit = qt(1 - a, dof)
+    t_crit = qt(1 - a, linear_test_df(object))
     lwr = fit - t_crit * ses
     upr = fit + t_crit * ses
     fit = data.frame(fit = fit, lwr = lwr, upr = upr)
@@ -313,7 +313,7 @@ vcov.dbreg = function(object, fe = FALSE, ...) {
     }
   }
   out = object[["vcov"]]
-  fields = c("type", "n_clusters", "n_params", "rss", "tss")
+  fields = c("type", "n_clusters", "n_params", "ssc", "df.K", "df.t", "rss", "tss")
   metadata = lapply(fields, function(name) attr(out, name))
   names(metadata) = fields
   # Public labels may differ from SQL aliases. Both objects share the fitted
@@ -367,7 +367,7 @@ confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...) {
   }
   cf = ct[, "estimate"]
   ses = ct[, "std.error"]
-  df = object[["df_residual"]]
+  df = linear_test_df(object)
   
   a = (1 - level) / 2
   t_crit = qt(1 - a, df)

@@ -41,11 +41,20 @@
 #'   *Acceleration Strategies* section.
 #' @param cluster Optional clustering variable, supplied as a one-sided formula
 #'   or character string.
-#' @param ssc Character string controlling the small-sample correction for
-#'   clustered standard errors. Options are `"full"` (default) or `"nested"`.
-#'   With `"nested"`, fixed effects nested within the cluster variable are
-#'   excluded from K, matching the default behavior of `fixest::feols`. See
-#'   [dbreg()] for details.
+#' @param ssc Small-sample policy: `"full"` (default), `"nested"`, `"none"`,
+#'   or a named list with `K.adj`, `K.fixef`, `K.exact`, `G.adj`, `G.df`, and
+#'   `t.df`, as in `fixest::ssc()`. `"full"` counts all fixed-effect parameters;
+#'   `"nested"` excludes effects nested in the cluster; `"none"` excludes
+#'   fixed-effect parameters. Mundlak group means remain ordinary regressors.
+#'   List defaults are `K.adj=TRUE`, `K.fixef="nonnested"`, `K.exact=FALSE`,
+#'   `G.adj=TRUE`, `G.df="min"`, `t.df="min"`. `K.exact=TRUE` is unsupported.
+#'   A finite numeric `t.df` of at least one overrides the test degrees of
+#'   freedom; otherwise clustered tests use G-1 (`"min"`) or N-K
+#'   (`"conventional"`). Coefficient tables and intervals share this test df.
+#'   Residual df always counts the full declared model. Inference requires
+#'   positive residual df and, for clustering, at least two clusters. Under
+#'   `K.exact=FALSE`, clustering directly on an FE uses the declared matching-FE
+#'   nesting convention; external cluster columns use functional nesting checks.
 #' @param sql_only Logical indicating whether to return only the underlying SQL
 #'   query.
 #' @param data_only Logical indicating whether to return only the aggregated
@@ -71,7 +80,7 @@ dbivreg = function(
   compress_ratio = NULL,
   compress_nmax = 1e6,
   cluster = NULL,
-  ssc = c("full", "nested"),
+  ssc = "full",
   sql_only = FALSE,
   data_only = FALSE,
   drop_missings = TRUE,
@@ -93,7 +102,7 @@ dbivreg = function(
   subset_variables(subset)
   verbose = isTRUE(verbose)
   strategy = match.arg(strategy)
-  ssc = match.arg(ssc)
+  ssc = normalize_ssc(ssc)
   if (strategy == "within") {
     strategy = "demean"
   }
@@ -583,14 +592,14 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
   rss = fit[["rss"]]
 
   n_fe = length(n_fe_levels)
-  df_fe = if (n_fe == 0) 0 else sum(n_fe_levels) - (n_fe - 1)
-  df_res = max(n_total - length(x_names_full) - df_fe, 1)
+  df_fe = fe_intercept_df(n_fe_levels)
+  df_res = n_total - length(x_names_full) - df_fe
   # For ssc = "nested", exclude nested FE parameters from the CR1 K
   nested_levels = 0L
-  if (vcov_type_req == "cluster" && ssc == "nested") {
+  if (vcov_type_req == "cluster" && ssc[["K.fixef"]] == "nonnested") {
     nested_levels = nested_fe_df(inputs)
   }
-  n_params = length(x_names_full) + df_fe - nested_levels
+  n_params = linear_parameter_count(inputs, length(x_names_full) + df_fe, df_fe, nested_levels)
 
   tss = if (n_fe > 0L) source_tss(inputs) else moment_tss(S, yvar)
 
@@ -604,6 +613,7 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
   meats = meats_fn(c(list(fit), fs_fits), c(yvar, endog))
   meat = meats[[1]]
   vcov_mat = compute_vcov(
+    ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
     strategy = if (has_intercept) "moments" else "demean",
     XtX_inv = fit[["bread"]],
@@ -908,6 +918,7 @@ compute_dbivreg_first_stage_wald = function(
   vcov_type = vcov_type_req
   out = Map(function(fit_u, meat_u) {
     vcov_u = compute_vcov(
+      ssc = inputs[["ssc"]],
       vcov_type = vcov_type,
       strategy = if (has_intercept) "moments" else "demean",
       XtX_inv = fit_u[["bread"]],
@@ -915,7 +926,7 @@ compute_dbivreg_first_stage_wald = function(
       rss = fit_u[["rss"]],
       df_res = df2,
       nobs_orig = n_total,
-      n_params = length(unrestricted) + df_fe - if (vcov_type == "cluster") nested_levels else 0L,
+      n_params = linear_parameter_count(inputs, length(unrestricted) + df_fe, df_fe, nested_levels),
       meat = meat_u
     )
     beta_q = fit_u[["coef"]][excluded, , drop = FALSE]
@@ -928,9 +939,9 @@ compute_dbivreg_first_stage_wald = function(
     }, error = function(e) dbivreg_diag_unavailable("First-stage Wald test", e))
     list(
       stat = stat,
-      p = stats::pf(stat, q, df2, lower.tail = FALSE),
+      p = stats::pf(stat, q, attr(vcov_u, "df.t"), lower.tail = FALSE),
       df1 = q,
-      df2 = df2,
+      df2 = attr(vcov_u, "df.t"),
       vcov = format_vcov_label(vcov_type, attr(vcov_u, "n_clusters"))
     )
   }, fs_fits, fs_meats)

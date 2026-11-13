@@ -39,7 +39,9 @@ gen_coeftable = function(betahat, vcov_mat, df_residual) {
   names(coefs) = standardize_coef_names(rownames(betahat))
   ses = sqrt(Matrix::diag(vcov_mat))
   tstats = coefs / ses
-  pvals = 2 * pt(-abs(tstats), df_residual)
+  df_t = attr(vcov_mat, "df.t")
+  if (is.null(df_t)) df_t = df_residual
+  pvals = 2 * pt(-abs(tstats), df_t)
   cbind(estimate = coefs, std.error = ses, statistic = tstats, p.value = pvals)
 }
 

@@ -54,12 +54,13 @@ execute_moments_strategy = function(inputs) {
   p = length(fit[["x"]])
   rss = fit[["rss"]]
   tss = moment_tss(S, yvar)
-  df_res = max(n_total - p, 1)
+  df_res = n_total - p
   
   # Compute meat matrix if needed (HC1 or cluster)
   meat = fit_meat(fit, frame, yvar, inputs)
   
   vcov_mat = compute_vcov(
+    ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
     strategy = "moments",
     XtX_inv = fit[["bread"]],
@@ -157,19 +158,14 @@ execute_demean_strategy = function(inputs) {
   rss = fit[["rss"]]
   n_fe = length(fe)
   df_fe = sum(n_fe_levels) - (n_fe - 1)
-  df_res = max(n_total - p_kept - df_fe, 1)
+  df_res = n_total - p_kept - df_fe
   
   # Compute meat matrix if needed (HC1 or cluster)
   meat = fit_meat(fit, frame, yvar, inputs)
-  n_params_cluster = p_kept + df_fe  # K for CR1 correction
-  if (vcov_type_req == "cluster") {
-    # For ssc = "nested", exclude nested FE levels from K
-    if (ssc == "nested") {
-      n_params_cluster = p_kept + df_fe - nested_fe_df(inputs)
-    }
-  }
-  
+  n_params_cluster = linear_parameter_count(inputs, p_kept + df_fe, df_fe)
+
   vcov_mat = compute_vcov(
+    ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
     strategy = "demean",
     XtX_inv = fit[["bread"]],
@@ -380,12 +376,13 @@ execute_mundlak_strategy = function(inputs) {
   p = length(fit[["x"]])
   rss = fit[["rss"]]
   tss = moment_tss(S, yvar)
-  df_res = max(n_total - p, 1)
+  df_res = n_total - p
 
   # Compute meat matrix if needed (HC1 or cluster)
   meat = fit_meat(fit, frame, yvar, inputs)
 
   vcov_mat = compute_vcov(
+    ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
     strategy = "mundlak",
     XtX_inv = fit[["bread"]],
@@ -556,7 +553,13 @@ execute_compress_strategy = function(inputs) {
   sum_wy_sq = compressed_dat[["sum_wy_sq"]]
   rss_g = sum_wy_sq - 2 * yhat * sum_wy + sum_w * (yhat^2)
   rss_total = sum(rss_g)*weight_scale
-  df_res = max(nobs_orig - ncol(X), 1)
+  df_fe = fe_intercept_df(vapply(compressed_dat[fe], nlevels, integer(1)))
+  n_params_model = ncol(X)
+  if (length(fe)) {
+    roles = columns[["role"]][match(fit[["x"]], columns[["alias"]])]
+    n_params_model = sum(roles == "slope" & fit[["x"]] != "(Intercept)") + df_fe
+  }
+  df_res = nobs_orig - n_params_model
 
   # Calculate TSS for R2
   sum_wy_total = sum(compressed_dat[["sum_wy"]])
@@ -566,7 +569,7 @@ execute_compress_strategy = function(inputs) {
   
   # For clustered SEs, need to query cluster-by-cell stats
   meat = NULL
-  n_params_cluster = ncol(X)  # K for CR1 correction
+  n_params_cluster = linear_parameter_count(inputs, n_params_model, df_fe)
   if (vcov_type_req == "hc1" && !is.null(weights)) {
     sum_w2 = compressed_dat[["sum_w2"]]
     sum_w2y = compressed_dat[["sum_w2y"]]
@@ -592,10 +595,6 @@ execute_compress_strategy = function(inputs) {
       compute_meat_cluster_compress(inputs, cells_from, group_cols, compressed_dat, score_X, yhat,
         y_center = attr(compressed_dat, "moment_center"), weight_scale = weight_scale)
     }
-    # For ssc = "nested", exclude nested FE levels from K
-    if (ssc == "nested") {
-      n_params_cluster = ncol(X) - nested_fe_df(inputs, from_statement)
-    }
   }
   
   if (vcov_type_req == "hc1" && is.null(meat)) {
@@ -603,6 +602,7 @@ execute_compress_strategy = function(inputs) {
   }
   if (!is.null(meat)) attr(meat, "weight_scale") = weight_scale
   vcov_mat = compute_vcov(
+    ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
     strategy = "compress",
     XtX_inv = XtX_inv,
@@ -618,7 +618,7 @@ execute_compress_strategy = function(inputs) {
   attr(vcov_mat, "rss") = rss_total
   attr(vcov_mat, "tss") = tss
 
-  coeftable = gen_coeftable(betahat, vcov_mat, max(nobs_orig - ncol(X), 1))
+  coeftable = gen_coeftable(betahat, vcov_mat, df_res)
 
   # Coefficient names for xvars (excluding intercept and FE dummies)
   # Match coefficients that start with any design_var name
@@ -647,7 +647,7 @@ execute_compress_strategy = function(inputs) {
       strategy = "compress",
       compression_ratio = compression_ratio,
       compression_ratio_est = compression_ratio_est,
-      df_residual = max(nobs_orig - ncol(X), 1)
+      df_residual = df_res
     )
   )
 }
@@ -669,29 +669,34 @@ nested_fe_df = function(inputs, from_statement = inputs[["from_statement"]]) {
   backend = detect_backend(conn)[["name"]]
   nested_df = 0L
   for (f in fe) {
-    # Nested iff no FE value spans more than one cluster
-    nested_sql = sql_limit(
-      glue(
-        "SELECT {f} FROM (SELECT * {from_statement}) t ",
-        "GROUP BY {f} HAVING COUNT(DISTINCT {cluster_var}) > 1"
-      ),
-      1,
-      backend
-    )
-    count_sql = glue("SELECT COUNT(DISTINCT {f}) AS n FROM (SELECT * {from_statement}) t")
-    n_levels = tryCatch(
-      if (nrow(dbGetQuery(conn, nested_sql)) == 0) dbGetQuery(conn, count_sql)[["n"]] else 0L,
-      error = function(e) {
-        # Fall back to keeping the FE in K (larger, conservative SEs), but say so
-        warning(
-          "[dbreg] Could not check whether fixed effect '", f, "' is nested in '",
-          cluster_var, "' (", conditionMessage(e), "). Treating it as not nested ",
-          "for the ssc = \"nested\" correction.",
-          call. = FALSE
+    # Match K.exact=FALSE's declared-FE shortcut when clustering on an FE.
+    # Otherwise establish nesting from functional dependencies on fitted rows.
+    if (cluster_var %in% fe && f != cluster_var) next
+    n_levels = tryCatch({
+      if (identical(f, cluster_var)) {
+        count_sql = glue("SELECT CAST(COUNT(DISTINCT {f}) AS BIGINT) AS n FROM (SELECT * {from_statement}) t")
+        dbGetQuery(conn, count_sql)[["n"]]
+      } else {
+        # Compute group count and nesting violation in a single scan.
+        check_sql = glue(
+          "SELECT CAST(COUNT(*) AS BIGINT) AS n, ",
+          "SUM(CASE WHEN c > 1 THEN 1 ELSE 0 END) AS bad ",
+          "FROM (SELECT {f}, COUNT(DISTINCT {cluster_var}) AS c ",
+          "FROM (SELECT * {from_statement}) t GROUP BY {f}) g"
         )
-        0L
+        res = dbGetQuery(conn, check_sql)
+        if (nrow(res) == 1L && isTRUE(as.numeric(res[["bad"]]) == 0)) res[["n"]] else 0L
       }
-    )
+    }, error = function(e) {
+      # Fall back to keeping the FE in K (larger, conservative SEs), but say so
+      warning(
+        "[dbreg] Could not check whether fixed effect '", f, "' is nested in '",
+        cluster_var, "' (", conditionMessage(e), "). Treating it as not nested ",
+        "for the ssc = \"nested\" correction.",
+        call. = FALSE
+      )
+      0L
+    })
     nested_df = nested_df + max(as.numeric(n_levels) - 1, 0)
   }
   nested_df

@@ -99,6 +99,11 @@ Bug fixes
   (including native compound keys and `BIGINT` handling) and `sample_table`
   exports over owned source snapshots with automatic resource cleanup.
 
+- `dbreg()` and `dbivreg()` now share explicit small-sample correction policies
+  (`ssc = "full" | "nested" | "none"` or `fixest::ssc()`-style lists) and
+  consistent cluster/test degrees of freedom across `coeftable`, `vcov()`, and
+  `confint()`.
+
 - Alternating projections no longer fail with an SQL error when a fixed-effect
   or cluster variable also appears as a regressor. Invalid `dbreg.ap_max_iter`
   and `dbreg.ap_tol` options now produce a clear error.

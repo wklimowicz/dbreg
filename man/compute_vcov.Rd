@@ -15,12 +15,15 @@ compute_vcov(
   X = NULL,
   rss_g = NULL,
   meat = NULL,
-  sandwich_bread = NULL
+  sandwich_bread = NULL,
+  ssc = "full"
 )
 }
 \arguments{
 \item{sandwich_bread}{Optional map from moment-score coordinates to source
 coefficients. Unlike the inverse information, it need not be symmetric.}
+
+\item{ssc}{Small-sample policy; see [dbreg()].}
 }
 \description{
 Compute variance-covariance matrix

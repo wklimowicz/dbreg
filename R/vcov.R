@@ -4,6 +4,7 @@
 #' Compute variance-covariance matrix
 #' @param sandwich_bread Optional map from moment-score coordinates to source
 #'   coefficients. Unlike the inverse information, it need not be symmetric.
+#' @param ssc Small-sample policy; see [dbreg()].
 #' @keywords internal
 compute_vcov = function(
   vcov_type = "iid",
@@ -16,8 +17,15 @@ compute_vcov = function(
   X = NULL,
   rss_g = NULL,
   meat = NULL,
-  sandwich_bread = NULL
+  sandwich_bread = NULL,
+  ssc = "full"
 ) {
+  ssc = normalize_ssc(ssc)
+  if (is.null(n_params)) n_params = nobs_orig - df_res
+  if (!is.finite(df_res) || df_res <= 0 || !is.finite(n_params) || n_params < 0 ||
+      (ssc[["K.adj"]] && nobs_orig <= n_params)) {
+    stop("Insufficient residual degrees of freedom.", call. = FALSE)
+  }
   weight_scale = attr(meat, "weight_scale")
   if (is.null(weight_scale)) weight_scale = 1
   if (is.null(sandwich_bread)) sandwich_bread = XtX_inv
@@ -31,7 +39,7 @@ compute_vcov = function(
     if (is.null(meat)) {
       stop("HC1 requires meat matrix for non-compress strategies")
     }
-    scale_hc1 = nobs_orig / df_res
+    scale_hc1 = if (ssc[["K.adj"]]) nobs_orig / (nobs_orig - n_params) else 1
     vcov_mat = as.matrix(scale_hc1 * (sandwich_bread %*% meat %*% t(sandwich_bread)))
     attr(vcov_mat, "type") = "hc1"
   } else if (vcov_type == "cluster") {
@@ -43,18 +51,23 @@ compute_vcov = function(
     if (is.null(n_clusters)) {
       stop("Meat matrix missing n_clusters attribute")
     }
-    if (is.null(n_params)) n_params = ncol(XtX_inv)
+    if (length(n_clusters) != 1L || !is.finite(n_clusters) || n_clusters < 2) stop("Clustered covariance requires at least two clusters.", call. = FALSE)
     # CR1 small-sample correction: (G/(G-1)) * ((N-1)/(N-K)), as in fixest
-    scale_cr1 = (n_clusters / (n_clusters - 1)) * ((nobs_orig - 1) / (nobs_orig - n_params))
+    scale_cr1 = (if (ssc[["G.adj"]]) n_clusters / (n_clusters - 1) else 1) *
+      (if (ssc[["K.adj"]]) (nobs_orig - 1) / (nobs_orig - n_params) else 1)
     vcov_mat = scale_cr1 * (sandwich_bread %*% meat %*% t(sandwich_bread))
     attr(vcov_mat, "type") = "cluster"
     attr(vcov_mat, "n_clusters") = n_clusters
   } else {
     # IID case (same for all strategies)
-    sigma2 = rss / df_res
+    sigma2 = rss / (if (ssc[["K.adj"]]) nobs_orig - n_params else nobs_orig - 1)
     vcov_mat = sigma2 * XtX_inv
     attr(vcov_mat, "type") = "iid"
   }
+  attr(vcov_mat, "n_params") = attr(vcov_mat, "df.K") = n_params
+  attr(vcov_mat, "ssc") = ssc
+  attr(vcov_mat, "df.t") = if (is.numeric(ssc[["t.df"]])) ssc[["t.df"]] else
+    if (vcov_type == "cluster" && ssc[["t.df"]] == "min") n_clusters - 1 else nobs_orig - n_params
   dimnames(vcov_mat) = dimnames(XtX_inv)
   vcov_mat
 }

@@ -15,7 +15,7 @@ dbglm_control(
   projection_method = c("auto", "sql", "duckdb_bounded"),
   compute_inference = TRUE,
   fe_tol = getOption("dbreg.ap_tol", 1e-10),
-  fe_max_iter = 10000L,
+  fe_max_iter = getOption("dbreg.cg_max_iter", 10000L),
   tighten_fe_tol = TRUE
 )
 }
@@ -53,7 +53,8 @@ Set to `FALSE` for intermediate fits that only need fitted predictors.}
 Defaults to \code{getOption("dbreg.ap_tol", 1e-10)}.}
 
 \item{fe_max_iter}{Maximum total inner SQL CG iterations and bounded-moment
-refinement budget per projection. Residual refinements also have an eight-step cap.}
+refinement budget per projection. Residual refinements also have an eight-step cap.
+Defaults to \code{getOption("dbreg.cg_max_iter", 10000L)}.}
 
 \item{tighten_fe_tol}{Tighten projection tolerance to \code{score_tol / 100}.
 Set to \code{FALSE} to preserve a relaxed projection tolerance for intermediate

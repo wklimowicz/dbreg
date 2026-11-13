@@ -24,6 +24,7 @@
 #'   Defaults to \code{getOption("dbreg.ap_tol", 1e-10)}.
 #' @param fe_max_iter Maximum total inner SQL CG iterations and bounded-moment
 #'   refinement budget per projection. Residual refinements also have an eight-step cap.
+#'   Defaults to \code{getOption("dbreg.cg_max_iter", 10000L)}.
 #' @param tighten_fe_tol Tighten projection tolerance to \code{score_tol / 100}.
 #'   Set to \code{FALSE} to preserve a relaxed projection tolerance for intermediate
 #'   fits. Reporting convergence always requires the original strict score gates.
@@ -33,7 +34,8 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
                          step_max_halvings = 25L, collin_tol = 1e-10,
                          tolerate_max_iter = FALSE, irls = c("newton", "fisher"),
                          projection_method = c("auto", "sql", "duckdb_bounded"), compute_inference = TRUE,
-                         fe_tol = getOption("dbreg.ap_tol", 1e-10), fe_max_iter = 10000L,
+                         fe_tol = getOption("dbreg.ap_tol", 1e-10),
+                         fe_max_iter = getOption("dbreg.cg_max_iter", 10000L),
                          tighten_fe_tol = TRUE) {
   controls = list(glm_tol = glm_tol, score_tol = score_tol,
     glm_max_iter = glm_max_iter, step_max_halvings = step_max_halvings,
@@ -85,10 +87,6 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #' @param start Finite starting values, one per identified coefficient. Numerically
 #'   unusable starting predictors are damped toward the default predictor, up to
 #'   \code{control$step_max_halvings} times. Known offsets remain unchanged.
-#' @param sample_table Optional new temporary table receiving fitted original
-#'   keys on a caller-owned connection. Explicit \code{row_id} columns retain
-#'   their native types; otherwise the generated key is named \code{__dbglm_key}.
-#'   The caller owns this table, independently of fitted-object retention.
 #' @param etastart Optional numeric column name or one-sided formula giving
 #'   initial linear predictors, including offsets. The initial predictor is
 #'   projected onto the fitted design using prior weights and takes precedence
@@ -148,17 +146,21 @@ dbglm_control = function(glm_tol = 1e-8, score_tol = 1e-8, glm_max_iter = 100L,
 #'   Fixed-effect groups with small information must also pass their
 #'   Newton-scale group equation; changing a varying axis's units does not weaken
 #'   this guard.
+#' @param sample_table Optional new temporary table receiving fitted source keys.
+#' @param cluster Optional cluster variable for clustered standard errors, as a
+#'   character column name or one-sided formula.
 #' @export
 dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
                  family = stats::gaussian(), weights = NULL, offset = NULL,
-                 factor_refs = NULL, vcov = "iid", ssc = NULL, start = NULL,
-                 control = dbglm_control(), verbose = FALSE,
+                 factor_refs = NULL, vcov = "iid", ssc = "full", start = NULL,
+                 control = dbglm_control(), verbose = getOption("dbreg.verbose", FALSE),
                  separation = c("error", "prediction"), subset = NULL,
                  null_model = FALSE,
                  fixef_rm = c("perfect_fit", "singletons", "infinite_coef", "none"),
                  strategy = c("auto", "compress", "moments"),
                  compress_ratio = NULL, compress_nmax = 1e6,
-                 retain = c("none", "prediction", "inference", "all"), row_id = NULL, etastart = NULL, sample_table = NULL) {
+                 retain = c("none", "prediction", "inference", "all"), row_id = NULL, etastart = NULL, sample_table = NULL,
+                 cluster = NULL) {
   retain = match.arg(retain)
   source = normalize_data_source(table, data, path)
   table = source[["table"]]
@@ -203,7 +205,7 @@ dbglm = function(fml, conn = NULL, table = NULL, data = NULL, path = NULL,
     stop("`vcov` must name one covariance type or cluster column.", call. = FALSE)
   }
   if (inherits(vcov, "formula")) formula_column(vcov, "vcov")
-  covariance = parse_vcov_args(vcov)
+  covariance = parse_vcov_args(vcov, cluster)
   ssc = normalize_ssc(ssc)
   spec = dbglm_formula_spec(fml, factor_refs)
   fml = spec[["formula"]]
@@ -835,7 +837,7 @@ dbglm_estimate = function(conn, sample, family, control, start, covariance,
 #' @rdname predict.dbreg
 #' @param type Linear predictor (default) or response mean.
 #' @export
-predict.dbglm = function(object, newdata, type = c("link", "response"), ...,
+predict.dbglm = function(object, newdata = NULL, type = c("link", "response"), ...,
                          conn = NULL, table = NULL, path = NULL, row_id = NULL, prediction_table = NULL,
                          sample = c("estimation", "original")) {
   check_unused_args(list(...))

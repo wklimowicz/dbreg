@@ -15,10 +15,10 @@ dbglm(
   offset = NULL,
   factor_refs = NULL,
   vcov = "iid",
-  ssc = NULL,
+  ssc = "full",
   start = NULL,
   control = dbglm_control(),
-  verbose = FALSE,
+  verbose = getOption("dbreg.verbose", FALSE),
   separation = c("error", "prediction"),
   subset = NULL,
   null_model = FALSE,
@@ -29,7 +29,8 @@ dbglm(
   retain = c("none", "prediction", "inference", "all"),
   row_id = NULL,
   etastart = NULL,
-  sample_table = NULL
+  sample_table = NULL,
+  cluster = NULL
 )
 }
 \arguments{
@@ -91,10 +92,10 @@ initial linear predictors, including offsets. The initial predictor is
 projected onto the fitted design using prior weights and takes precedence
 over `start`. Missing or nonfinite starting values omit their rows.}
 
-\item{sample_table}{Optional new temporary table receiving fitted original
-keys on a caller-owned connection. Explicit \code{row_id} columns retain
-their native types; otherwise the generated key is named \code{__dbglm_key}.
-The caller owns this table, independently of fitted-object retention.}
+\item{sample_table}{Optional new temporary table receiving fitted source keys.}
+
+\item{cluster}{Optional cluster variable for clustered standard errors, as a
+character column name or one-sided formula.}
 }
 \value{
 A fitted `dbglm` object.

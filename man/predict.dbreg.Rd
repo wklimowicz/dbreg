@@ -7,7 +7,7 @@
 \usage{
 \method{predict}{dbglm}(
   object,
-  newdata,
+  newdata = NULL,
   type = c("link", "response"),
   ...,
   conn = NULL,

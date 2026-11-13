@@ -48,3 +48,8 @@ globalVariables(c(
   "yvar",
   "z_all_names"
 ))
+
+# Fields bound from a prepared FE source through env2env().
+utils::globalVariables(c("columns", "create", "fe_columns", "id_columns", "ids",
+  "limits", "nobs", "original_scale", "q", "resources", "scale", "sizes",
+  "source", "centered", "vars", "weight_scale"))

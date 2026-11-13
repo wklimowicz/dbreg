@@ -25,17 +25,41 @@
 #'   cross-products share the transfer/memory caps; near-absorption cancellation
 #'   triggers an actual projected-product aggregate. Numerical/capacity declines
 #'   retain ordinary AP fallback and the unchanged row certificates.
-#'   Auto tries bounded moments unless `dbreg.ap_method` is explicitly set.
+#'   Auto tries bounded moments unless `dbreg.ap_method` or the DuckDB method
+#'   below is explicitly set.
+#'   For DuckDB with three or more FE families, auto next tries coefficient-space
+#'   SQL CG after a bounded-moment decline. FE vectors stay in SQL and R reads
+#'   only bounded scalar diagnostics. Databricks additive fits retain ordinary
+#'   window AP fallback. Explicit moments/iterative/method choices keep their
+#'   existing policy. SQL CG also covers more than 30 FE families.
 #'   Moments also tries them with an explicit method; an expected decline uses
 #'   iterative AP. Iterative bypasses the bounded solver. SQL-only output shows
 #'   the equivalent ordinary AP plan.
+#' - `dbreg.duckdb_ap_method`: DuckDB-specific `"join"` (default) or
+#'   `"cg"`. Explicit join selects ordinary AP. Explicit cg for two additive
+#'   FE families tries the shared bounded sparse Schur PCG solver before AP,
+#'   including with ap_solver="iterative"; ap_solver="moments" takes precedence.
+#'   Auto also tries this representation after a two-family moment decline.
+#'   It honors all canonical cross-block/transfer/design/memory/upload caps,
+#'   keeps typed keys in SQL, and retains the same independent row certificate.
+#'   Each PCG solve uses the per-fit fe_max_iter budget; reported inner work
+#'   includes refinement solves. Expected declines retain ordinary AP fallback.
+#'   Other backends ignore this DuckDB-specific option.
+#' - `dbreg.cg_max_iter`: Maximum inner SQL CG iterations; default 10000.
+#' - `dbreg.cg_restart`: Recompute and restart the coefficient-space direction
+#'   every this many inner iterations; default 500. Both CG options must be
+#'   positive whole numbers. These inner controls are separate from per-fit
+#'   `fe_max_iter`/ordinary AP cycles. Reported solver iterations are actual CG
+#'   work, including retries; restarts and peak live owned tables are recorded.
+#'   CG rows must pass the unchanged absolute/RMS, finite and count certificate.
 #' - `dbreg.projection_max_bytes`: Planned matrix/buffer budget; default 1 GiB.
 #'   This bounds representations and allocations, not process peak RSS.
-#' - `dbreg.projection_max_rows`: Cumulative marginal/pair summary rows;
+#' - `dbreg.projection_max_rows`: Cumulative marginal/pair summary rows or CG diagnostic rows;
 #'   default `floor(dbreg.projection_max_bytes / 512)`.
 #' - `dbreg.projection_max_entries`: FE-level by design entries; default 2e6.
 #' - `dbreg.projection_max_cells`: Cumulative decoded scalar cells, including
-#'   overflow probes; default 16e6. SQL LIMIT probes enforce runtime caps.
+#'   overflow probes or CG scalar diagnostics; default 16e6. SQL LIMIT probes
+#'   enforce summary caps; CG reserves diagnostics before query dispatch.
 #' - `dbreg.projection_max_upload_bytes`: Coefficient SQL byte budget;
 #'   default 8 MiB, also bounded by one eighth of the matrix/buffer budget.
 #' - `dbreg.databricks_packet_bytes`: Target uncompressed summary packet bytes;

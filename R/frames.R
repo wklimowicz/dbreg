@@ -103,7 +103,7 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     inputs[["projection_diagnostics"]] = bound[["inputs"]][["projection_diagnostics"]]
     inputs[["projection_limits"]] = bound[["inputs"]][["projection_limits"]]
     names(ap_res[["original_scale"]]) = vars
-    inputs[["ap_diagnostics"]] = ap_res[c("iterations", "accelerated_steps", "max_abs", "max_relative", "method", "transfer_cells", "summary_rows", "upload_bytes", "estimated_bytes", "solver", "solver_iterations", "preconditioner", "transport", "summary_statements", "wire_rows", "wire_bytes", "observation_tables", "transformed_observation_tables", "moment_method", "fwl_recomputed")]
+    inputs[["ap_diagnostics"]] = ap_res[intersect(c("iterations", "accelerated_steps", "max_abs", "max_relative", "method", "transfer_cells", "summary_rows", "upload_bytes", "estimated_bytes", "solver", "solver_iterations", "preconditioner", "transport", "summary_statements", "wire_rows", "wire_bytes", "observation_tables", "transformed_observation_tables", "moment_method", "fwl_recomputed", "peak_tables", "cg_restarts", "cg_retries"), names(ap_res))]
     ap_tables = c(ap_res[["table"]], ap_res[["base_table"]])
     cleanup = if (!is.null(ap_res[["resources"]])) function() release_fit_resources(ap_res[["resources"]]) else function() {
       backend = detect_backend(conn)[["name"]]

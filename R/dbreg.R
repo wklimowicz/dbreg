@@ -904,11 +904,35 @@ dbreg_alternating_projections = function(
     stop("dbreg.ap_solver must be auto, moments or iterative.", call. = FALSE)
   }
   inputs[["projection_limits"]] = projection_limits()
-  explicit_method = !is.null(getOption("dbreg.ap_method"))
+  if (backend == "duckdb") {
+    method = getOption("dbreg.duckdb_ap_method", "join")
+    if (!is.character(method) || length(method) != 1L || is.na(method) || !method %in% c("join", "cg")) {
+      stop("dbreg.duckdb_ap_method must be join or cg.", call. = FALSE)
+    }
+    if (method == "cg" && length(fe) == 2L && solver != "moments") {
+      attempt = projection_attempt("bounded_pcg", dbreg_moment_projections(inputs, xvars_sql, xvar_names, max_iter, tol,
+        materialize = FALSE, two_family_pcg = TRUE))
+      projected = record_projection_attempt(inputs, attempt)
+      if (!is.null(projected)) return(projected)
+    }
+  }
+  explicit_method = !is.null(getOption("dbreg.ap_method")) ||
+    (backend == "duckdb" && !is.null(getOption("dbreg.duckdb_ap_method")))
   if (solver == "moments" || (solver == "auto" && !explicit_method)) {
     attempt = projection_attempt("bounded_moments", dbreg_moment_projections(inputs, xvars_sql, xvar_names, max_iter, tol, materialize = FALSE))
     projected = record_projection_attempt(inputs, attempt)
     if (!is.null(projected)) return(projected)
+    if (solver == "auto" && !explicit_method && backend == "duckdb" && length(fe) >= 3L) {
+      attempt = projection_attempt("sql_cg", dbreg_cg_projections(inputs, xvars_sql, xvar_names, tol))
+      projected = record_projection_attempt(inputs, attempt)
+      if (!is.null(projected)) return(projected)
+    }
+    if (solver == "auto" && !explicit_method && backend == "duckdb" && length(fe) == 2L) {
+      attempt = projection_attempt("bounded_pcg", dbreg_moment_projections(inputs, xvars_sql, xvar_names, max_iter, tol,
+        materialize = FALSE, two_family_pcg = TRUE))
+      projected = record_projection_attempt(inputs, attempt)
+      if (!is.null(projected)) return(projected)
+    }
   }
   use_windows = ap_method(backend) == "window"
   batch_size = 1L

@@ -33,6 +33,9 @@ New features
   certified fallback to iterative AP.
 - Added native tuple-identity composite fixed effects (`fe1^fe2`,
   `fe1:fe2`) across OLS, IV, and prediction (`R/composite-fe.R`).
+- Added bounded two-family DuckDB projection through the shared Schur solver
+  and bounded coefficient-space SQL conjugate-gradient fallback (`R/fe-cg.R`)
+  for general DuckDB fixed effects.
 - Added `dbivreg()` for instrumental-variables (2SLS) regression on database
   backends. Uses `fixest`-style IV formulas, e.g. `y ~ x | d ~ z` or
   `y ~ x | fe1 + fe2 | d ~ z`, and supports multiple endogenous regressors,

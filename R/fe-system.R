@@ -112,10 +112,10 @@ fe_dense_feasible = function(op_sizes, columns = 1L, limits = projection_limits(
 
 # info: per-op list(id, h); pairs: list of list(i, j, ir, jr, h) with local
 # level indices into info[[i]]$id and info[[j]]$id.
-fe_system = function(info, pairs) {
+fe_system = function(info, pairs, limits = projection_limits()) {
   sizes = vapply(info, function(x) length(x[["id"]]), integer(1))
   n_edges = sum(vapply(pairs, function(pair) length(pair[["h"]]), integer(1)))
-  if (!fe_dense_feasible(sizes, n_edges = n_edges)) return(NULL)
+  if (!fe_dense_feasible(sizes, n_edges = n_edges, limits = limits)) return(NULL)
   starts = cumsum(c(0L, sizes))
   n = starts[length(info) + 1L]
   a = which.max(sizes)
@@ -235,8 +235,9 @@ fe_sparse_solver = function(sys, S, scaled, cache, retain_null) {
       b = pre[["project"]](r2 / pre[["root"]])
       tol = 1e-12 * pmax(apply(abs(b), 2L, max), .Machine[["double.xmin"]])
       solved = fe_pcg(function(v) v - pre[["walk"]](v), b, pre[["precondition"]], pre[["project"]],
-        function(r) apply(abs(r), 2L, max) / tol, 1, 2000L)
-      if (is.null(solved)) projection_abort("singular", "Fixed-effect CG solve broke down.")
+        function(r) apply(abs(r), 2L, max) / tol, 1,
+        if (is.null(cache[["pcg_max_iter"]])) 2000L else cache[["pcg_max_iter"]])
+      if (is.null(solved)) projection_abort("nonconverged", "Fixed-effect CG solve broke down or exhausted its iteration budget.")
       stats[["iterations"]] = stats[["iterations"]] + solved[["iterations"]]
       x2 = solved[["x"]] / pre[["root"]]
       out = matrix(0, sys[["n"]], ncol(rhs))
@@ -289,7 +290,8 @@ fe_sparse_solver = function(sys, S, scaled, cache, retain_null) {
   null_q = NULL
   if (retain_null) {
     count = max(components)
-    if (8 * sys[["n"]] * count > projection_limits()[["memory_bytes"]]) {
+    mem_limit = if (is.null(cache[["projection_limits"]])) projection_limits()[["memory_bytes"]] else cache[["projection_limits"]][["memory_bytes"]]
+    if (8 * sys[["n"]] * count > mem_limit) {
       projection_abort("system_limit", "Fixed-effect null basis exceeds the prediction memory budget.")
     }
     null_q = matrix(0, sys[["n"]], count)
@@ -356,7 +358,8 @@ fe_solver = function(sys, cache, retain_null = FALSE) {
   scaled_null_q = NULL
   information_scale = sqrt(pmax(sys[["diag"]], .Machine[["double.xmin"]]))
   if (length(dropped)) {
-    if (32 * sys[["n"]] * length(dropped) > projection_limits()[["memory_bytes"]]) {
+    mem_limit = if (is.null(cache[["projection_limits"]])) projection_limits()[["memory_bytes"]] else cache[["projection_limits"]][["memory_bytes"]]
+    if (32 * sys[["n"]] * length(dropped) > mem_limit) {
       projection_abort("system_limit", "Fixed-effect null projection exceeds its memory budget.")
     }
     v2 = matrix(0, length(sys[["rest"]]), length(dropped))
@@ -367,11 +370,11 @@ fe_solver = function(sys, cache, retain_null = FALSE) {
     V = matrix(0, sys[["n"]], length(dropped))
     V[sys[["rest"]], ] = v2
     V[sys[["big"]], ] = -as.matrix(scaled %*% v2)
-    if (retain_null) null_q = qr.Q(qr(V))
+    if (retain_null) null_q = qr.Q(qr(V, LAPACK = TRUE))
     # Remove SQL roundoff in information-scaled coordinates. An unscaled
     # projection can move O(eps) from a large group into an O(1e-20) equation,
     # corrupting that group's learned effect by many orders of magnitude.
-    scaled_null_q = qr.Q(qr(information_scale * V))
+    scaled_null_q = qr.Q(qr(information_scale * V, LAPACK = TRUE))
   }
   solve = function(rhs) {
     r1 = rhs[sys[["big"]], , drop = FALSE]
@@ -409,17 +412,27 @@ fe_pcg = function(apply_op, rhs, precondition, project, residuals, tol, max_iter
     alpha[active] = rz[active] / denominator[active]
     if (any(!is.finite(alpha))) return(NULL)
     x = project(x + sweep(direction, 2L, alpha, "*"))
-    r = project(rhs - apply_op(x))
+    r = project(r - sweep(product, 2L, alpha, "*"))
     current = residuals(r)
     iterations = iter
     if (!is.null(trace)) trace(iter, max(current))
-    if (all(is.finite(current)) && max(current) <= tol) break
+    refreshed = FALSE
+    if (all(is.finite(current)) && max(current) <= tol) {
+      r = project(rhs - apply_op(x))
+      current = residuals(r)
+      if (all(is.finite(current)) && max(current) <= tol) break
+      refreshed = TRUE
+    }
     z = project(precondition(r))
     new_rz = colSums(r * z)
-    beta = numeric(ncol(rhs))
-    beta[active] = new_rz[active] / rz[active]
-    if (any(!is.finite(beta))) return(NULL)
-    direction = project(z + sweep(direction, 2L, beta, "*"))
+    if (refreshed) {
+      direction = z
+    } else {
+      beta = numeric(ncol(rhs))
+      beta[active] = new_rz[active] / rz[active]
+      if (any(!is.finite(beta))) return(NULL)
+      direction = project(z + sweep(direction, 2L, beta, "*"))
+    }
     rz = new_rz
   }
   if (!all(is.finite(current)) || max(current) > tol) return(NULL)

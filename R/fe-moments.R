@@ -110,12 +110,12 @@ fe_projection_certificate = function(conn, table, fe, columns, nobs, original_sc
   list(max_abs = max(residual), max_level = max(residual / pmax(1, original_scale)), max_relative = if (any(identified)) max(residual[identified] / rms[identified]) else 0)
 }
 
-# This result implements the AP frame contract, including owned-table cleanup.
-dbreg_moment_projections = function(inputs, x_sql, x_names, max_iter, tol, materialize = TRUE) {
+# Prepare one native-key source shared by bounded moments and SQL CG.
+prepare_fe_projection = function(inputs, x_sql, x_names, materialize = TRUE, coefficient_cg = FALSE) {
   conn = inputs[["conn"]]
   fe = inputs[["fe"]]
   backend = detect_backend(conn)
-  if (!(backend[["name"]] == "duckdb" || isTRUE(backend[["is_databricks"]])) || length(fe) < 2L || length(fe) > 30L) return(NULL)
+  if (!(backend[["name"]] == "duckdb" || isTRUE(backend[["is_databricks"]])) || length(fe) < 2L || (!coefficient_cg && length(fe) > 30L)) return(NULL)
   validate_native_temp_query(conn, backend)
   limits = inputs[["projection_limits"]]
   if (is.null(limits)) limits = projection_limits()
@@ -154,8 +154,10 @@ dbreg_moment_projections = function(inputs, x_sql, x_names, max_iter, tol, mater
       any(sizes < 1) || any(vapply(stats[paste0("bad", seq_along(fe))], as.numeric, numeric(1)) > 0)) {
     projection_abort("singular", "Fixed-effect snapshot has invalid values or keys.")
   }
-  if (sum(sizes) > .Machine[["integer.max"]] - 1 || sum(sizes) * length(columns) > limits[["design_entries"]] ||
-      !fe_dense_feasible(sizes, length(columns), limits)) {
+  # CG budgets sixteen double-sized vector/buffer slots per coefficient cell;
+  # observation-sized working tables stay in SQL. Moments also plans its Schur.
+  feasible = if (coefficient_cg) 128 * sum(sizes) * length(columns) <= limits[["memory_bytes"]] else fe_dense_feasible(sizes, length(columns), limits)
+  if (sum(sizes) > .Machine[["integer.max"]] - 1 || sum(sizes) * length(columns) > limits[["design_entries"]] || !feasible) {
     projection_abort("system_limit", "Fixed-effect system exceeds its projection budget.", list(fe_sizes = sizes, columns = length(columns), limits = limits))
   }
   dictionaries = vapply(seq_along(fe), function(i) paste0(" JOIN (SELECT ", fe_ids[i], ",ROW_NUMBER() OVER (ORDER BY ", fe_ids[i], ") AS ", fe_columns[i],
@@ -170,15 +172,35 @@ dbreg_moment_projections = function(inputs, x_sql, x_names, max_iter, tol, mater
     paste0("(", units, "-(", sprintf("%.17e", centers), ")) AS ", columns),
     paste0("d", seq_along(fe), ".", fe_columns)), collapse = ","), " FROM ", source, " s", paste(dictionaries, collapse = "")),
     c(id_columns, "raw_w", "w", columns, fe_columns))
+  success = TRUE
+  mget(c("conn","fe","limits","resources","snapshot","create","q","vars","columns","ids","id_columns","fe_columns","sizes","original_scale","scale","nobs","weight_scale","source","centered"), envir = environment(), inherits = FALSE)
+}
+
+# This result implements the AP frame contract, including owned-table cleanup.
+dbreg_moment_projections = function(inputs, x_sql, x_names, max_iter, tol, materialize = TRUE, two_family_pcg = FALSE) {
+  if (two_family_pcg) {
+    if (length(inputs[["fe"]]) != 2L || detect_backend(inputs[["conn"]])[["name"]] != "duckdb") return(NULL)
+    # A per-call copy selects the shared sparse Schur operator. User transfer,
+    # cross-block, design, upload and memory caps stay authoritative.
+    inputs = list2env(as.list(inputs), parent = emptyenv())
+    if (is.null(inputs[["projection_limits"]])) inputs[["projection_limits"]] = projection_limits()
+    inputs[["projection_limits"]][["dense_levels"]] = 0
+  }
+  prepared = prepare_fe_projection(inputs, x_sql, x_names, materialize)
+  if (is.null(prepared)) return(NULL)
+  env2env(prepared, environment(), names(prepared))
+  success = FALSE
+  on.exit(if (!success) release_fit_resources(resources))
   budget = list2env(list(rows = 0, cells = 0, upload_bytes = 0), parent = emptyenv())
   summaries = query_fe_summaries(conn, centered, fe_columns, columns, sizes, budget, limits)
   info = summaries[["info"]]
   pairs = summaries[["pairs"]]
-  sys = fe_system(info, pairs)
+  sys = fe_system(info, pairs, limits)
   if (is.null(sys)) projection_abort("system_limit", "Fixed-effect matrix exceeds its projection budget.")
   if (any(!is.finite(sys[["diag"]])) || any(sys[["diag"]] <= 0)) projection_abort("singular", "Nonpositive fixed-effect group weights.")
   B = do.call(rbind, lapply(info, `[[`, "b"))
   cache = new.env(parent = emptyenv()); cache[["projection_limits"]] = limits
+  if (two_family_pcg) cache[["pcg_max_iter"]] = max_iter
   solver = fe_solver(sys, cache)
   B = solver[["project"]](B)
   coefficients = solver[["solve"]](B)
@@ -215,9 +237,9 @@ dbreg_moment_projections = function(inputs, x_sql, x_names, max_iter, tol, mater
     fwl_recomputed = if (materialize) FALSE else attr(moments, "fwl_recomputed"),
     original_scale = setNames(original_scale, vars),
     iterations = cycle, accelerated_steps = 0L, max_abs = certificate[["max_abs"]], max_relative = certificate[["max_relative"]],
-    method = "bounded_moments", transfer_cells = budget[["cells"]], summary_rows = budget[["rows"]], upload_bytes = budget[["upload_bytes"]],
+    method = if (two_family_pcg) "bounded_pcg" else "bounded_moments", transfer_cells = budget[["cells"]], summary_rows = budget[["rows"]], upload_bytes = budget[["upload_bytes"]],
     transport = summaries[["transport"]], summary_statements = summaries[["statements"]], wire_rows = summaries[["wire_rows"]], wire_bytes = summaries[["wire_bytes"]],
-    estimated_bytes = projection_memory(sizes, length(columns)), solver = solver[["method"]],
+    estimated_bytes = projection_memory(sizes, length(columns), limits = limits), solver = solver[["method"]],
     solver_iterations = solver[["stats"]][["iterations"]], preconditioner = solver[["preconditioner"]])
 }
 

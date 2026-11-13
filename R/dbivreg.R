@@ -18,6 +18,10 @@
 #'   when fixed effects are present. The IV block must always be the final
 #'   pipe-separated block. Regressors and instruments can include interactions
 #'   and `fixest`-style `i()` terms (see [sql_model_matrix()]).
+#'   The fixed-effects block also accepts column-name tuples such as
+#'   `school^year + teacher`. DuckDB/native Databricks preserve native typed
+#'   tuple identity in an owned snapshot; missing components are filtered before
+#'   ranking, and original row keys remain available for sample exports.
 #' @param conn Database connection, or `NULL` to create an ephemeral DuckDB
 #'   connection.
 #' @param table,data,path Data source arguments with precedence `table > data > path`.
@@ -269,6 +273,16 @@ process_dbivreg_inputs = function(inputs) {
     conn = conn
   )
 
+  inputs[["fe_components"]] = parsed_fml[["fe_components"]]
+  composite = prepare_composite_fe(inputs, from_statement, parsed_fml[["fe_components"]])
+  from_statement = composite[["from"]]
+  fe = composite[["fe"]]
+  inputs[["composite_fes"]] = composite[["specs"]]
+  inputs[["composite_types"]] = composite[["types"]]
+  if (length(composite[["specs"]])) {
+    parsed_fml[["fe_rhs_text"]] = paste(vapply(fe, function(x) paste(deparse(as.name(x), backtick = TRUE), collapse = ""), character(1)), collapse = "+")
+    inputs[["name_map"]] = c(inputs[["name_map"]], setNames(fe_component_labels(lapply(composite[["specs"]], restore_names, map = inputs[["source_map"]])), names(composite[["specs"]])))
+  }
   design_source = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
   intercept = parsed_fml[["intercept"]]
   reserved = unique(c(raw_vars, yvar, fe, weights, cluster_var, inputs[["offset_safe"]], inputs[["row_id_safe"]]))
@@ -756,18 +770,10 @@ dbivreg_parse_formula = function(fml) {
 
   fe = NULL
   fe_rhs_text = NULL
+  fe_components = list()
   if (length(blocks) == 3L) {
-    fe_rhs = rhs(blocks[[2]])
-    fe_terms = attr(terms(fe_rhs), "term.labels")
-    fe_vars = all.vars(fe_rhs)
-    if (!length(fe_terms)) {
-      stop("Fixed-effects block cannot be empty.")
-    }
-    plain = vapply(fe_terms, function(term) is.name(str2lang(term)), logical(1))
-    if (length(fe_terms) != length(fe_vars) || !all(plain)) {
-      stop("Fixed effects must be specified as simple additive variable names.")
-    }
-    fe = unique(fe_vars)
+    fe_components = parse_fe_components(blocks[[2]])
+    fe = unique(unlist(fe_components, use.names = FALSE))
     fe_rhs_text = text(blocks[[2]])
   }
   # With FE the intercept is absorbed, so `- 1` / `0 +` only matters without FE
@@ -788,6 +794,7 @@ dbivreg_parse_formula = function(fml) {
     instr_vars = model_vars(instr_expr),
     fe = fe,
     fe_rhs_text = fe_rhs_text,
+    fe_components = fe_components,
     intercept = intercept
   )
 }

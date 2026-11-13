@@ -368,7 +368,7 @@ query_cluster_cells = function(inputs, from_statement, group_cols, y_center = 0,
     from_statement, "\n",
     "GROUP BY ", group_cols_sql
   )
-  cells = read_keyed_query(conn, sql, unique(c(cluster_var, group_cols)))
+  cells = read_keyed_query(conn, sql, unique(c(cluster_var, group_cols)), integer_text = inputs[["composite_integer_keys"]])
   fields = c("sum_w_gc", "sum_wy_gc")
   cells[fields] = lapply(cells[fields], as.numeric)
   cells

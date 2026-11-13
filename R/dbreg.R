@@ -19,6 +19,18 @@
 #' literal regressors are rejected. Treatment coding is fixed at estimation and retained for R
 #' prediction; changing global contrast options does not recode a fitted model.
 #' An intercept-only model (`y ~ 1`) is supported without fixed effects.
+#'   Fixed effects accept native tuples such as `school^year`, combined with
+#'   additive families (`school^year + teacher`). Components must be source
+#'   column names. DuckDB/native Databricks fits freeze tuple ranks in an owned
+#'   snapshot and filter missing components before ranking. Tuple identity is
+#'   independent of delimiters and numeric casts. Compressed prediction stores
+#'   a bounded training-tuple dictionary under the projection row/cell/memory
+#'   limits; individual key strings must stay below 65535 bytes. Compressed raw newdata
+#'   must provide all components, with integer64 or exact decimal strings for
+#'   BIGINT values beyond double precision. Unknown training tuples produce NA.
+#'   In compressed output, source components that conflict with count/moment
+#'   fields get separate `_source` names; the `dbreg_source_columns` attribute
+#'   records their actual columns. Counts and raw key values remain distinct.
 #' @param conn Database connection, e.g. created with
 #' \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
 #' ephemeral (in-memory). If no connection is provided, then an ephemeral
@@ -591,6 +603,16 @@ process_dbreg_inputs = function(inputs) {
     drop_missings = drop_missings,
     conn = conn
   )
+  inputs[["fe_components"]] = fml_parsed[["fe_components"]]
+  composite = prepare_composite_fe(inputs, from_statement, fml_parsed[["fe_components"]])
+  from_statement = composite[["from"]]
+  fe = composite[["fe"]]
+  inputs[["composite_fes"]] = composite[["specs"]]
+  inputs[["composite_types"]] = composite[["types"]]
+  if (length(composite[["specs"]])) {
+    fml = replace_fe_formula(fml, fe)
+    name_map = c(name_map, setNames(fe_component_labels(lapply(composite[["specs"]], restore_names, map = source_map)), names(composite[["specs"]])))
+  }
   if (identical(inputs[["fixef_rm"]], "singletons") && length(fe)) {
     pruned = linear_prune_singletons(inputs, from_statement, fe, yvar)
     from_statement = paste("FROM", pruned[["table"]])
@@ -1249,6 +1271,12 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   if (inputs[["data_only"]]) {
     return(result)
   }
+  result[["fe_components"]] = lapply(inputs[["fe_components"]], function(x) unname(restore_names(x, inputs[["source_map"]])))
+  result[["fe_component_types"]] = lapply(inputs[["fe_components"]], function(columns) {
+    at = which(vapply(inputs[["composite_fes"]], identical, logical(1), columns))
+    if (length(at)) inputs[["composite_types"]][[at[1L]]] else NULL
+  })
+  result[["composite_dictionaries"]] = inputs[["composite_dictionaries"]]
   result = finalize_linear_layout(result, inputs)
   result = finalize_sample_diagnostics(result, inputs)
   if (!is.null(inputs[["offset"]])) {

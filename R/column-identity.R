@@ -49,7 +49,8 @@ sql_design_reserved = function(inputs) {
 linear_recipe_label = function(recipe) {
   variable = recipe[["variable"]]
   kind = recipe[["kind"]]
-  source = if (is.null(variable)) NULL else coef_var_name(variable)
+  display_variable = if (is.null(recipe[["display_variable"]])) variable else recipe[["display_variable"]]
+  source = if (is.null(variable)) NULL else coef_var_name(display_variable)
   if (isTRUE(recipe[["factor"]])) source = paste0("factor(", source, ")")
   if (kind == "power") return(paste0("I(", coef_var_name(variable), "^", recipe[["exponent"]], ")"))
   if (kind %in% c("raw", "numeric")) {
@@ -83,7 +84,7 @@ linear_recipe_label = function(recipe) {
     ))
   }
   if (kind == "mean") {
-    return(paste0(linear_recipe_label(recipe[["source"]]), "_bar_", variable))
+    return(paste0(linear_recipe_label(recipe[["source"]]), "_bar_", display_variable))
   }
   stop("Unknown fitted column recipe.", call. = FALSE)
 }
@@ -248,6 +249,8 @@ finalize_linear_layout = function(result, inputs) {
     restore_recipe_sources,
     map = inputs[["source_map"]]
   )
+  columns[["recipe"]] = lapply(columns[["recipe"]], composite_recipe_metadata,
+    specs = inputs[["composite_fes"]], map = inputs[["source_map"]], types = inputs[["composite_types"]])
   columns[["label"]] = vapply(
     columns[["recipe"]],
     linear_recipe_label,
@@ -419,7 +422,7 @@ linear_recipe_value = function(recipe, data, dictionaries = list(), weights = NU
     if (!is.null(recipe[["center"]])) value = value - recipe[["center"]]
     return(weighted_group_mean(
       value,
-      column(variable), weights
+      if (is.null(recipe[["components"]])) column(variable) else composite_key(data, recipe[["components"]], recipe[["key_types"]]), weights
     ))
   }
   stop("Unknown fitted column recipe.", call. = FALSE)

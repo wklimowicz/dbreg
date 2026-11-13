@@ -332,15 +332,10 @@ parse_regression_formula = function(fml, allow_empty = FALSE) {
     stop("No regressors on RHS.")
   }
   
-  # Extract fixed effects (RHS part 2, after |)
-  fe = if (length(fml)[2] > 1) {
-    fe_rhs = formula(fml, lhs = 0, rhs = 2)
-    check_simple_terms(attr(terms(fe_rhs), "term.labels"), "fixed effects", allow_interactions = FALSE)
-    all.vars(fe_rhs)
-  } else {
-    NULL
-  }
-  
+  # Parse source tuples independently of R's numeric-power formula operator.
+  fe_components = if (length(fml)[2] > 1L) parse_fe_components(formula(fml, lhs = 0, rhs = 2)[[2L]]) else list()
+  fe = if (length(fe_components)) unique(unlist(fe_components, use.names = FALSE)) else NULL
+
   list(
     fml = fml,
     yvar = yvar,
@@ -348,7 +343,8 @@ parse_regression_formula = function(fml, allow_empty = FALSE) {
     term_labels = term_labels,
     has_interactions = has_interactions,
     has_intercept = has_intercept,
-    fe = fe
+    fe = fe,
+    fe_components = fe_components
   )
 }
 
@@ -588,6 +584,10 @@ coef_var_name = function(v) ifelse(make.names(v) == v, v, paste0("`", v, "`"))
 #' @keywords internal
 restore_result_names = function(result, inputs) {
   map = inputs[["name_map"]]
+  specs = inputs[["composite_fes"]]
+  if (length(specs) && !is.null(result[["fml"]]) && !is.data.frame(result)) {
+    result[["fml"]] = restore_composite_formula(result[["fml"]], specs)
+  }
   if (!length(map)) {
     return(result)
   }
@@ -596,8 +596,9 @@ restore_result_names = function(result, inputs) {
   is_var = names(coef_map) %in% names(inputs[["source_map"]])
   coef_map[is_var] = coef_var_name(coef_map[is_var])
   if (is.data.frame(result)) {
-    names(result) = restore_names(names(result), map)
-    return(result)
+    data_map = map[!names(map) %in% c(names(specs), names(inputs[["composite_rhs_aliases"]]))]
+    names(result) = restore_names(names(result), data_map)
+    return(restore_composite_cell_names(result, inputs))
   }
   if (!is.null(result[["coeftable"]])) {
     rownames(result[["coeftable"]]) = restore_names(rownames(result[["coeftable"]]), coef_map)
@@ -615,7 +616,9 @@ restore_result_names = function(result, inputs) {
     names(result[["n_fe_levels"]]) = restore_names(names(result[["n_fe_levels"]]), map)
   }
   if (is.data.frame(result[["data"]])) {
-    names(result[["data"]]) = restore_names(names(result[["data"]]), map)
+    data_map = map[!names(map) %in% c(names(specs), names(inputs[["composite_rhs_aliases"]]))]
+    names(result[["data"]]) = restore_names(names(result[["data"]]), data_map)
+    result[["data"]] = restore_composite_cell_names(result[["data"]], inputs)
   }
   for (d in c("first_stage_f", "first_stage_wald")) {
     if (!is.null(names(result[["diagnostics"]][[d]]))) {
@@ -1062,8 +1065,16 @@ drop_table_if_exists = function(conn, table_name, backend) {
 # designs intentionally collect numeric grouping columns for arithmetic. Only
 # identity reads opt into DECIMAL/wide-integer text transport. Keep the original
 # large-BIGINT integer64 contract for ordinary grouped reads.
-read_keyed_query = function(conn, sql, keys, exact_keys = FALSE) {
+read_keyed_query = function(conn, sql, keys, integer_text = character(), exact_keys = FALSE) {
   backend = detect_backend(conn)
+  if (length(integer_text)) {
+    names = names(DBI::dbGetQuery(conn, sql_limit(sql, 0, backend[["name"]])))
+    quoted = as.character(DBI::dbQuoteIdentifier(conn, names))
+    positions = which(names %in% integer_text)
+    selected = quoted
+    selected[positions] = paste(sql_cast_text(conn, quoted[positions], backend), "AS", quoted[positions])
+    sql = paste0("SELECT ", paste(selected, collapse = ","), " FROM (", sql, ") dbreg_typed_components")
+  }
   data = dbGetQuery(conn, sql)
   if (!backend[["name"]] %in% c("duckdb", "spark") || !nrow(data) ||
       (!exact_keys && backend[["name"]] != "duckdb")) return(data)

@@ -43,7 +43,7 @@ weighted_group_mean = function(x, group, weights = NULL) {
 
 prepare_prediction_cohort = function(object, data) {
   required = unique(c(model_vars(stats::formula(object[["fml"]], lhs = 0, rhs = 1)),
-    object[["fe"]], object[["weights"]], object[["offset"]],
+    if (is.null(object[["fe_components"]])) object[["fe"]] else unlist(object[["fe_components"]], use.names = FALSE), object[["weights"]], object[["offset"]],
     if (object[["strategy"]] == "demean" && object[["yvar"]] %in% names(data)) object[["yvar"]]))
   missing = setdiff(required, names(data))
   if (length(missing)) stop("newdata is missing required columns: ", paste(missing, collapse = ", "), call. = FALSE)
@@ -63,8 +63,8 @@ prepare_prediction_cohort = function(object, data) {
   if (length(rows)) {
     weights = prediction_weights(selected, object[["weights"]])
     supported = rep(TRUE, nrow(selected))
-    for (name in object[["fe"]]) {
-      group = prediction_group_index(selected[[name]])
+    for (value in prediction_fe_groups(object, selected)) {
+      group = prediction_group_index(value)
       totals = rowsum(weights, group, reorder = FALSE)
       supported = supported & totals[match(group, as.integer(rownames(totals))), 1L] > 0
     }

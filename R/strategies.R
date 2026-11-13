@@ -456,6 +456,21 @@ execute_compress_strategy = function(inputs) {
     from_statement = glue("FROM (SELECT * {from_statement})")
   }
 
+  component_vars = unique(unlist(inputs[["composite_fes"]], use.names = FALSE))
+  component_types = if (length(component_vars)) category_key_metadata(conn, sub("^FROM\\s+", "", from_statement), component_vars)[["types"]] else character()
+  inputs[["composite_integer_keys"]] = component_vars[component_types == "integer"]
+  overlap = intersect(xvars, component_vars[component_types %in% c("integer", "numeric", "float")])
+  moment_fields = c("n", "sum_w", "sum_wy", "sum_wy_sq", "sum_w2", "sum_w2y", "sum_w2y_sq", "mean_Y", "wts", "dbreg_cell")
+  protected = component_vars[tolower(component_vars) %in% tolower(moment_fields)]
+  cell_sources = if (length(protected)) setNames(protected,
+    safe_identifiers(paste0("dbreg_joint_component_", seq_along(protected)), taken = c(sql_design_reserved(inputs), moment_fields), fold_case = folds_identifier_case(conn))) else character()
+  inputs[["composite_cell_sources"]] = cell_sources
+  component_columns = component_vars
+  component_columns[match(unname(cell_sources), component_vars)] = names(cell_sources)
+  inputs[["composite_integer_keys"]] = component_columns[component_types == "integer"]
+  if (length(cell_sources)) has_interactions = TRUE
+  if (length(overlap)) has_interactions = TRUE
+
   # Handle interactions: expand to SQL expressions
   if (isTRUE(has_interactions)) {
     # Extract table name from FROM statement for sql_model_matrix
@@ -483,9 +498,29 @@ execute_compress_strategy = function(inputs) {
     xvar_names = xvars
   }
   
-  group_cols = unique(c(xvar_names, fe))
+  rhs_aliases = character()
+  if (length(overlap)) {
+    positions = match(overlap, xvar_names)
+    positions = positions[!is.na(positions)]
+    if (length(positions)) {
+      original = xvar_names[positions]
+      aliases = safe_identifiers(paste0("dbreg_joint_rhs_", seq_along(positions)), taken = c(sql_design_reserved(inputs), xvar_names), fold_case = folds_identifier_case(conn))
+      select_exprs[positions] = paste(sql_cast_double(original, conn), "AS", aliases)
+      xvar_names[positions] = aliases
+      columns = inputs[["design_columns"]]
+      columns[["alias"]][match(original, columns[["alias"]])] = aliases
+      for (position in match(original, inputs[["design_columns"]][["alias"]])) columns[["recipe"]][[position]][["kind"]] = "numeric"
+      inputs[["design_columns"]] = columns
+      rhs_aliases = aliases
+      inputs[["composite_rhs_aliases"]] = setNames(original, aliases)
+      inputs[["name_map"]] = c(inputs[["name_map"]], setNames(restore_names(original, inputs[["source_map"]]), aliases))
+    }
+  }
+  if (length(cell_sources)) select_exprs = c(select_exprs, paste(unname(cell_sources), "AS", names(cell_sources)))
+  emitted_names = c(xvar_names, names(cell_sources))
+  group_cols = unique(c(xvar_names, fe, component_columns))
   expanded_from = if (isTRUE(has_interactions)) paste0("FROM (SELECT ", paste(c(select_exprs,
-    setdiff(unique(c(fe, yvar, weights)), xvar_names)), collapse = ","), " ", from_statement, ") dbreg_compress_source") else from_statement
+    setdiff(unique(c(fe, yvar, weights, component_columns)), emitted_names)), collapse = ","), " ", from_statement, ") dbreg_compress_source") else from_statement
   packet = compressed_moment_query(conn, expanded_from, group_cols, yvar, weights, intercept)
   query_string = packet[["sql"]]
 
@@ -495,7 +530,9 @@ execute_compress_strategy = function(inputs) {
   if (verbose) {
     message(if (!is.null(weights)) "[dbreg] Executing weighted compress strategy SQL\n" else "[dbreg] Executing compress strategy SQL\n")
   }
-  compressed_dat = read_compressed_moments(conn, packet)
+  validate_composite_key_transport(inputs)
+  if (!data_only) inputs[["composite_dictionaries"]] = composite_prediction_dictionaries(inputs)
+  compressed_dat = read_compressed_moments(conn, packet, integer_text = inputs[["composite_integer_keys"]])
   nobs_orig = sum(compressed_dat[["n"]])
   nobs_comp = nrow(compressed_dat)
   compression_ratio = nobs_comp / max(nobs_orig, 1)
@@ -516,7 +553,7 @@ execute_compress_strategy = function(inputs) {
     }
   }
   if (data_only) {
-    compressed_dat[["dbreg_cell"]] = NULL
+    compressed_dat[c("dbreg_cell", rhs_aliases)] = NULL
     return(restore_compressed_data(compressed_dat))
   }
 
@@ -541,6 +578,8 @@ execute_compress_strategy = function(inputs) {
   X = sparse.model.matrix(matrix_formula, matrix_data, contrasts.arg = contrasts)
   columns = matrix_column_layout(X, matrix_formula, matrix_data,
     inputs[["design_columns"]], slope_terms = seq_along(design_vars))
+  absorbed = composite_absorbed_columns(columns, inputs[["composite_fes"]])
+  if (length(absorbed)) X[, absorbed] = 0
   generated = vapply(columns[["recipe"]], function(recipe)
     !recipe[["kind"]] %in% c("raw", "numeric") && !is.null(recipe[["variable"]]), logical(1))
   columns[["alias"]] = allocate_sql_aliases(columns[["alias"]], generated,
@@ -598,7 +637,7 @@ execute_compress_strategy = function(inputs) {
     # Cells are keyed on the expanded columns, so expose them (and only the
     # other columns the query needs) to it
     cells_from = if (isTRUE(has_interactions)) {
-      cols = setdiff(unique(c(inputs[["cluster_var"]], yvar, weights, fe)), xvar_names)
+      cols = setdiff(unique(c(inputs[["cluster_var"]], yvar, weights, fe, component_columns)), emitted_names)
       paste0("FROM (SELECT ", paste(c(cols, select_exprs), collapse = ", "), " ", from_statement, ") AS dbreg_cells")
     } else {
       from_statement

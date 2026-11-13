@@ -36,7 +36,11 @@ dbivreg(
 without absorbed fixed effects, and \code{y ~ x1 + x2 | fe1 + fe2 + fe3 | d ~ z}
 when fixed effects are present. The IV block must always be the final
 pipe-separated block. Regressors and instruments can include interactions
-and \code{fixest}-style \code{i()} terms (see \code{\link[=sql_model_matrix]{sql_model_matrix()}}).}
+and \code{fixest}-style \code{i()} terms (see \code{\link[=sql_model_matrix]{sql_model_matrix()}}).
+The fixed-effects block also accepts column-name tuples such as
+\code{school^year + teacher}. DuckDB/native Databricks preserve native typed
+tuple identity in an owned snapshot; missing components are filtered before
+ranking, and original row keys remain available for sample exports.}
 
 \item{conn}{Database connection, or \code{NULL} to create an ephemeral DuckDB
 connection.}

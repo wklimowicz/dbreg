@@ -31,6 +31,8 @@ New features
   `R/fe-system.R`), batched packet transport (`R/fe-transport.R`), and
   FWL fixed-effect sufficient-statistic fitting (`R/fe-fwl.R`) with
   certified fallback to iterative AP.
+- Added native tuple-identity composite fixed effects (`fe1^fe2`,
+  `fe1:fe2`) across OLS, IV, and prediction (`R/composite-fe.R`).
 - Added `dbivreg()` for instrumental-variables (2SLS) regression on database
   backends. Uses `fixest`-style IV formulas, e.g. `y ~ x | d ~ z` or
   `y ~ x | fe1 + fe2 | d ~ z`, and supports multiple endogenous regressors,

@@ -143,6 +143,7 @@ predict.dbreg = function(
     }
   }
 
+  if (strategy == "compress" && !stored_cells) newdata = prepare_composite_prediction(object, newdata)
   prediction_offset = linear_prediction_offset(object, newdata)
   cohort = NULL
   if (strategy %in% c("demean", "mundlak")) {
@@ -243,7 +244,7 @@ predict.dbreg = function(
     has_y = yvar %in% names(newdata)
     working = as.matrix(mm)
     if (has_y) working = cbind(working, as.numeric(newdata[[yvar]]) - prediction_offset)
-    projected = demean_prediction_data(working, lapply(fe, function(name) newdata[[name]]),
+    projected = demean_prediction_data(working, prediction_fe_groups(object, newdata),
       prediction_weights(newdata, object[["weights"]]))
     mm = projected[, seq_len(ncol(mm)), drop = FALSE]
     if (has_y) {

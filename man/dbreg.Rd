@@ -45,7 +45,19 @@ resource limit. Explicit \code{factor(column)}, \code{I(column^2)} and \code{I(c
 terms and their interactions are supported; other transformations and
 literal regressors are rejected. Treatment coding is fixed at estimation and retained for R
 prediction; changing global contrast options does not recode a fitted model.
-An intercept-only model (\code{y ~ 1}) is supported without fixed effects.}
+An intercept-only model (\code{y ~ 1}) is supported without fixed effects.
+Fixed effects accept native tuples such as \code{school^year}, combined with
+additive families (\code{school^year + teacher}). Components must be source
+column names. DuckDB/native Databricks fits freeze tuple ranks in an owned
+snapshot and filter missing components before ranking. Tuple identity is
+independent of delimiters and numeric casts. Compressed prediction stores
+a bounded training-tuple dictionary under the projection row/cell/memory
+limits; individual key strings must stay below 65535 bytes. Compressed raw newdata
+must provide all components, with integer64 or exact decimal strings for
+BIGINT values beyond double precision. Unknown training tuples produce NA.
+In compressed output, source components that conflict with count/moment
+fields get separate \verb{_source} names; the \code{dbreg_source_columns} attribute
+records their actual columns. Counts and raw key values remain distinct.}
 
 \item{conn}{Database connection, e.g. created with
 \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or

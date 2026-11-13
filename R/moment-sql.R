@@ -64,8 +64,8 @@ compressed_moment_query = function(conn, from, groups, y, weights, intercept = T
   list(sql = sql, center_field = center, scale_field = scale, keys = groups)
 }
 
-read_compressed_moments = function(conn, query) {
-  data = decode_compressed_moments(read_keyed_query(conn, query[["sql"]], query[["keys"]]))
+read_compressed_moments = function(conn, query, integer_text = character()) {
+  data = decode_compressed_moments(read_keyed_query(conn, query[["sql"]], query[["keys"]], integer_text = integer_text))
   if (!nrow(data)) stop("No observations in the compressed estimation sample.", call. = FALSE)
   attr(data, "moment_center") = as.numeric(data[[query[["center_field"]]]][[1L]])
   attr(data, "weight_scale") = as.numeric(data[[query[["scale_field"]]]][[1L]])

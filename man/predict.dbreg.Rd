@@ -25,7 +25,8 @@ reflect uncertainty in the estimated mean, while `"prediction"` intervals
 additionally account for residual variance. See
 \code{\link[stats]{predict.lm}} for details.}
 
-\item{level}{Confidence level for intervals. Default is 0.95.}
+\item{level}{One finite numeric confidence level strictly between zero and
+one. Default is 0.95.}
 
 \item{...}{Additional arguments (currently unused).}
 }

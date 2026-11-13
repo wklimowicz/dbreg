@@ -64,6 +64,10 @@ Bug fixes
   with matching names. Use `vcov(model, fe = TRUE)` to include explicit fixed
   effects. Prediction intervals continue to use the full covariance.
 
+- `confint()` and `predict()` now validate `level` early and reject
+  non-scalar, missing, non-finite, or out-of-range confidence levels before
+  reading prediction data.
+
 - Alternating projections no longer fail with an SQL error when a fixed-effect
   or cluster variable also appears as a regressor. Invalid `dbreg.ap_max_iter`
   and `dbreg.ap_tol` options now produce a clear error.

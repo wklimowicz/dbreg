@@ -5,6 +5,7 @@
 \alias{as.data.frame.dbreg_prediction}
 \alias{head.dbreg_prediction}
 \alias{close.dbreg_prediction}
+\alias{print.dbreg_prediction}
 \title{Keyed database predictions}
 \usage{
 \method{as.data.frame}{dbreg_prediction}(x, ...)
@@ -12,6 +13,8 @@
 \method{head}{dbreg_prediction}(x, n = 6L, ...)
 
 \method{close}{dbreg_prediction}(con, ...)
+
+\method{print}{dbreg_prediction}(x, ...)
 }
 \arguments{
 \item{x, con}{A keyed database prediction result.}
@@ -21,7 +24,8 @@
 \item{n}{Maximum rows to preview.}
 }
 \value{
-A data frame, or invisibly `NULL` from `close()`.
+A data frame from collection, invisibly `NULL` from `close()`,
+  or the input invisibly from `print()`.
 }
 \description{
 A prediction result owns a temporary table in its database session. Use

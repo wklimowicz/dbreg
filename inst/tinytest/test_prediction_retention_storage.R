@@ -8,12 +8,10 @@ local({
   DBI::dbWriteTable(conn,"source",d,temporary=TRUE)
   dense=list(lm(y~x+factor(g),data=d,weights=w,offset=o),
     glm(y~x+factor(g),data=d,family=poisson(),weights=w,offset=o))
-  for (database in c(FALSE, TRUE)) {
+  for (database in c(FALSE,TRUE)) {
     prior=options(dbreg.prediction_max_entries=if(database)4 else 2e6)
-    models=list(dbreg(y~x|g,conn=conn,table="source",weights=~w,offset=~o,strategy="demean",retain="prediction"))
-    if (exists("dbglm", mode = "function")) {
-      models=c(models, list(dbglm(y~x|g,conn=conn,table="source",family=poisson(),weights=~w,offset=~o,retain="prediction")))
-    }
+    models=list(dbreg(y~x|g,conn=conn,table="source",weights=~w,offset=~o,strategy="demean",retain="prediction"),
+      dbglm(y~x|g,conn=conn,table="source",family=poisson(),weights=~w,offset=~o,retain="prediction"))
     options(prior)
     for (i in seq_along(models)) {
       model=models[[i]]

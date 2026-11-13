@@ -11,10 +11,8 @@ if (requireNamespace("duckdb", quietly = TRUE) && requireNamespace("bit64", quie
   d$y = rpois(nrow(d), exp(0.3 + d$x / 5 + d$tag / 10 + d$o))
   previous = options(dbreg.prediction_max_entries = 9)
   models = list(
-    dbreg(y ~ x + tag | g + h, data = d, weights = ~w, offset = ~o, strategy = "demean", retain = "prediction"))
-  if (exists("dbglm", mode = "function")) {
-    models = c(models, list(dbglm(y ~ x + tag | g + h, data = d, weights = ~w, offset = ~o, family = poisson(), retain = "prediction")))
-  }
+    dbreg(y ~ x + tag | g + h, data = d, weights = ~w, offset = ~o, strategy = "demean", retain = "prediction"),
+    dbglm(y ~ x + tag | g + h, data = d, weights = ~w, offset = ~o, family = poisson(), retain = "prediction"))
   options(previous)
   rows = c(16L, 1L, 12L, 40L)
   data = d[rows, c("id", "x", "g", "h", "tag", "o")]
@@ -25,7 +23,8 @@ if (requireNamespace("duckdb", quietly = TRUE) && requireNamespace("bit64", quie
     ref = if (inherits(fit, "dbglm")) {
       glm(y ~ x + factor(a) + factor(b), data = d, weights = w, offset = o, family = poisson())
     } else lm(y ~ x + factor(a) + factor(b), data = d, weights = w, offset = o)
-    expected = unname(fitted(ref)[rows])
+    expected = if (inherits(fit, "dbglm")) predict(ref, type = "link") else fitted(ref)
+    expected = unname(expected[rows])
     expected[2:3] = NA_real_
     expect_equal(predict(fit, data), expected, tolerance = 1e-8)
     if (requireNamespace("fixest", quietly = TRUE)) {

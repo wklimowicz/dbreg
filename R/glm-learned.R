@@ -80,6 +80,10 @@ dbglm_learned_state = function(conn, sample, object, fit) {
       "ORDER BY __cg_op,__cg_group LIMIT", format(sum(sizes) + 1, scientific = FALSE)))
     effects = list(as.numeric(rows[["c1"]]))
   }
+  res_center = if (length(sample[["res_center"]])) sample[["res_center"]] else sample[["y_center"]]
+  if (length(res_center) && res_center != 0) {
+    effects[[1L]][seq_len(sizes[[1L]])] = effects[[1L]][seq_len(sizes[[1L]])] + res_center
+  }
   alpha = unlist(effects, use.names = FALSE)
   if (length(alpha) != sum(sizes) || any(!is.finite(alpha))) {
     stop("Invalid fitted GLM fixed-effect coefficients.", call. = FALSE)

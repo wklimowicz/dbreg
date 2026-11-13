@@ -193,7 +193,8 @@ sql_fitted_predictor = function(object, conn, input, row_id, prediction, state, 
       else sql_prediction_effects(conn, state, column, schema, resources)
     beta = state[["beta"]]
     if (length(expr)) expr = paste0("((", expr, ")-(", dbglm_number(state[["center"]]), "))")
-  } else if (!is.null(sc <- object[["prediction_coordinates"]])) {
+  } else if (!is.null(object[["prediction_coordinates"]])) {
+    sc = object[["prediction_coordinates"]]
     beta = sc[["beta"]]
     if (length(expr)) {
       for (j in seq_along(expr)) {
@@ -315,6 +316,16 @@ predict_keyed_sql = function(object, newdata, conn, table, path, row_id, predict
   validate_source_row_id(conn, from, row_id)
   output = create(sql_fitted_predictor(object, conn, input, row_id, prediction, state, resources, character_map), fields)
   if (!is.null(state)) validate_source_row_id(conn, paste("FROM", output), row_id)
+  if (type == "response" && inherits(object, "dbglm")) {
+    eta = q(prediction)
+    link = object[["family"]][["link"]]
+    mean = if (link == "log") paste0("CASE WHEN ", eta, ">",
+      dbglm_number(log(.Machine[["double.xmax"]])), " THEN CAST('Infinity' AS DOUBLE) ELSE EXP(",
+      eta, ") END") else dbglm_family_sql(link, eta)[["mu"]]
+    value = paste0("CASE WHEN ", eta, " IS NULL OR isnan(", eta, ") THEN CAST(NULL AS DOUBLE) ELSE ", mean, " END")
+    output = create(paste("SELECT", paste(c(q(row_id), paste(value, "AS", eta)), collapse = ","),
+      "FROM", output), fields)
+  }
   if (is.null(prediction_table)) {
     name = resources[["tables"]][match(output, q(resources[["tables"]]))]
     lease = retain_fit_resources(resources, name, session = inherited[["session"]])
@@ -345,7 +356,8 @@ predict_keyed_sql = function(object, newdata, conn, table, path, row_id, predict
 #' @param x,con A keyed database prediction result.
 #' @param n Maximum rows to preview.
 #' @param ... Unused.
-#' @return A data frame, or invisibly `NULL` from `close()`.
+#' @return A data frame from collection, invisibly `NULL` from `close()`,
+#'   or the input invisibly from `print()`.
 #' @name dbreg-prediction
 NULL
 
@@ -386,3 +398,11 @@ head.dbreg_prediction = function(x, n = 6L, ...) {
 #' @rdname dbreg-prediction
 #' @export
 close.dbreg_prediction = function(con, ...) close_retained_lease(con[["resource_state"]])
+
+#' @rdname dbreg-prediction
+#' @export
+print.dbreg_prediction = function(x, ...) {
+  cat("Database predictions; keys: ", paste(x[["row_id"]], collapse = ", "),
+    "; value: ", x[["prediction_column"]], ". Use head() to preview.\n", sep = "")
+  invisible(x)
+}

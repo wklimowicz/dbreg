@@ -20,12 +20,11 @@
 \item{fe}{Include covariance rows and columns for explicit fixed effects?
 Default is `FALSE`, matching [coef()].}
 
-\item{...}{Additional arguments (currently unused, except to capture
-superseded arguments).}
+\item{...}{Additional arguments (currently unused).}
 
-\item{vcov}{Post-fit covariance type or cluster formula for a retained OLS fit.}
+\item{vcov}{Post-fit covariance type or cluster formula for a retained OLS or GLM fit.}
 
-\item{cluster}{One or two cluster terms from the original fitted source.}
+\item{cluster}{Cluster terms from the original fitted source. GLMs accept one term.}
 
 \item{ssc}{Optional post-fit small-sample correction policy.}
 

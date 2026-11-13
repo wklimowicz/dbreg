@@ -5,11 +5,8 @@ if (requireNamespace("duckdb", quietly = TRUE)) {
     cl = sample(1:11, n, replace = TRUE))
   d$y = d$x - d$z + rnorm(n, sd = exp(d$x / 4))
   d$count = rpois(n, exp(d$x / 3))
-  fits = list(dbreg(y ~ x + z | g, data = d, retain = "inference", strategy = "demean"))
-  if (exists("dbglm", mode = "function")) {
-    fits = c(fits, list(dbglm(count ~ x + z, data = d, family = poisson(), retain = "inference")))
-  }
-  for (fit in fits) {
+  for (fit in list(dbreg(y ~ x + z | g, data = d, retain = "inference", strategy = "demean"),
+                   dbglm(count ~ x + z, data = d, family = poisson(), retain = "inference"))) {
     original = vcov(fit)
     V = vcov(fit, cluster = "cl", ssc = list(t.df = 4))
     sm = summary(fit, cluster = "cl", ssc = list(t.df = 4))

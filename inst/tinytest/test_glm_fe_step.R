@@ -1,0 +1,23 @@
+local({
+  conn = DBI::dbConnect(duckdb::duckdb())
+  on.exit(DBI::dbDisconnect(conn, shutdown = TRUE))
+  set.seed(11141)
+  d = expand.grid(g = 1:5, h = 1:4, replicate = 1:8)
+  n = nrow(d)
+  d[["w"]] = runif(n, .2, 2)
+  d[["x"]] = rnorm(n)
+  d[["z"]] = rnorm(n)
+  d[["score"]] = d[["w"]] * rnorm(n)
+  DBI::dbWriteTable(conn, "glm_working", d)
+  for (fe in list("g", c("g", "h"))) {
+    sizes = vapply(d[fe], function(v) length(unique(v)), integer(1))
+    steps = dbreg:::dbglm_fe_step(conn, "glm_working", c("x", "z"), fe, sizes, n, 1e-9)
+    groups = model.matrix(reformulate(paste0("factor(", fe, ")")), d)
+    raw = cbind(d[["score"]] / d[["w"]], d[["x"]], d[["z"]])
+    within = apply(raw, 2L, function(v) lm.wfit(groups, v, d[["w"]])[["residuals"]])
+    M = crossprod(within, within * d[["w"]])
+    expect_equal(steps[["H"]], M[-1L, -1L], tolerance = 1e-10)
+    expect_equal(steps[["score"]], M[-1L, 1L], tolerance = 1e-10)
+    expect_true(steps[["certificate"]][["max_abs"]] < 1e-9)
+  }
+})

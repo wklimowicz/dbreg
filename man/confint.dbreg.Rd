@@ -31,8 +31,12 @@ one. Default is 0.95.}
 \item{...}{Additional arguments. Currently unused, except to capture
 superseded arguments.}
 
-\item{vcov, cluster, ssc, vcov_fix}{Optional post-fit covariance arguments
-forwarded to [summary.dbreg()].}
+\item{vcov, cluster}{Covariance type or cluster terms as in \link{vcov.dbreg}.}
+
+\item{ssc}{Optional small-sample correction policy. A list may specify
+`K.adj`, `K.fixef`, `G.adj`, `G.df` and `t.df`.}
+
+\item{vcov_fix}{Repair an indefinite two-way covariance matrix.}
 }
 \description{
 Confidence intervals for dbreg objects

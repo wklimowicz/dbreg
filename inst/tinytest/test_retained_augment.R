@@ -4,11 +4,8 @@ if (requireNamespace("duckdb", quietly = TRUE)) {
   d[["date col"]] = as.Date("2024-01-01") + seq_len(nrow(d))
   d$x[4] = NA_real_
   keep = which(!is.na(d$x))
-  fits1 = list(dbreg(y ~ x, data = d, retain = "inference"))
-  if (exists("dbglm", mode = "function")) {
-    fits1 = c(fits1, list(dbglm(y ~ x, data = d, family = poisson(), retain = "inference")))
-  }
-  for (fit in fits1) {
+  for (fit in list(dbreg(y ~ x, data = d, retain = "inference"),
+                   dbglm(y ~ x, data = d, family = poisson(), retain = "inference"))) {
     result = generics::augment(fit)
     expect_equal(lapply(result[names(d)], identity), lapply(d[keep, , drop = FALSE], identity))
     expect_equal(result$.fitted, fitted(fit))
@@ -25,12 +22,9 @@ if (requireNamespace("duckdb", quietly = TRUE)) {
     DBI::dbWriteTable(conn, "original_input", d)
     DBI::dbExecute(conn, paste("CREATE TEMP TABLE keyed_input AS SELECT *,",
       "CAST('9007199254740992' AS BIGINT) + ROW_NUMBER() OVER () AS id FROM original_input"))
-    fits2 = list(dbreg(y ~ x, conn = conn, table = "keyed_input", row_id = "id", retain = "inference"))
-    if (exists("dbglm", mode = "function")) {
-      fits2 = c(fits2, list(dbglm(y ~ x, conn = conn, table = "keyed_input", row_id = "id",
-        family = poisson(), retain = "inference")))
-    }
-    for (fit in fits2) {
+    for (fit in list(dbreg(y ~ x, conn = conn, table = "keyed_input", row_id = "id", retain = "inference"),
+                     dbglm(y ~ x, conn = conn, table = "keyed_input", row_id = "id",
+                       family = poisson(), retain = "inference"))) {
       DBI::dbExecute(conn, "UPDATE keyed_input SET extra = 'changed'")
       result = generics::augment(fit)
       expect_identical(result$extra, d$extra[keep])

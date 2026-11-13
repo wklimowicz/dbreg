@@ -13,13 +13,10 @@ if (requireNamespace("duckdb", quietly = TRUE) && requireNamespace("fixest", qui
   d$y = rpois(nrow(d), exp(d$x / 4 + d$o))
   d$z = log1p(d$y)
   keys = paste0("(", encodeString(as.character(d$g), quote = '"'), ", ", encodeString(as.character(d$h), quote = '"'), ")")
-  fits = list(
-    dbreg(z ~ x | (g^h)[t], data = d, retain = "prediction", offset = ~o, strategy = "compress")
-  )
-  if (exists("dbglm", mode = "function")) {
-    fits = c(fits, list(dbglm(y ~ x | (g^h)[t], data = d, retain = "prediction", offset = ~o, family = poisson())))
-  }
-  for (fit in fits) {
+  for (fit in list(
+    dbreg(z ~ x | (g^h)[t], data = d, retain = "prediction", offset = ~o, strategy = "compress"),
+    dbglm(y ~ x | (g^h)[t], data = d, retain = "prediction", offset = ~o, family = poisson())
+  )) {
     close(fit)
     saved = fixest::fixef(fit)
     expect_identical(names(saved), c("g^h", "g^h[[t]]"))
@@ -29,14 +26,12 @@ if (requireNamespace("duckdb", quietly = TRUE) && requireNamespace("fixest", qui
     expect_equal(eta, if (inherits(fit, "dbglm")) predict(fit, d, type = "link") else predict(fit, d),
       tolerance = 1e-10)
   }
-  if (exists("dbglm", mode = "function")) {
-    additive = dbglm(y ~ x | g + h, data = d, retain = "prediction", offset = ~o, family = poisson())
-    close(additive)
-    saved = fixest::fixef(additive)
-    expect_identical(names(saved), c("g", "h"))
-    eta = unname(coef(additive)[["x"]] * d$x + saved$g[as.character(d$g)] + saved$h[as.character(d$h)] + d$o)
-    expect_equal(eta, predict(additive, d, type = "link"), tolerance = 1e-10)
-  }
+  additive = dbglm(y ~ x | g + h, data = d, retain = "prediction", offset = ~o, family = poisson())
+  close(additive)
+  saved = fixest::fixef(additive)
+  expect_identical(names(saved), c("g", "h"))
+  eta = unname(coef(additive)[["x"]] * d$x + saved$g[as.character(d$g)] + saved$h[as.character(d$h)] + d$o)
+  expect_equal(eta, predict(additive, d, type = "link"), tolerance = 1e-10)
   expect_identical(fixest::fixef(dbreg(y ~ x, data = d)), list())
   expect_error(fixest::fixef(dbreg(y ~ x | g, data = d)), "portable learned-effect state")
 }

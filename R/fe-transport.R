@@ -3,7 +3,8 @@
 fe_summary_sql = function(conn, source, fe, columns, max_rows) {
   K = length(fe)
   pairs = if (K > 1L) utils::combn(K, 2L, simplify = FALSE) else list()
-  sum_sql = function(x) if (detect_backend(conn)[["name"]] == "duckdb") paste0("FSUM(", x, ")") else paste0("SUM(", x, ")")
+  backend = detect_backend(conn)
+  sum_sql = function(x) sql_stable_sum(conn, x, backend_info = backend)
   values = paste0("b", seq_along(columns))
   terms = c(paste(sum_sql("w"), "AS h"), paste(sum_sql(paste0("w*", columns)), "AS", values))
   if (isTRUE(detect_backend(conn)[["is_databricks"]])) {
@@ -92,13 +93,15 @@ fe_decode_summaries = function(result, sizes, width, budget, limits, packets = F
   }
   sizes_by_set = vapply(seq_len(K + length(combinations)), function(set) sum(count[sets==set]), numeric(1))
   if (!identical(as.numeric(sizes_by_set[seq_len(K)]), as.numeric(sizes)) || any(sizes_by_set <= 0)) stop("Fixed-effect summary support changed.", call. = FALSE)
-  info = lapply(sizes, function(size) list(id = seq_len(size), h = numeric(size), b = matrix(0, size, width)))
-  seen = lapply(sizes, function(size) logical(size))
-  pairs = lapply(seq_along(combinations), function(k) {
-    pair = combinations[[k]];n = sizes_by_set[K+k]
-    list(i = pair[2L], j = pair[1L], ir = integer(n), jr = integer(n), h = numeric(n))
-  })
-  positions = integer(length(pairs))
+  state = list2env(list(
+    info = lapply(sizes, function(size) list(id = seq_len(size), h = numeric(size), b = matrix(0, size, width))),
+    seen = lapply(sizes, function(size) logical(size)),
+    pairs = lapply(seq_along(combinations), function(k) {
+      pair = combinations[[k]]; n = sizes_by_set[K + k]
+      list(i = pair[2L], j = pair[1L], ir = integer(n), jr = integer(n), h = numeric(n))
+    }),
+    positions = integer(length(combinations))
+  ), parent = emptyenv())
   number = function(x) {
     valid = grepl("^([+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+)?|NaN|Infinity|-Infinity)$", x)
     if (!all(valid)) stop("Invalid numeric fixed-effect packet.", call. = FALSE)
@@ -111,17 +114,17 @@ fe_decode_summaries = function(result, sizes, width, budget, limits, packets = F
     if (any(!is.finite(values)) || any(values[, if (set<=K) 2L else 3L] <= 0)) projection_abort("singular", "Nonfinite or nonpositive fixed-effect moments.")
     if (set<=K) {
       key = as.integer(keys[,1L])
-      if (anyDuplicated(key) || any(seen[[set]][key])) stop("Duplicate fixed-effect marginal keys.", call. = FALSE)
-      seen[[set]][key] <<- TRUE
-      info[[set]][["h"]][key] <<- values[,2L]
-      info[[set]][["b"]][key,] <<- values[,-(1:2),drop=FALSE]
+      if (anyDuplicated(key) || any(state[["seen"]][[set]][key])) stop("Duplicate fixed-effect marginal keys.", call. = FALSE)
+      state[["seen"]][[set]][key] = TRUE
+      state[["info"]][[set]][["h"]][key] = values[,2L]
+      state[["info"]][[set]][["b"]][key,] = values[,-(1:2),drop=FALSE]
     } else {
       k = set-K
-      where = positions[k] + seq_len(nrow(values))
-      pairs[[k]][["ir"]][where] <<- as.integer(keys[,2L])
-      pairs[[k]][["jr"]][where] <<- as.integer(keys[,1L])
-      pairs[[k]][["h"]][where] <<- values[,3L]
-      positions[k] <<- positions[k] + nrow(values)
+      where = state[["positions"]][k] + seq_len(nrow(values))
+      state[["pairs"]][[k]][["ir"]][where] = as.integer(keys[,2L])
+      state[["pairs"]][[k]][["jr"]][where] = as.integer(keys[,1L])
+      state[["pairs"]][[k]][["h"]][where] = values[,3L]
+      state[["positions"]][k] = state[["positions"]][k] + nrow(values)
     }
   }
   if (packets) {
@@ -148,6 +151,8 @@ fe_decode_summaries = function(result, sizes, width, budget, limits, packets = F
       absorb(set, values)
     }
   }
+  info = state[["info"]]
+  pairs = state[["pairs"]]
   for (pair in pairs) {
     ordering = order(pair[["ir"]], pair[["jr"]])
     if (any(diff(pair[["ir"]][ordering]) == 0 & diff(pair[["jr"]][ordering]) == 0)) stop("Duplicate fixed-effect pair keys.", call. = FALSE)

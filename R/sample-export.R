@@ -84,3 +84,28 @@ finalize_linear_sample = function(result, inputs) {
   }
   result
 }
+
+validate_glm_sample_export = function(sample_table, conn, table, row_id = NULL) {
+  if (is.null(sample_table)) return(invisible(NULL))
+  if (!is.character(sample_table) || length(sample_table) != 1L || is.na(sample_table) || !nzchar(sample_table)) {
+    stop("`sample_table` must name one new temporary table.", call. = FALSE)
+  }
+  if (is.null(row_id)) stop("`sample_table` requires explicit `row_id` columns.", call. = FALSE)
+  if (is.null(conn) && !inherits(table, "tbl_lazy")) {
+    stop("`sample_table` requires a caller-owned connection.", call. = FALSE)
+  }
+  invisible(NULL)
+}
+
+export_glm_sample = function(conn, table, sample, row_id) {
+  if (sample_table_exists(conn, table)) stop("Sample export table already exists.", call. = FALSE)
+  keys = sample[["row_keys"]]
+  public = row_id
+  q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
+  select = paste("SELECT", paste(paste(q(keys), "AS", q(public)), collapse = ","),
+    "FROM", sample[["original_base"]])
+  # Export uncompressed fitted rows only, after successful estimation. The
+  # table never enters an owned tracker and survives close(fit).
+  DBI::dbExecute(conn, sql_sample_table(conn, table, select, public))
+  invisible(NULL)
+}

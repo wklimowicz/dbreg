@@ -227,8 +227,8 @@ temporary fitted rows are released before returning the fit.
 When one or two additive families exceed the portable budget, their
 dictionaries stay in the owning database session.}
 
-\item{...}{Additional arguments. Currently ignored, except to handle
-superseded arguments for backwards compatibility.}
+\item{...}{Only the superseded \code{query_only} alias is accepted. Other unused
+requests raise an error before accessing a source.}
 }
 \value{
 A list of class "dbreg" containing various slots, including a table

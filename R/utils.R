@@ -481,7 +481,7 @@ safe_source = function(conn, from_statement, vars, reserved = character()) {
   renamed = safe != vars
   map = setNames(vars[renamed], safe[renamed])
   if (any(renamed)) {
-    sel = vars
+    sel = as.character(DBI::dbQuoteIdentifier(conn, vars))
     # Quote the original names for this backend; keep the safe aliases unquoted
     # (quoting would make them case-sensitive on e.g. Postgres)
     sel[renamed] = glue_sql("{`vars[renamed]`} AS {DBI::SQL(safe[renamed])}", .con = conn)

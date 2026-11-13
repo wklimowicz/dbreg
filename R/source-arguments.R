@@ -13,3 +13,18 @@ formula_column = function(value, label) {
   }
   as.character(value[[2L]])
 }
+
+# Reject misspelled or unsupported statistical requests before touching a
+# source or a retained session. Documented legacy names are handled by callers.
+check_unused_args = function(dots, allowed = character()) {
+  if (!length(dots)) return(invisible(NULL))
+  labels = names(dots)
+  if (is.null(labels)) labels = rep("", length(dots))
+  labels[is.na(labels)] = ""
+  unused = !nzchar(labels) | !labels %in% allowed
+  if (any(unused)) {
+    stop("Unused arguments: ", paste(ifelse(nzchar(labels[unused]),
+      paste0("`", labels[unused], "`"), "<unnamed>"), collapse = ", "), call. = FALSE)
+  }
+  invisible(NULL)
+}

@@ -403,7 +403,7 @@ fe_coordinate_certificate = function(
     !isTRUE(as.numeric(row[["bad"]]) == 0) ||
       !isTRUE(as.numeric(row[["n"]]) == nobs * length(ops))
   ) {
-    return(list(max_abs = Inf, max_level = Inf, max_relative = Inf))
+    return(list(max_abs = Inf, max_scaled = Inf, max_level = Inf, max_relative = Inf))
   }
   residual = vapply(
     row[paste0("r", seq_along(columns))],
@@ -430,12 +430,13 @@ fe_coordinate_certificate = function(
     numeric(1)
   )
   if (any(!is.finite(c(residual, rms)))) {
-    return(list(max_abs = Inf, max_level = Inf, max_relative = Inf))
+    return(list(max_abs = Inf, max_scaled = Inf, max_level = Inf, max_relative = Inf))
   }
   identified = rms > 128 * .Machine[["double.eps"]] * original_scale
   list(
     max_abs = max(residual),
     max_level = max(residual / pmax(1, original_scale)),
+    max_scaled = max(residual / pmax(original_scale, .Machine[["double.xmin"]])),
     max_relative = if (any(identified)) {
       max(residual[identified] / rms[identified])
     } else {

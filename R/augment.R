@@ -1,3 +1,6 @@
+#' @export
+generics::augment
+
 #' Collect the retained estimation sample
 #'
 #' Collects the original fitted rows and appends response-scale fitted values
@@ -37,7 +40,7 @@ augment.dbreg = function(x, data = NULL, ...) {
   q = function(value) as.character(DBI::dbQuoteIdentifier(conn, value))
   keys = paste0("s.", rows[["keys"]])
   fitted = if (glm) "s.__dbglm_saved_mu" else "s.__dbreg_saved_fit"
-  residual = if (glm) "s.__dbglm_saved_y-s.__dbglm_saved_mu" else "s.__dbreg_saved_residual"
+  residual = if (glm) "s.__dbglm_saved_res" else "s.__dbreg_saved_residual"
   aliases = safe_identifiers(c("dbreg_augment_position", "dbreg_augment_fitted", "dbreg_augment_resid"),
     taken = names(fields), fold_case = folds_identifier_case(conn))
   key_out = names(fields)[fields %in% source_keys]
@@ -61,8 +64,9 @@ augment.dbreg = function(x, data = NULL, ...) {
     select = paste(c(keys, fitted, residual), "AS", q(aliases))
     join = ""
   }
+  estimated_col = if (glm) "__dbglm_estimated" else "__dbreg_estimated"
   sql = paste0("SELECT ", paste(select, collapse = ","), " FROM ", rows[["table"]],
-    " s", join, " WHERE s.__dbreg_estimated ORDER BY ", paste(keys, collapse = ","))
+    " s", join, " WHERE s.", estimated_col, " ORDER BY ", paste(keys, collapse = ","))
   values = read_keyed_query(conn, sql, key_out, exact_keys = TRUE)
   if (is.null(data)) data = values[names(fields)]
   else data = data[as.integer(values[[aliases[1L]]]), , drop = FALSE]

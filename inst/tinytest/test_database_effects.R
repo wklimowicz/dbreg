@@ -9,11 +9,9 @@ if (requireNamespace("duckdb", quietly = TRUE) && requireNamespace("bit64", quie
   d$o = d$rep / 40
   option = options(dbreg.prediction_max_entries = 9)
   models = list(dbreg(y ~ x + absorbed | g, data = d, weights = ~w, offset = ~o,
-    strategy = "demean", retain = "prediction"))
-  if (exists("dbglm", mode = "function")) {
-    models = c(models, list(dbglm(y ~ x + absorbed | g, data = d, weights = ~w, offset = ~o,
-      family = poisson(), retain = "prediction")))
-  }
+    strategy = "demean", retain = "prediction"),
+    dbglm(y ~ x + absorbed | g, data = d, weights = ~w, offset = ~o,
+      family = poisson(), retain = "prediction"))
   options(option)
   pred = d[c(19L, 2L, 108L, 99L), c("id", "x", "absorbed", "g", "o")]
   pred$g[2L] = bit64::as.integer64("9007199254741992")
@@ -25,7 +23,8 @@ if (requireNamespace("duckdb", quietly = TRUE) && requireNamespace("bit64", quie
       glm(y ~ x + factor(absorbed), data = d, weights = w, offset = o, family = poisson())
     } else lm(y ~ x + factor(absorbed), data = d, weights = w, offset = o)
     actual = predict(model, pred)
-    expected = fitted(ref)[c(19L, 2L, 108L, 99L)]
+    expected = if (inherits(model, "dbglm")) predict(ref, type = "link") else fitted(ref)
+    expected = expected[c(19L, 2L, 108L, 99L)]
     expected[2:3] = NA_real_
     expect_equal(actual, unname(expected), tolerance = 1e-8)
     if (requireNamespace("fixest", quietly = TRUE)) {

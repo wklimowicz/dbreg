@@ -6,7 +6,10 @@
 #'   compressed cells or aggregated moment rows. Weights do not change this count.
 #' @importFrom stats nobs
 #' @export
-nobs.dbreg = function(object, ...) as.numeric(object[["nobs_orig"]])
+nobs.dbreg = function(object, ...) {
+  check_unused_args(list(...))
+  as.numeric(object[["nobs_orig"]])
+}
 
 ##
 ## Stats methods for dbreg objects
@@ -37,6 +40,7 @@ nobs.dbreg = function(object, ...) as.numeric(object[["nobs_orig"]])
 #' head(predict(mod, newdata = airquality, interval = "confidence"))
 #' @export
 coef.dbreg = function(object, fe = FALSE, ..., collin = FALSE) {
+  check_unused_args(list(...), "fes")
   
   # superseded args handled through ...
   dots = list(...)
@@ -82,8 +86,7 @@ coef.dbreg = function(object, fe = FALSE, ..., collin = FALSE) {
 #'   reflect uncertainty in the estimated mean, while `"prediction"` intervals
 #'   additionally account for residual variance. See
 #'   \code{\link[stats]{predict.lm}} for details.
-#' @param level One finite numeric confidence level strictly between zero and
-#'   one. Default is 0.95.
+#' @param level Confidence level for intervals. Default is 0.95.
 #' @param conn,table,path Optional connection and database prediction source.
 #'   Provide exactly one of newdata, table or path.
 #' @param row_id Unique nonmissing source key columns for database output.
@@ -96,7 +99,14 @@ coef.dbreg = function(object, fe = FALSE, ..., collin = FALSE) {
 #' Fitted column construction and category coding are retained independently of
 #' public labels. Missing values and unknown fitted categories return `NA` in
 #' their input positions. Numeric predictors require numeric or logical input.
-#' The original row order is preserved; unrelated columns do not affect it.
+#' Without database output, supplied R rows retain their original order;
+#' unrelated columns do not affect it. Collected database results are ordered by
+#' the explicit native keys, including when the prediction source is R data.
+#'
+#' Known offsets require `newdata` and its numeric offset column. The offset
+#' is added with coefficient one; interval uncertainty conditions on its value.
+#' For demeaned models, the available outcome is adjusted before projection.
+#' Nonfinite offsets return `NA`; group projections omit those rows.
 #'
 #' @section Keyed database output:
 #' Supply `row_id` to keep predictions in a database session. This path
@@ -120,24 +130,32 @@ coef.dbreg = function(object, fe = FALSE, ..., collin = FALSE) {
 #' supplied. Portable effects remain available after closing the fit. Unseen groups and
 #' non-estimable combinations return missing values. Learned effects support
 #' point predictions with `interval = "none"`.
-#' 
+#'
+#' @section Group projections:
+#' Mundlak means and demeaned fixed-effect projections are recomputed on the
+#' complete usable rows of `newdata`. Weighted models require their weight
+#' column in `newdata`. Missing required values, unknown fitted categories and
+#' groups with no positive weight return `NA` at their original row positions.
+#' These calculations do not recover training-sample fixed effects.
+#' Demeaning supports unbalanced, multi-way groups and errors on non-convergence.
+#'
 #' @section Predicting on "demean" strategy objects:
 #' 
 #' Predicting on `dbreg` objects should generally work as expected. However,
 #' predictions from `"demean"` strategy models carry two important caveats:
 #' 
 #' 1. Predictions require group means to transform back to the original scale.
-#' If `newdata` contains the outcome variable, group means are computed from
-#' `newdata` and used to return level predictions. If the outcome is absent,
+#' If `newdata` contains the outcome variable, its joint weighted fixed-effect
+#' projection is computed from `newdata` and used to return level predictions. If the outcome is absent,
 #' within-group predictions (deviations from group means) are returned instead,
 #' with a message.
 #' 
 #' 2. Confidence/prediction intervals are not supported. A demeaned model cannot
 #' account for uncertainty in the fixed-effects (since these were absorbed at
 #' estimation time), which in turn would yield intervals that are too narrow.
-#' Requesting intervals for `"demean"` strategy models will return point
-#' predictions with a message. Users should re-estimate with a different
-#' strategy if intervals are needed.
+#' Legacy non-retained `"demean"` models return point predictions with a
+#' message when intervals are requested. Retained or learned-effect prediction
+#' rejects unsupported interval requests; those branches support points only.
 #'
 #' @seealso [dbreg()] for examples.
 #' @inherit coef.dbreg examples
@@ -149,15 +167,12 @@ predict.dbreg = function(
   newdata = NULL,
   interval = c("none", "confidence", "prediction"),
   level = 0.95,
-  ...,
-  conn = NULL,
-  table = NULL,
-  path = NULL,
-  row_id = NULL,
-  prediction_table = NULL,
+  ..., conn = NULL, table = NULL, path = NULL, row_id = NULL, prediction_table = NULL,
   sample = c("estimation", "original")
 ) {
+  check_unused_args(list(...))
   interval = match.arg(interval)
+  if (interval != "none") validate_confidence_level(level)
   sample = match.arg(sample)
   sql = sql_prediction_requested(conn, table, path, row_id, prediction_table)
   if (sample == "original" && (!is.null(newdata) || sql)) {
@@ -167,13 +182,12 @@ predict.dbreg = function(
     if (interval != "none") stop("Database prediction does not support intervals.", call. = FALSE)
     return(predict_keyed_sql(object, newdata, conn, table, path, row_id, prediction_table))
   }
-  if (interval != "none") validate_confidence_level(level)
   if (sample == "original") require_inference_rows(object)
   if (is.null(newdata) && isTRUE(object[["retain"]] %in% c("inference", "all"))) {
     if (interval != "none") stop("Retained-sample prediction requires interval = 'none'.", call. = FALSE)
     return(retained_row_values(object, "__dbreg_saved_fit", ".fitted", na.rm = sample == "estimation"))
   }
-  strategy = object[["strategy"]]
+  strategy = object[["strategy"]] 
   if (!is.null(newdata) && length(object[["fe"]]) && !inherits(object, "dbivreg") &&
       isTRUE(object[["retain"]] %in% c("prediction", "all"))) {
     if (interval != "none") stop("Learned-effect predictions require interval = 'none'.", call. = FALSE)
@@ -181,7 +195,8 @@ predict.dbreg = function(
       stop("The fit has no portable learned-effect state. Inspect prediction_diagnostics.", call. = FALSE)
     }
     return(predict_learned_effects(object, as.data.frame(newdata)))
-  } 
+  }
+
 
   # Demean strategy doesn't support intervals (FE uncertainty not available)
   if (strategy == "demean" && interval != "none") {
@@ -379,12 +394,11 @@ predict.dbreg = function(
 #' @param object A `dbreg` object.
 #' @param fe Include covariance rows and columns for explicit fixed effects?
 #'   Default is `FALSE`, matching [coef()].
-#' @param vcov Post-fit covariance type or cluster formula for a retained OLS fit.
-#' @param cluster One or two cluster terms from the original fitted source.
+#' @param vcov Post-fit covariance type or cluster formula for a retained OLS or GLM fit.
+#' @param cluster Cluster terms from the original fitted source. GLMs accept one term.
 #' @param ssc Optional post-fit small-sample correction policy.
 #' @param vcov_fix Repair an indefinite two-way covariance matrix.
-#' @param ... Additional arguments (currently unused, except to capture
-#'   superseded arguments).
+#' @param ... Additional arguments (currently unused).
 #' @inherit coef.dbreg examples
 #' @export
 # Positions of the reported (non-FE) coefficients in a fitted-order covariance.
@@ -396,17 +410,16 @@ linear_reported_positions = function(object, n) {
 
 vcov.dbreg = function(object, fe = FALSE, ..., vcov = NULL, cluster = NULL,
                       ssc = NULL, vcov_fix = TRUE) {
+  check_unused_args(list(...), "fes")
+  dots = list(...)
+  if (!is.null(dots[["fes"]]) && !identical(fe, dots[["fes"]])) {
+    fe = dots[["fes"]]
+    warning("The `fes` argument has been superseded by `fe`.\n")
+  }
   if (is.character(vcov) && length(vcov) == 1L) {
     vcov = tolower(vcov)
     if (is.na(vcov) || !vcov %in% c("iid", "hc1", "cluster", "twoway")) {
       stop("Unsupported covariance type.", call. = FALSE)
-    }
-  }
-  dots = list(...)
-  if (length(dots)) {
-    if (!is.null(dots[["fes"]]) && !identical(fe, dots[["fes"]])) {
-      fe = dots[["fes"]]
-      warning('The `fes` argument has been superseded by `fe` (without the "s") and will be deprecated in a future `dbreg` release.\n')
     }
   }
   requested = !is.null(vcov) || !is.null(cluster) || !is.null(ssc) || !identical(vcov_fix, TRUE)
@@ -415,7 +428,9 @@ vcov.dbreg = function(object, fe = FALSE, ..., vcov = NULL, cluster = NULL,
     vcov = request[["vcov"]]
     cluster = request[["cluster"]]
   }
-  out = if (requested) retained_linear_covariance(object, vcov, cluster, ssc, vcov_fix) else object[["vcov"]]
+  out = if (!requested) object[["vcov"]] else if (inherits(object, "dbglm")) {
+    retained_glm_covariance(object, vcov, cluster, ssc)
+  } else retained_linear_covariance(object, vcov, cluster, ssc, vcov_fix)
   fields = c("type", "n_clusters", "n_params", "ssc", "df.K", "df.t", "rss", "tss", "repair")
   metadata = lapply(fields, function(name) attr(out, name))
   names(metadata) = fields
@@ -446,16 +461,17 @@ vcov.dbreg = function(object, fe = FALSE, ..., vcov = NULL, cluster = NULL,
 #' @param level One finite numeric confidence level strictly between zero and
 #'   one. Default is 0.95.
 #' @param fe Should the fixed effects be included? Default is `FALSE`.
-#' @param vcov,cluster,ssc,vcov_fix Optional post-fit covariance arguments
-#'   forwarded to [summary.dbreg()].
 #' @param ... Additional arguments. Currently unused, except to capture
 #' superseded arguments.
+#' @inheritParams summary.dbreg
 #' @inherit coef.dbreg examples
 #' @importFrom stats qt
 #' @export
 confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...,
                          vcov = NULL, cluster = NULL, ssc = NULL, vcov_fix = TRUE) {
+  check_unused_args(list(...), "fes")
   validate_confidence_level(level)
+  if (!missing(parm) && anyNA(parm)) stop("Unknown coefficient in parm.", call. = FALSE)
 
   # superseded args handled through ...
   dots = list(...)
@@ -467,6 +483,9 @@ confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...,
     }
   }
 
+  if (inherits(object, "dbglm") && !identical(fe, FALSE)) {
+    stop("Absorbed-effect confidence intervals are not supported; use fe = FALSE.", call. = FALSE)
+  }
   object = summary.dbreg(object, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)
   ct = visible_coefficient_table(object, fe)
   a = (1 - level) / 2
@@ -481,10 +500,36 @@ confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...,
   ci
 }
 
-validate_confidence_level = function(level) {
-  if (!is.numeric(level) || length(level) != 1L || !is.finite(level) || level <= 0 || level >= 1) {
-    stop("`level` must lie strictly between zero and one.", call. = FALSE)
-  }
-  invisible(NULL)
+
+#' Residual degrees of freedom
+#' @param object A fitted OLS, IV or GLM database regression.
+#' @param ... Unused.
+#' @return The fitted model's residual degrees of freedom.
+#' @importFrom stats df.residual
+#' @export
+df.residual.dbreg = function(object, ...) {
+  check_unused_args(list(...))
+  object[["df_residual"]]
 }
 
+#' Gaussian likelihood for database OLS
+#' Uses the unweighted residual sum of squares, including for weighted fits,
+#' matching \code{fixest::feols()}. Weighted fits require inference or all
+#' retention to cache this statistic. Extraction remains available after close.
+#' @param object A fitted database OLS regression.
+#' @param ... Unused.
+#' @return A \code{logLik} object with observation and parameter counts.
+#' @export
+logLik.dbreg = function(object, ...) {
+  check_unused_args(list(...))
+  if (inherits(object, "dbivreg")) stop("OLS likelihood is not supported for IV models.", call. = FALSE)
+  if (!is.null(object[["weights"]]) && !isTRUE(object[["retain"]] %in% c("inference", "all"))) {
+    stop("Weighted OLS likelihood requires retain = 'inference' or 'all'.", call. = FALSE)
+  }
+  rss = object[["rss_unweighted"]]
+  if (is.null(rss)) rss = attr(object[["vcov"]], "rss")
+  if (is.null(rss) || !is.finite(rss) || rss < 0) stop("Accurate OLS likelihood requires retained inference rows.", call. = FALSE)
+  n = nobs(object)
+  value = -n/2 * (1 + log(rss/n) + log(2*pi))
+  structure(value, class = "logLik", df = n - df.residual(object) + 1, nobs = n)
+}

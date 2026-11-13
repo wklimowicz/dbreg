@@ -6,11 +6,9 @@ if (requireNamespace("duckdb", quietly = TRUE) && requireNamespace("bit64", quie
   d$o = d$rep / 20
   d$y = rpois(nrow(d), exp(.7 + d$x / 5 + d$trend / 4 + d$o))
   models = list(dbreg(y ~ x | (g^h)[trend], data = d, offset = ~o,
-    strategy = "compress", retain = "prediction"))
-  if (exists("dbglm", mode = "function")) {
-    models = c(models, list(dbglm(y ~ x | (g^h)[trend], data = d, offset = ~o, family = poisson(),
-      strategy = "compress", retain = "prediction")))
-  }
+    strategy = "compress", retain = "prediction"),
+    dbglm(y ~ x | (g^h)[trend], data = d, offset = ~o, family = poisson(),
+      strategy = "compress", retain = "prediction"))
   pred = d[c("id", "g", "h", "x", "trend", "o")]
   pred$h[5L] = bit64::as.integer64("9007199254740999")
   pred$trend[12L] = NA_real_

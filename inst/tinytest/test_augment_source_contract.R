@@ -15,14 +15,10 @@ local({
   forms = list(
     list(FALSE, y ~ x, y ~ x, "moments"),
     list(FALSE, y ~ x | g, y ~ x + factor(g), "demean"),
-    list(FALSE, y ~ x | g, y ~ x + factor(g), "compress")
+    list(FALSE, y ~ x | g, y ~ x + factor(g), "compress"),
+    list(TRUE, yp ~ x, yp ~ x, "compress"),
+    list(TRUE, yp ~ x | g, yp ~ x + factor(g), "compress")
   )
-  if (exists("dbglm", mode = "function")) {
-    forms = c(forms, list(
-      list(TRUE, yp ~ x, yp ~ x, "compress"),
-      list(TRUE, yp ~ x | g, yp ~ x + factor(g), "compress")
-    ))
-  }
   for (source in c("R", "database")) for (explicit in c(FALSE, TRUE)) {
     if (source == "database" && !explicit) next
     for (case in forms) {
@@ -70,8 +66,7 @@ local({
   d$v_dbreg_input_position = seq_len(nrow(d)) / 100
   d$v_dbreg_input_position_1 = letters[rep(1:3, 32)]
   d$dbreg_input_position = rep(c(FALSE, TRUE), 48)
-  glm_flags = if (exists("dbglm", mode = "function")) c(FALSE, TRUE) else FALSE
-  for (glm in glm_flags) {
+  for (glm in c(FALSE, TRUE)) {
     f = if (glm) dbglm(yp ~ x, data = d, conn = conn, family = poisson(),
       retain = "inference") else dbreg(y ~ x, data = d, conn = conn, retain = "inference")
     actual = generics::augment(f)
@@ -87,8 +82,7 @@ local({
   conn = DBI::dbConnect(duckdb::duckdb())
   on.exit(DBI::dbDisconnect(conn, shutdown = TRUE))
   d = data.frame(x = rep(-1:1, 20), y = rep(c(0, 1, 1), 20))
-  makers = if (exists("dbglm", mode = "function")) list(dbreg, dbglm) else list(dbreg)
-  for (maker in makers) {
+  for (maker in list(dbreg, dbglm)) {
     for (args in list(list(fml = y ~ v_dbreg_input_position),
         list(fml = y ~ x, weights = "v_dbreg_input_position"),
         list(fml = y ~ x, offset = "v_dbreg_input_position"),
@@ -124,7 +118,7 @@ local({
     "(i%5)::DOUBLE AS y FROM range(30) t(i)"))
   fit = dbreg(y ~ x, conn = conn, table = "original", row_id = "id", retain = "inference")
   on.exit(close(fit), add = TRUE, after = FALSE)
-  collect = getS3method("augment", "dbreg", envir = asNamespace("dbreg"))
+  collect = getS3method("augment", "dbreg")
   e = new.env(parent = environment(collect))
   e$detect_backend = function(...) list(is_databricks = TRUE)
   environment(collect) = e

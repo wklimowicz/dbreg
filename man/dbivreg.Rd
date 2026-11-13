@@ -125,7 +125,8 @@ steps for this fit. Defaults to \code{getOption("dbreg.ap_max_iter", 100L)}
 without changing it. Bounded refinement uses at most eight steps; inner
 PCG has a separate cap. See \link{dbreg-options}.}
 
-\item{...}{Additional unused arguments.}
+\item{...}{Only the superseded \code{query_only} alias is accepted. Other unused
+requests raise an error before accessing a source.}
 }
 \value{
 A list of class \code{"dbivreg"} and \code{"dbreg"}.

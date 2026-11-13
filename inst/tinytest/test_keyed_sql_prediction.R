@@ -10,11 +10,8 @@ if (requireNamespace("duckdb", quietly = TRUE)) {
   before = sort(DBI::dbListTables(conn))
   newdata = d[c(4L, 2L, 9L, 6L), ]
   newdata$x[2L] = NA_real_
-  models = list(dbreg(y ~ x * factor(f), data = d, offset = ~o))
-  if (exists("dbglm", mode = "function")) {
-    models = c(models, list(dbglm(y ~ x * factor(f), data = d, offset = ~o, family = poisson())))
-  }
-  for (model in models) {
+  for (model in list(dbreg(y ~ x * factor(f), data = d, offset = ~o),
+                     dbglm(y ~ x * factor(f), data = d, offset = ~o, family = poisson()))) {
     res = predict(model, newdata, row_id = c("id", "sub"))
     expect_true(inherits(res, "dbreg_prediction"))
     out = as.data.frame(res)

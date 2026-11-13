@@ -25,6 +25,7 @@ coefficient_view = function(object, fe, collin = FALSE) {
 }
 
 coefficient_limits = function(table, level, df, normal) {
+  validate_confidence_level(level)
   tail = (1 - level) / 2
   critical = if (normal) stats::qnorm(1 - tail) else stats::qt(1 - tail, df)
   half = critical * table[, "std.error"]
@@ -50,6 +51,7 @@ visible_coefficient_table = function(object, fe = FALSE) {
 #'   table. A new covariance request uses the retained estimation sample.
 #' @export
 summary.dbreg = function(object, vcov = NULL, cluster = NULL, ssc = NULL, vcov_fix = TRUE, ...) {
+  check_unused_args(list(...))
   requested = !is.null(vcov) || !is.null(cluster) || !is.null(ssc) || !identical(vcov_fix, TRUE)
   if (requested) {
     V = vcov.dbreg(object, fe = TRUE, vcov = vcov, cluster = cluster, ssc = ssc, vcov_fix = vcov_fix)
@@ -124,4 +126,11 @@ pvalue.dbreg = function(object, ...) coefficient_statistic(object, 4L, ...)
 coefficient_statistic = function(object, column, ...) {
   table = coeftable.dbreg(object, ...)
   setNames(as.numeric(table[, column]), rownames(table))
+}
+
+validate_confidence_level = function(level) {
+  if (!is.numeric(level) || length(level) != 1L || !is.finite(level) || level <= 0 || level >= 1) {
+    stop("`level` must lie strictly between zero and one.", call. = FALSE)
+  }
+  invisible(NULL)
 }

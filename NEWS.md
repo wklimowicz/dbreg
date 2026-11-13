@@ -57,6 +57,11 @@ New features
 - Added ecosystem integrations for `insight::get_varcov()`, `modelsummary`
   custom covariance/gof metrics, and `fixest::etable()`/`coeftable()`
   (`R/tidiers.R`, `R/gof.R`, `R/inference-methods.R`).
+- Added weighted SQL generalized linear models via `dbglm()` (`gaussian`,
+  `poisson`, `binomial`) with certified IRLS score iterations, same-sample
+  null likelihoods, retained estimation-row inference, post-fit covariance,
+  and exact original sample key export (`R/dbglm.R`, `R/glm-family.R`,
+  `R/glm-fit.R`, `R/glm-null.R`, `R/glm-retained.R`, `R/glm-postfit.R`).
 - Added `dbivreg()` for instrumental-variables (2SLS) regression on database
   backends. Uses `fixest`-style IV formulas, e.g. `y ~ x | d ~ z` or
   `y ~ x | fe1 + fe2 | d ~ z`, and supports multiple endogenous regressors,

@@ -46,14 +46,12 @@ if (requireNamespace("duckdb", quietly = TRUE)) {
   }
   close(single)
   close(fit)
-  if (exists("dbglm", mode = "function")) {
-    fit = dbglm(count ~ x, data = d, family = poisson(), null_model = TRUE)
-    dense = glm(count ~ x, data = d, family = poisson())
-    dense_null = glm(count ~ 1, data = d, family = poisson())
-    summary = glance(fit)
-    expect_equal(nrow(summary), 1L)
-    expect_equal(summary$logLik, as.numeric(logLik(dense)), tolerance = 1e-10)
-    expect_equal(summary$pseudo.r.squared, 1 - as.numeric(logLik(dense) / logLik(dense_null)), tolerance = 1e-10)
-    expect_equal(unname(gof(fit)[["null.logLik"]]), as.numeric(logLik(dense_null)), tolerance = 1e-10)
-  }
+  fit = dbglm(count ~ x, data = d, family = poisson(), null_model = TRUE)
+  dense = glm(count ~ x, data = d, family = poisson())
+  dense_null = glm(count ~ 1, data = d, family = poisson())
+  summary = glance(fit)
+  expect_equal(nrow(summary), 1L)
+  expect_equal(summary$logLik, as.numeric(logLik(dense)), tolerance = 1e-10)
+  expect_equal(summary$pseudo.r.squared, 1 - as.numeric(logLik(dense) / logLik(dense_null)), tolerance = 1e-10)
+  expect_equal(unname(gof(fit)[["null.logLik"]]), as.numeric(logLik(dense_null)), tolerance = 1e-10)
 }

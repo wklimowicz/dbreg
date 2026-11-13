@@ -78,7 +78,7 @@ finalize_retained_linear_rows = function(inputs, selected, aliases, n, fitted_rs
   table = create(sql, names)
   rss = sql_stable_sum(conn, "__dbreg_saved_weight*POWER(__dbreg_saved_residual,2)")
   checks = DBI::dbGetQuery(conn, paste("SELECT COUNT(*) AS n, COUNT(__dbreg_saved_residual) AS estimated,",
-    rss, "AS rss FROM", table))
+    rss, "AS rss,", sql_stable_sum(conn, "POWER(__dbreg_saved_residual,2)"), "AS rss_unweighted FROM", table))
   total = DBI::dbGetQuery(conn, paste("SELECT COUNT(*) AS n FROM", original))[["n"]]
   if (!isTRUE(as.numeric(checks[["n"]]) == as.numeric(total)) ||
       !isTRUE(as.numeric(checks[["estimated"]]) == n) || !is.finite(checks[["rss"]]) ||
@@ -100,6 +100,7 @@ finalize_retained_linear_rows = function(inputs, selected, aliases, n, fitted_rs
       fe_sizes = fe_sizes, default_cluster = restore_names(inputs[["cluster_var"]], inputs[["source_map"]]))
   }
   inputs[["linear_retained_state"]] = list(name = name, inference = inference,
+    rss_unweighted = as.numeric(checks[["rss_unweighted"]]),
     rows = list(table = table, keys = aliases, row_id = row_id, r_input = r_input, input_n = as.numeric(total)))
   invisible(NULL)
 }
@@ -110,6 +111,7 @@ finalize_retained_linear_rows = function(inputs, selected, aliases, n, fitted_rs
 #' @return A numeric vector for R inputs or a keyed result for SQL inputs.
 #' @export
 fitted.dbreg = function(object, ...) {
+  check_unused_args(list(...))
   require_inference_rows(object)
   retained_row_values(object, "__dbreg_saved_fit", ".fitted")
 }
@@ -120,6 +122,7 @@ fitted.dbreg = function(object, ...) {
 #' @export
 residuals.dbreg = function(object, type = c("response", "deviance", "pearson"),
                             na.rm = TRUE, ...) {
+  check_unused_args(list(...))
   require_inference_rows(object)
   type = match.arg(type)
   if (!is.logical(na.rm) || length(na.rm) != 1L || is.na(na.rm)) {
@@ -134,6 +137,7 @@ residuals.dbreg = function(object, type = c("response", "deviance", "pearson"),
 #' @importFrom stats case.names
 #' @export
 case.names.dbreg = function(object, ...) {
+  check_unused_args(list(...))
   require_inference_rows(object)
   retained_row_values(object, NULL, NULL)
 }
@@ -184,94 +188,4 @@ linear_keeps_scores = function(inputs) {
 linear_score_names = function(inputs, fit) {
   if (linear_keeps_scores(inputs) && length(fit[["x"]])) paste0("__dbreg_s", seq_along(fit[["x"]]))
   else character()
-}
-
-dbglm_number = function(x) sprintf("%.17g", x)
-
-require_inference_rows = function(object) {
-  if (!isTRUE(object[["retain"]] %in% c("inference", "all"))) {
-    stop("Fit with retain = 'inference' or 'all' to access estimation rows.", call. = FALSE)
-  }
-}
-
-retained_row_values = function(object, field, label, na.rm = TRUE) {
-  state = object[["retained_rows"]]
-  lease = object[["resource_state"]]
-  conn = retained_fit_connection(lease)
-  keys = state[["keys"]]
-  fields = c(keys, if (length(field)) paste(field, "AS dbreg_value"))
-  sql = paste("SELECT", paste(fields, collapse = ","),
-    "FROM", state[["table"]], if (na.rm) "WHERE __dbreg_estimated", "ORDER BY", paste(keys, collapse = ","))
-  if (isTRUE(state[["r_input"]])) {
-    rows = DBI::dbGetQuery(conn, sql)
-    return(if (length(field)) rows[["dbreg_value"]] else as.integer(rows[[keys]]))
-  }
-  materialize_glm_rows(conn, lease[["session"]], sql, keys,
-    state[["row_id"]], label)
-}
-
-materialize_glm_rows = function(conn, session, sql, keys, row_id, label) {
-  resources = fit_resources()
-  resources[["conn"]] = conn
-  on.exit(release_fit_resources(resources))
-  columns = c(keys, if (length(label)) "dbreg_value")
-  table = fe_projection_tables(conn, resources)(sql, columns)
-  name = resources[["tables"]][[1L]]
-  lease = retain_fit_resources(resources, name, session = session)
-  structure(list(table = table, keys = keys, columns = columns,
-    row_id = row_id, label = label, resource_state = lease), class = "dbreg_glm_rows")
-}
-
-#' Inspect keyed fitted values from a database regression
-#' @param x A retained result from `fitted()` or `predict()`.
-#' @param ... Unused.
-#' @return A data frame with source keys and fitted values from collection,
-#'   or invisibly the input from printing.
-#' @export
-as.data.frame.dbreg_glm_rows = function(x, ...) collect_glm_rows(x)
-
-collect_glm_rows = function(x, n = NULL) {
-  conn = retained_fit_connection(x[["resource_state"]])
-  keys = x[["keys"]]
-  columns = paste0("s.", x[["columns"]])
-  backend = detect_backend(conn)
-  if (isTRUE(backend[["is_databricks"]])) {
-    fields = paste(sprintf("typeof(%s) AS %s", keys, keys), collapse = ",")
-    types = DBI::dbGetQuery(conn, paste("SELECT", fields, "FROM", x[["table"]], "LIMIT 1"))
-    exact = which(vapply(types, function(type) length(type) && tolower(type[1L]) == "bigint", logical(1)))
-    columns[exact] = paste(sql_cast_text(conn, columns[exact]), "AS", keys[exact])
-  }
-  sql = paste("SELECT", paste(columns, collapse = ","), "FROM", x[["table"]],
-    "s ORDER BY", paste(paste0("s.", keys), collapse = ","))
-  if (!is.null(n)) sql = sql_limit(sql, n, backend[["name"]])
-  data = read_keyed_query(conn, sql, keys, exact_keys = TRUE)
-  names(data) = make.unique(c(x[["row_id"]], x[["label"]]))
-  data
-}
-
-#' Preview or close a retained database result
-#' @param x A keyed result.
-#' @param n Maximum number of rows to collect.
-#' @param ... Unused.
-#' @return A data frame for `head()`, or invisibly NULL for `close()`.
-#' @importFrom utils head
-#' @export
-head.dbreg_glm_rows = function(x, n = 6L, ...) {
-  if (!is.numeric(n) || length(n) != 1L || !is.finite(n) || n < 0 || n != floor(n)) {
-    stop("`n` must be one nonnegative whole number.", call. = FALSE)
-  }
-  collect_glm_rows(x, n)
-}
-
-#' @rdname head.dbreg_glm_rows
-#' @param con A keyed result.
-#' @export
-close.dbreg_glm_rows = function(con, ...) close_retained_lease(con[["resource_state"]])
-
-#' @rdname as.data.frame.dbreg_glm_rows
-#' @export
-print.dbreg_glm_rows = function(x, ...) {
-  cat("Database rows; keys: ", paste(x[["row_id"]], collapse = ", "),
-    ". Use head() to preview.\n", sep = "")
-  invisible(x)
 }

@@ -249,19 +249,3 @@ retained_vcov_psd = function(V, fix) {
   attr(V, "repair") = list(min_eigenvalue = negative, repaired = fix, max_adjustment = difference)
   V
 }
-
-dbglm_moment_terms = function(x, weight) {
-  terms = character()
-  for (i in seq_along(x)) for (j in seq_len(i)) {
-    terms = c(terms, sprintf("SUM((%s)*(%s)*(%s)) AS h_%d_%d", weight, x[i], x[j], i, j))
-  }
-  terms
-}
-
-dbglm_read_information = function(row, p, prefix = "h") {
-  H = matrix(0, p, p)
-  for (i in seq_len(p)) for (j in seq_len(i)) {
-    H[i, j] = H[j, i] = row[[sprintf("%s_%d_%d", prefix, i, j)]]
-  }
-  H
-}

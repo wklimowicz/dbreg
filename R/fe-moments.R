@@ -62,9 +62,13 @@ fe_lookup_source = function(conn, coefficients, budget, limits, create, snapshot
 }
 
 # Coefficients use bounded dense ordinal keys. Original typed keys stay in SQL.
-fe_coefficient_sql = function(conn, coefficients, budget, limits) {
+fe_coefficient_sql = function(conn, coefficients, budget, limits, ids = seq_len(nrow(coefficients))) {
   if (any(!is.finite(coefficients))) projection_abort("singular", "Nonfinite fixed-effect coefficients.")
-  values = cbind(seq_len(nrow(coefficients)), coefficients)
+  if (!is.numeric(ids) || length(ids) != nrow(coefficients) ||
+      any(!is.finite(ids) | ids < 1 | ids != floor(ids)) || anyDuplicated(ids)) {
+    stop("Invalid coefficient ordinal keys.", call. = FALSE)
+  }
+  values = cbind(ids, coefficients)
   columns = c("id", paste0("c", seq_len(ncol(coefficients))))
   if (isTRUE(detect_backend(conn)[["is_databricks"]])) {
     rows = apply(values, 1L, function(row) paste(sprintf("%.17g", row), collapse = ","))
@@ -83,6 +87,93 @@ fe_coefficient_sql = function(conn, coefficients, budget, limits) {
   sql
 }
 
+# Large native literals are uploaded once in bounded statements. The caller's
+# manager owns the tables; this function rolls back its own partial uploads.
+fe_coefficient_lookups = function(conn, pieces, budget, limits, manager = NULL,
+                                   statement_bytes = 8 * 1024^2) {
+  backend = detect_backend(conn)
+  is_duckdb = identical(backend[["name"]], "duckdb")
+  databricks = isTRUE(backend[["is_databricks"]])
+  inline_bytes = if (databricks) statement_bytes else min(statement_bytes, 64 * 1024)
+  if (is_duckdb && !is.null(manager)) {
+    cells = sum(vapply(pieces, function(piece) nrow(piece) * (ncol(piece) + 1L), numeric(1)))
+    if (cells > 1024 || inline_bytes < 64 * 1024) {
+      bytes = sum(vapply(pieces, function(piece) 8 * nrow(piece) * (ncol(piece) + 1L) + 1024, numeric(1)))
+      if (budget[["upload_bytes"]] + bytes > min(limits[["upload_bytes"]], limits[["memory_bytes"]] / 8)) {
+        projection_abort("upload_limit", "Fixed-effect coefficients exceed the SQL upload budget.", list(bytes = bytes, limits = limits))
+      }
+      tables = character()
+      ok = FALSE
+      on.exit(if (!ok) for (table in rev(tables)) manager[["drop"]](table))
+      for (piece in pieces) tables = c(tables, fe_duckdb_lookup_table(conn, piece, manager))
+      budget[["upload_bytes"]] = budget[["upload_bytes"]] + bytes
+      ok = TRUE
+      return(list(sources = tables, tables = tables))
+    }
+  }
+  preview_budget = list2env(list(upload_bytes = budget[["upload_bytes"]]), parent = emptyenv())
+  preview = lapply(pieces, function(piece) fe_coefficient_sql(conn, piece, preview_budget, limits))
+  # Inline literals are re-parsed by every query that reads them; local engines
+  # store anything beyond a small lookup once in an owned table instead.
+  if ((!databricks && is.null(manager)) ||
+      preview_budget[["upload_bytes"]] - budget[["upload_bytes"]] <= inline_bytes) {
+    budget[["upload_bytes"]] = preview_budget[["upload_bytes"]]
+    return(list(sources = paste0("(", unlist(preview), ")"), tables = character()))
+  }
+  if (is.null(manager)) {
+    projection_abort("upload_limit", "Large native coefficient lookups require an owned table manager.")
+  }
+  if (is_duckdb) {
+    tables = character()
+    ok = FALSE
+    on.exit(if (!ok) for (table in rev(tables)) manager[["drop"]](table))
+    for (piece in pieces) tables = c(tables, fe_duckdb_lookup_table(conn, piece, manager))
+    budget[["upload_bytes"]] = preview_budget[["upload_bytes"]]
+    ok = TRUE
+    return(list(sources = tables, tables = tables))
+  }
+  plan_budget = list2env(list(upload_bytes = budget[["upload_bytes"]]), parent = emptyenv())
+  # Reserve 1 KiB for CREATE/INSERT prefixes as in the coefficient byte budget.
+  cap = min(statement_bytes, limits[["upload_bytes"]], limits[["memory_bytes"]] / 8)
+  plans = lapply(pieces, function(piece) {
+    queries = character()
+    start = 1L
+    count = max(1L, floor((cap - 1024) / (32 * (ncol(piece) + 1L))))
+    while (start <= nrow(piece)) {
+      take = min(count, nrow(piece) - start + 1L)
+      repeat {
+        ids = seq.int(start, length.out = take)
+        trial = list2env(list(upload_bytes = 0), parent = emptyenv())
+        sql = fe_coefficient_sql(conn, piece[ids, , drop = FALSE], trial, limits, ids)
+        if (trial[["upload_bytes"]] <= cap) break
+        if (take == 1L) projection_abort("upload_limit", "A coefficient row exceeds the native statement budget.")
+        take = max(1L, floor(take / 2))
+      }
+      if (plan_budget[["upload_bytes"]] + trial[["upload_bytes"]] >
+          min(limits[["upload_bytes"]], limits[["memory_bytes"]] / 8)) {
+        projection_abort("upload_limit", "Coefficient statements exceed the cumulative SQL upload budget.")
+      }
+      plan_budget[["upload_bytes"]] = plan_budget[["upload_bytes"]] + trial[["upload_bytes"]]
+      queries = c(queries, sql)
+      start = start + take
+    }
+    queries
+  })
+  owned = list2env(list(tables = character(), success = FALSE), parent = emptyenv())
+  on.exit(if (!owned[["success"]]) for (table in rev(owned[["tables"]])) manager[["drop"]](table))
+  budget[["upload_bytes"]] = plan_budget[["upload_bytes"]]
+  for (queries in plans) {
+    table = manager[["create"]](queries[1L])
+    owned[["tables"]] = c(owned[["tables"]], table)
+    for (sql in queries[-1L]) DBI::dbExecute(conn, paste("INSERT INTO", table, sql))
+  }
+  owned[["success"]] = TRUE
+  list(sources = owned[["tables"]], tables = owned[["tables"]])
+}
+
+# `grouped` adds named per-group aggregates (maximized over groups) and
+# `global` adds scalar aggregate terms of the same rows; both ride on the
+# certificate's own queries and return as `grouped` and `global` when valid.
 # Certificate shortfall: group-mean residuals in units of max(1, column scale)
 # (absolute for unit-scale columns, relative for e.g. dollar outcomes) and
 # relative to each column's residual RMS.
@@ -91,23 +182,40 @@ fe_certificate_shortfall = function(certificate, tol) {
   if (is.finite(value)) value else Inf
 }
 
-fe_projection_certificate = function(conn, table, fe, columns, nobs, original_scale) {
-  sum_sql = function(x) if (detect_backend(conn)[["name"]] == "duckdb") paste0("FSUM(", x, ")") else paste0("SUM(", x, ")")
-  means = paste0("ABS(", sum_sql(paste0("w*", columns)), ")/", sum_sql("w"), " AS r", seq_along(columns))
+fe_projection_certificate = function(conn, table, fe, columns, nobs, original_scale, grouped = NULL, global = NULL) {
+  backend = detect_backend(conn)
+  sum_sql = function(x) if (backend[["name"]] == "duckdb") paste0("FSUM(", x, ")") else paste0("SUM(", x, ")")
+  means = paste0("ABS(", sum_sql(paste0("w*", columns)), ")/", sum_sql("w"))
+  if (backend[["name"]] == "spark") {
+    # Corroborate the ordinary double mean. Decimal aggregation can expose
+    # cancellation, but its rounding must never hide an ordinary failing mean.
+    stable = function(x) sql_stable_sum(conn, x, backend_info = backend)
+    alternate = paste0("ABS(", stable(paste0("w*", columns)), ")/", stable("w"))
+    means = paste0("GREATEST(COALESCE(", means, ",CAST('Infinity' AS DOUBLE)),COALESCE(", alternate, ",CAST('Infinity' AS DOUBLE)))")
+  }
+  means = paste0(means, " AS r", seq_along(columns))
   invalid = paste(c("w<=0", paste0(c("w", columns), " IS NULL OR isnan(", c("w", columns), ") OR ABS(", c("w", columns), ")>1.7976931348623157e308")), collapse = " OR ")
-  sql = paste0("SELECT ", paste(c(paste0("MAX(r", seq_along(columns), ") AS r", seq_along(columns)), "MAX(bad) AS bad", "SUM(n) AS n"), collapse = ","),
-    " FROM (SELECT ", paste(c(means, "COUNT(*) AS n", paste0("SUM(CASE WHEN ", invalid, " THEN 1 ELSE 0 END) AS bad")), collapse = ","),
+  extra = names(grouped)
+  sql = paste0("SELECT ", paste(c(paste0("MAX(r", seq_along(columns), ") AS r", seq_along(columns)), "MAX(bad) AS bad", "SUM(n) AS n",
+      if (length(extra)) paste0("MAX(", extra, ") AS ", extra)), collapse = ","),
+    " FROM (SELECT ", paste(c(means, "COUNT(*) AS n", paste0("SUM(CASE WHEN ", invalid, " THEN 1 ELSE 0 END) AS bad"),
+      if (length(extra)) paste(unname(grouped), "AS", extra)), collapse = ","),
     " FROM ", table, " GROUP BY GROUPING SETS (", paste0("(", fe, ")", collapse = ","), ")) certified")
   row = DBI::dbGetQuery(conn, sql)
-  if (!isTRUE(as.numeric(row[["bad"]]) == 0) || !isTRUE(as.numeric(row[["n"]]) == nobs * length(fe))) return(list(max_abs = Inf, max_level = Inf, max_relative = Inf))
+  if (!isTRUE(as.numeric(row[["bad"]]) == 0) || !isTRUE(as.numeric(row[["n"]]) == nobs * length(fe))) return(list(max_abs = Inf, max_scaled = Inf, max_level = Inf, max_relative = Inf))
   residual = vapply(row[paste0("r", seq_along(columns))], as.numeric, numeric(1))
+  if (any(!is.finite(residual))) return(list(max_abs = Inf, max_scaled = Inf, max_level = Inf, max_relative = Inf))
   units = sprintf("%.17e", pmax(original_scale, .Machine[["double.xmin"]]))
   rms_terms = paste0("(", units, ")*SQRT(", sum_sql(paste0("w*POWER(", columns, "/(", units, "),2)")), "/", sum_sql("w"), ") AS r", seq_along(columns))
-  rms = DBI::dbGetQuery(conn, paste("SELECT", paste(rms_terms, collapse = ","), "FROM", table))
-  rms = vapply(rms, as.numeric, numeric(1))
-  if (any(!is.finite(rms))) return(list(max_abs = Inf, max_level = Inf, max_relative = Inf))
+  scalars = DBI::dbGetQuery(conn, paste("SELECT", paste(c(rms_terms, global), collapse = ","), "FROM", table))
+  rms = vapply(scalars[paste0("r", seq_along(columns))], as.numeric, numeric(1))
+  if (any(!is.finite(rms))) return(list(max_abs = Inf, max_scaled = Inf, max_level = Inf, max_relative = Inf))
   identified = rms > 128 * .Machine[["double.eps"]] * original_scale
-  list(max_abs = max(residual), max_level = max(residual / pmax(1, original_scale)), max_relative = if (any(identified)) max(residual[identified] / rms[identified]) else 0)
+  list(max_abs = max(residual), max_scaled = max(residual / pmax(original_scale, .Machine[["double.xmin"]])),
+    max_level = max(residual / pmax(1, original_scale)),
+    max_relative = if (any(identified)) max(residual[identified] / rms[identified]) else 0,
+    grouped = if (length(extra)) vapply(row[extra], as.numeric, numeric(1)),
+    global = if (length(global)) scalars)
 }
 
 # Prepare one native-key source shared by bounded moments and SQL CG.

@@ -86,7 +86,8 @@
 #'   steps for this fit. Defaults to `getOption("dbreg.ap_max_iter", 100L)`
 #'   without changing it. Bounded refinement uses at most eight steps; inner
 #'   PCG has a separate cap. See [dbreg-options].
-#' @param ... Additional unused arguments.
+#' @param ... Only the superseded `query_only` alias is accepted. Other unused
+#'   requests raise an error before accessing a source.
 #'
 #' @return A list of class `"dbivreg"` and `"dbreg"`.
 #' @export
@@ -1038,7 +1039,8 @@ dbivreg_diag_unavailable = function(what, e) {
 #'
 #' @md
 #' @param x A `dbivreg` object.
-#' @param ... Additional unused arguments.
+#' @param ... Only the superseded `query_only` alias is accepted. Other unused
+#'   requests raise an error before accessing a source.
 #' @export
 print.dbivreg = function(x, ...) {
   ct = x[["coeftable"]]

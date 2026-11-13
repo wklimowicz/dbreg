@@ -57,6 +57,9 @@ Bug fixes
 - Infinite weights in DuckDB and Spark database sources now produce an early
   validation error, consistent with in-memory inputs.
 
+- Generated SQL identifiers now avoid existing names and case-insensitive
+  duplicates, including collisions between factor dummies and regressors.
+
 - Alternating projections no longer fail with an SQL error when a fixed-effect
   or cluster variable also appears as a regressor. Invalid `dbreg.ap_max_iter`
   and `dbreg.ap_tol` options now produce a clear error.

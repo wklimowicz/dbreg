@@ -48,6 +48,9 @@ New features
 - Added portable learned fixed-effect prediction and `fixef.dbreg()` extraction
   in original trend coordinates (`R/linear-learned.R`, `R/learned-effects.R`,
   `R/fixef.R`), retaining only learned dictionaries under `retain = "prediction"`.
+- Added keyed database-session prediction (`predict(..., row_id = ..., prediction_table = ...)`)
+  for structural OLS models and portable learned effects (`R/sql-prediction.R`,
+  `R/sql-prediction-effects.R`).
 - Added `dbivreg()` for instrumental-variables (2SLS) regression on database
   backends. Uses `fixest`-style IV formulas, e.g. `y ~ x | d ~ z` or
   `y ~ x | fe1 + fe2 | d ~ z`, and supports multiple endogenous regressors,

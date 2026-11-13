@@ -56,7 +56,12 @@ local({
         supplied = generics::augment(fit, data = d)
         expect_identical(supplied[names(d)], expected)
       } else expect_error(generics::augment(fit, data = d), "original R input")
+      result = predict(fit, d[c(1, 11, 18), ], conn = conn, row_id = "id")
+      saved = as.data.frame(result)
       close(fit)
+      expect_identical(as.data.frame(result), saved)
+      expect_error(generics::augment(fit), "no live database session")
+      close(result)
       if (source == "database") DBI::dbRemoveTable(conn, "original")
       expect_identical(sort(DBI::dbListTables(conn)), initial)
     }

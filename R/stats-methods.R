@@ -79,6 +79,10 @@ coef.dbreg = function(object, fe = FALSE, ...) {
 #'   \code{\link[stats]{predict.lm}} for details.
 #' @param level One finite numeric confidence level strictly between zero and
 #'   one. Default is 0.95.
+#' @param conn,table,path Optional connection and database prediction source.
+#'   Provide exactly one of newdata, table or path.
+#' @param row_id Unique nonmissing source key columns for database output.
+#' @param prediction_table Optional new session table owned by the caller.
 #' @param sample Without `newdata`, a retained fit returns the estimation
 #'   sample by default. Use `"original"` to include omitted observations as
 #'   missing predictions.
@@ -88,6 +92,27 @@ coef.dbreg = function(object, fe = FALSE, ...) {
 #' public labels. Missing values and unknown fitted categories return `NA` in
 #' their input positions. Numeric predictors require numeric or logical input.
 #' The original row order is preserved; unrelated columns do not affect it.
+#'
+#' @section Keyed database output:
+#' Supply `row_id` to keep predictions in a database session. This path
+#' supports OLS and GLM models on DuckDB and native Databricks. Fixed-effect
+#' fits require portable learned effects saved by prediction retention.
+#' Mundlak and IV database output are unavailable.
+#' Use \code{\link{dbreg-prediction}} to preview, collect or close results.
+#'
+#' Learned character categories use R's `as.character()` labels for R prediction
+#' inputs, preserving the original row keys. Database sources for those categories
+#' accept character, exact integer, or logical columns (logical labels are
+#' `"TRUE"` and `"FALSE"`); floating-point columns require explicit conversion to
+#' the intended character labels. Date categories accept Date columns or canonical
+#' ISO date strings; malformed strings produce missing predictions.
+#'
+#' @section Learned fixed effects:
+#' Fits with `retain = "prediction"` or `"all"` use the saved training
+#' effects on new R data. Predictions are independent of the other rows
+#' supplied and remain available after closing the fit. Unseen groups and
+#' non-estimable combinations return missing values. Learned effects support
+#' point predictions with `interval = "none"`.
 #' 
 #' @section Predicting on "demean" strategy objects:
 #' 
@@ -118,12 +143,22 @@ predict.dbreg = function(
   interval = c("none", "confidence", "prediction"),
   level = 0.95,
   ...,
+  conn = NULL,
+  table = NULL,
+  path = NULL,
+  row_id = NULL,
+  prediction_table = NULL,
   sample = c("estimation", "original")
 ) {
   interval = match.arg(interval)
   sample = match.arg(sample)
-  if (sample == "original" && !is.null(newdata)) {
+  sql = sql_prediction_requested(conn, table, path, row_id, prediction_table)
+  if (sample == "original" && (!is.null(newdata) || sql)) {
     stop("Original-sample prediction uses the retained fitting source.", call. = FALSE)
+  }
+  if (sql) {
+    if (interval != "none") stop("Database prediction does not support intervals.", call. = FALSE)
+    return(predict_keyed_sql(object, newdata, conn, table, path, row_id, prediction_table))
   }
   if (interval != "none") validate_confidence_level(level)
   if (sample == "original") require_inference_rows(object)

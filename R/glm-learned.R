@@ -106,6 +106,15 @@ learned_design_null = function(conn, sys, info, source, x, budget, limits) {
   solver[["null_basis"]]
 }
 
+learned_effect_operations = function(state) {
+  ops = state[["ops"]]
+  if (!is.null(ops)) return(ops)
+  dictionaries = state[["dictionaries"]]
+  lapply(seq_along(dictionaries), function(i) {
+    list(group = i, index = state[["starts"]][i] + seq_along(dictionaries[[i]][["keys"]]))
+  })
+}
+
 predict_learned_effects = function(object, data) {
   state = object[["fitted_state"]]
   design = linear_prediction_matrix(object, data, all_columns = TRUE, ids = state[["design_ids"]])
@@ -118,11 +127,8 @@ predict_learned_effects = function(object, data) {
     match(composite_key(data, dict[["columns"]], dict[["types"]]), dict[["keys"]])
   })
   eta = offset + if (is.null(state[["constant"]])) 0 else state[["constant"]]
-  ops = state[["ops"]]
+  ops = learned_effect_operations(state)
   values = indices = list()
-  if (is.null(ops)) ops = lapply(seq_along(groups), function(i) {
-    list(group = i, index = state[["starts"]][i] + seq_along(state[["dictionaries"]][[i]][["keys"]]))
-  })
   for (i in seq_along(ops)) {
     op = ops[[i]]
     g = groups[[op[["group"]]]]

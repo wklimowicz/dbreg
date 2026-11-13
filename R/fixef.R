@@ -1,22 +1,27 @@
 # Keys are concatenated UTF-8 components prefixed with their byte lengths.
 # Decoding preserves large integer and adjacent floating-point identities.
+decode_learned_key = function(key, width) {
+  bytes = charToRaw(key)
+  colon = as.raw(58)
+  offset = 1L
+  values = character(width)
+  for (i in seq_len(width)) {
+    delimiter = match(colon, bytes[seq.int(offset, length(bytes))]) + offset - 1L
+    count = as.integer(rawToChar(bytes[seq.int(offset, delimiter - 1L)]))
+    offset = delimiter + 1L
+    if (count) {
+      values[i] = rawToChar(bytes[seq.int(offset, length.out = count)])
+      Encoding(values[i]) = "UTF-8"
+    }
+    offset = offset + count
+  }
+  values
+}
+
 learned_effect_labels = function(dictionary) {
   width = length(dictionary[["columns"]])
-  colon = as.raw(58)
   vapply(dictionary[["keys"]], function(key) {
-    bytes = charToRaw(key)
-    offset = 1L
-    values = character(width)
-    for (i in seq_len(width)) {
-      delimiter = match(colon, bytes[seq.int(offset, length(bytes))]) + offset - 1L
-      count = as.integer(rawToChar(bytes[seq.int(offset, delimiter - 1L)]))
-      offset = delimiter + 1L
-      if (count) {
-        values[i] = rawToChar(bytes[seq.int(offset, length.out = count)])
-        Encoding(values[i]) = "UTF-8"
-      }
-      offset = offset + count
-    }
+    values = decode_learned_key(key, width)
     if (width == 1L) values else paste0("(", paste(encodeString(values, quote = '"'), collapse = ", "), ")")
   }, character(1), USE.NAMES = FALSE)
 }
@@ -43,12 +48,7 @@ fixef.dbreg = function(object, ...) {
   dictionaries = state[["dictionaries"]]
   group_names = vapply(dictionaries, function(dict) paste(dict[["columns"]], collapse = "^"), character(1))
   labels = lapply(dictionaries, learned_effect_labels)
-  ops = state[["ops"]]
-  if (is.null(ops)) {
-    ops = lapply(seq_along(dictionaries), function(i) {
-      list(group = i, index = state[["starts"]][i] + seq_along(dictionaries[[i]][["keys"]]))
-    })
-  }
+  ops = learned_effect_operations(state)
   intercepts = seq_along(dictionaries)
   output = vector("list", length(ops))
   names(output) = vapply(ops, function(op) {

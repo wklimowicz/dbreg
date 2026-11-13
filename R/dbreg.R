@@ -613,6 +613,14 @@ process_dbreg_inputs = function(inputs) {
 
   db_setup = setup_db_connection(conn, table, data, path, caller = "dbreg", resources = inputs[["resources"]])
   conn = db_setup[["conn"]]
+  inherited = attr(conn, "dbreg_resource_lease", exact = TRUE)
+  if (!is.null(inherited)) {
+    retained_fit_connection(inherited)
+    inputs[["resources"]][["parent_session"]] = inherited[["session"]]
+    if (!is.null(inputs[["sample_table"]]) && isTRUE(inherited[["session"]][["own_conn"]])) {
+      stop("Sample exports require a caller-owned connection.", call. = FALSE)
+    }
+  }
   own_conn = db_setup[["own_conn"]]
   registered_table = db_setup[["registered_table"]]
   # Record the connection straight away so the caller can release it, even if
@@ -1426,7 +1434,8 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
       result[["retained_inference"]] = state[["inference"]]
     }
     tables = c(if (keep_sample) state[["name"]], result[["fitted_state"]][["tables"]])
-    if (length(tables)) result[["resource_state"]] = retain_fit_resources(inputs[["resources"]], tables)
+    if (length(tables)) result[["resource_state"]] = retain_fit_resources(inputs[["resources"]], tables,
+      session = inputs[["resources"]][["parent_session"]])
     result[["retain"]] = inputs[["retain"]]
     result[["row_id"]] = inputs[["public_row_id"]]
   }

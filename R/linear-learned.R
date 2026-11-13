@@ -21,18 +21,11 @@ learned_linear_recipe_sql = function(recipe, conn, source, dictionaries, schema)
   if (kind %in% c("indicator", "i")) {
     levels = recipe[["levels"]]
     if (!is.null(recipe[["dictionary"]])) levels = dictionaries[[recipe[["dictionary"]]]]
-    type = recipe[["key_type"]]
     value = recipe[["value"]]
-    if (is.null(type) && is.logical(schema[[recipe[["variable"]]]])) {
-      type = "logical"
-      value = as.logical(value)
-    }
-    if (is.null(type)) {
-      type = if (inherits(levels, "integer64")) "integer" else if (inherits(levels, "Date")) "date" else
-        if (is.numeric(levels)) "numeric" else "character"
-      if (type == "character") variable = sql_cast_text(conn, variable)
-    }
-    target = category_sql_literals(conn, value, type)
+    type = sql_prediction_key_type(recipe, levels)
+    variable = sql_prediction_category_value(conn, variable, type, schema[[recipe[["variable"]]]])
+    if (type == "integer") variable = paste0("TRY_CAST(", variable, " AS ", sql_prediction_integer_type(conn), ")")
+    target = sql_prediction_category_literals(conn, value, type)
     # DOUBLE indicators: DuckDB types 1.0/0.0 as DECIMAL, whose products overflow.
     out = sql_cast_double(paste0("(CASE WHEN ", variable, "=", target, " THEN 1.0 ELSE 0.0 END)"), conn)
     if (length(recipe[["second"]])) out = paste0(out, "*", sql_cast_double(source(recipe[["second"]]), conn))

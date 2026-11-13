@@ -10,6 +10,11 @@
   interval = c("none", "confidence", "prediction"),
   level = 0.95,
   ...,
+  conn = NULL,
+  table = NULL,
+  path = NULL,
+  row_id = NULL,
+  prediction_table = NULL,
   sample = c("estimation", "original")
 )
 }
@@ -36,6 +41,13 @@ public labels. Missing values and unknown fitted categories return `NA` in
 their input positions. Numeric predictors require numeric or logical input.
 The original row order is preserved; unrelated columns do not affect it.}
 
+\item{conn, table, path}{Optional connection and database prediction source.
+Provide exactly one of newdata, table or path.}
+
+\item{row_id}{Unique nonmissing source key columns for database output.}
+
+\item{prediction_table}{Optional new session table owned by the caller.}
+
 \item{sample}{Without `newdata`, a retained fit returns the estimation
 sample by default. Use `"original"` to include omitted observations as
 missing predictions.}
@@ -43,6 +55,33 @@ missing predictions.}
 \description{
 Predict method for dbreg objects
 }
+\section{Keyed database output}{
+
+Supply `row_id` to keep predictions in a database session. This path
+supports OLS and GLM models on DuckDB and native Databricks. Fixed-effect
+fits require learned effects saved by prediction retention. Database-resident
+effects require their fitted session. R prediction inputs for native Databricks
+are uploaded with explicit SQL types under the prediction upload budget.
+Learned character categories use R's \code{as.character()} labels for R
+prediction inputs, preserving the original row keys. Database sources for
+those categories accept character, exact integer or logical columns; logical
+labels are \code{"TRUE"} and \code{"FALSE"}. Floating-point columns require an
+explicit conversion to the intended character labels. Date categories accept
+Date columns or canonical ISO date strings; malformed strings produce missing
+predictions.
+Mundlak and IV database output are unavailable.
+Use \code{\link{dbreg-prediction}} to preview, collect or close results.
+}
+
+\section{Learned fixed effects}{
+
+Fits with `retain = "prediction"` or `"all"` use the saved training
+effects on new R data. Predictions are independent of the other rows
+supplied and remain available after closing the fit. Unseen groups and
+non-estimable combinations return missing values. Learned effects support
+point predictions with `interval = "none"`.
+}
+
 \section{Predicting on "demean" strategy objects}{
 
 

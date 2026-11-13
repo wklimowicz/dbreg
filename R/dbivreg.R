@@ -57,6 +57,8 @@
 #'   nesting convention; external cluster columns use functional nesting checks.
 #' @param sql_only Logical indicating whether to return only the underlying SQL
 #'   query.
+#'   For iterative AP, returns a `dbreg_query_plan` of ordinary-projection SQL
+#'   templates and certificates without fitting. See [dbreg-options].
 #' @param data_only Logical indicating whether to return only the aggregated
 #'   sufficient statistics. Compressed cells use source coordinates; moment
 #'   rows use centered, weight-normalized coordinates with location/scale
@@ -64,6 +66,20 @@
 #' @param drop_missings Logical indicating whether incomplete cases should be
 #'   dropped.
 #' @param verbose Logical indicating whether progress messages are printed.
+#' @param subset Optional logical column name or restricted one-sided predicate
+#'   formula, evaluated before missing-value/weight filtering. See [dbreg()].
+#' @param offset Optional numeric column name or one-sided formula, added to
+#'   the predictor with coefficient one. See [dbreg()].
+#' @param diagnostics Logical indicating whether to run an additional source
+#'   audit aggregate. See [dbreg()].
+#' @param row_id Optional character vector of unique, nonmissing source key
+#'   columns. See [dbreg()].
+#' @param sample_table Optional new temporary table receiving the fitted source
+#'   keys. See [dbreg()].
+#' @param fe_tol Positive per-fit tolerance for fixed-effect projection. Defaults
+#'   to `getOption("dbreg.ap_tol", 1e-10)` without changing that option.
+#' @param fe_max_iter Positive maximum number of projection cycles for this fit.
+#'   Defaults to `getOption("dbreg.ap_max_iter", 100L)` without changing it.
 #' @param ... Additional unused arguments.
 #'
 #' @return A list of class `"dbivreg"` and `"dbreg"`.
@@ -90,6 +106,8 @@ dbivreg = function(
   diagnostics = FALSE,
   row_id = NULL,
   sample_table = NULL,
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   ...
 ) {
   source = normalize_data_source(table, data, path)
@@ -148,6 +166,9 @@ dbivreg = function(
   inputs[["subset"]] = subset
   inputs[["offset"]] = offset
   inputs[["diagnostics"]] = diagnostics
+  inputs[["fe_tol"]] = fe_tol
+  inputs[["fe_max_iter"]] = fe_max_iter
+  validate_fe_controls(inputs)
   # Release any connection/registration we create, including on errors during
   # input processing (process_dbivreg_inputs() records them in `inputs` first)
   on.exit(release_fit_resources(inputs[["resources"]]), add = TRUE)
@@ -422,6 +443,7 @@ execute_iv_moments_strategy = function(inputs) {
 #' @keywords internal
 execute_iv_demean_strategy = function(inputs) {
   frame = build_demean_frame(inputs, inputs[["union_sql"]], inputs[["union_names"]], tag = "dbivreg")
+  if (inherits(frame, "dbreg_query_plan")) return(frame)
   on.exit(frame[["cleanup"]](), add = TRUE)
   dbivreg_run_frame(inputs, frame, "demeaned IV")
 }

@@ -10,7 +10,7 @@
 \item{object}{A `dbreg` object.}
 
 \item{fe}{Include covariance rows and columns for explicit fixed effects?
-Default is \code{FALSE}, matching \code{\link[=coef.dbreg]{coef()}}.}
+Default is `FALSE`, matching [coef()].}
 
 \item{...}{Additional arguments (currently unused, except to capture
 superseded arguments).}

@@ -23,6 +23,10 @@ New features
   table write, controlled by the new `dbreg.ap_method` and
   `dbreg.ap_batch_size` options.
 - New `?dbreg-options` help page documenting all global options.
+- Alternating projections now certify convergence relative to column variation,
+  accelerate with certified Irons-Tuck steps, accept per-fit `fe_tol` and
+  `fe_max_iter` controls in `dbreg()` and `dbivreg()`, and expose executable
+  `dbreg_query_plan` objects under `sql_only = TRUE`.
 - Added `dbivreg()` for instrumental-variables (2SLS) regression on database
   backends. Uses `fixest`-style IV formulas, e.g. `y ~ x | d ~ z` or
   `y ~ x | fe1 + fe2 | d ~ z`, and supports multiple endogenous regressors,

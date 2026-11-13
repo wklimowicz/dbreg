@@ -28,6 +28,8 @@ dbreg(
   fixef_rm = c("none", "singletons"),
   row_id = NULL,
   sample_table = NULL,
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   ...
 )
 }
@@ -121,7 +123,7 @@ variable name. Only single-variable clustering is currently supported.}
 
 \item{ssc}{Small-sample policy: \code{"full"} (default), \code{"nested"}, \code{"none"},
 or a named list with \code{K.adj}, \code{K.fixef}, \code{K.exact}, \code{G.adj}, \code{G.df}, and
-\code{t.df}, as in \code{\link[fixest]{ssc}}. \code{"full"} counts all fixed-effect parameters;
+\code{t.df}, as in \code{fixest::ssc()}. \code{"full"} counts all fixed-effect parameters;
 \code{"nested"} excludes effects nested in the cluster; \code{"none"} excludes
 fixed-effect parameters. Mundlak group means remain ordinary regressors.
 List defaults are \code{K.adj=TRUE}, \code{K.fixef="nonnested"}, \code{K.exact=FALSE},
@@ -134,14 +136,15 @@ positive residual df and, for clustering, at least two clusters. Under
 \code{K.exact=FALSE}, clustering directly on an FE uses the declared matching-FE
 nesting convention; external cluster columns use functional nesting checks.}
 
-\item{sql_only}{Logical indicating whether only the underlying compression
-SQL query should be returned (i.e., no computation will be performed).
-Default is \code{FALSE}.}
+\item{sql_only}{Logical indicating whether to return only the underlying SQL
+query (default \code{FALSE}). For iterative AP, returns a \code{dbreg_query_plan}
+of ordinary-projection SQL templates and certificates without fitting.
+See \link{dbreg-options}.}
 
 \item{data_only}{Logical indicating whether only the compressed dataset
 should be returned (i.e., no regression is run). Default is \code{FALSE}.
 Compressed cells use source coordinates. Moment rows use centered, weight-
-normalized coordinates and include \code{dbreg_moment_center_*} and
+normalized coordinates and include \verb{dbreg_moment_center_*} and
 \code{dbreg_moment_weight_scale} metadata. Raw compressed sums returned here
 remain subject to the numeric range of R doubles.}
 
@@ -159,14 +162,8 @@ by supplying \code{verbose = TRUE}, or set globally via
 
 \item{factor_refs}{Optional named reference levels for ordinary categorical
 regressors. Naming a numeric-coded column treats it as categorical. Each
-entry must identify one observed level; i() terms use their own selectors.
+entry must identify one observed level; \code{i()} terms use their own selectors.
 Exact fitted coding is retained for prediction across strategies.}
-
-\item{fixef_rm}{Keep all eligible observations (\code{"none"}, default) or
-recursively remove singleton fixed-effect groups (\code{"singletons"}).
-Removal uses the original eligible sample before compression and supports
-DuckDB and native Databricks. Requires missing-row filtering and execution;
-\code{sql_only=TRUE} cannot express this data-dependent pruning.}
 
 \item{subset}{Optional logical column name or restricted one-sided predicate
 formula, evaluated before missing-value/weight filtering. Supports column
@@ -185,6 +182,10 @@ subset-selected, missing-by-role, nonpositive-weight and invalid-offset
 counts? Default is \code{FALSE}. Counts may overlap. Fitted objects return
 \code{sample_diagnostics} and \code{nobs_input}; inspection modes skip the audit.}
 
+\item{fixef_rm}{Character string controlling singleton fixed-effect removal:
+\code{"none"} (default) keeps all observations; \code{"singletons"} iteratively
+prunes observations belonging to singleton fixed-effect groups.}
+
 \item{row_id}{Optional character vector of unique, nonmissing source key
 columns. Keys are validated before subset/missing/weight filtering, using
 native SQL tuples; no key values are collected for validation.}
@@ -196,6 +197,12 @@ for consistent fitting and keys. Existing relations are never replaced.
 The caller owns the export; private intermediates are cleaned on errors
 and success. Unacknowledged cleanup remains queued for synchronous retry.
 Cannot be combined with \code{sql_only} or \code{data_only}.}
+
+\item{fe_tol}{Positive per-fit tolerance for fixed-effect projection. Defaults
+to \code{getOption("dbreg.ap_tol", 1e-10)} without changing that option.}
+
+\item{fe_max_iter}{Positive maximum number of projection cycles for this fit.
+Defaults to \code{getOption("dbreg.ap_max_iter", 100L)} without changing it.}
 
 \item{...}{Additional arguments. Currently ignored, except to handle
 superseded arguments for backwards compatibility.}

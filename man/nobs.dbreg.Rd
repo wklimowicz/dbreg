@@ -8,8 +8,13 @@
 }
 \arguments{
 \item{object}{A `dbreg` or `dbivreg` object.}
+
 \item{...}{Unused.}
 }
-\value{Number of source rows in the estimation sample, not the number of
-compressed cells or aggregated moment rows. Weights do not change this count.}
-\description{Number of observations used in a dbreg fit}
+\value{
+Number of source rows in the estimation sample, not the number of
+  compressed cells or aggregated moment rows. Weights do not change this count.
+}
+\description{
+Number of observations used in a dbreg fit
+}

@@ -43,6 +43,17 @@ cross_moments = function(moment_df, vars, y, intercept = TRUE) {
     attr(S, "centers") = setNames(vapply(centers, function(name) moment_df[[name]], numeric(1)), c(vars, y))
     attr(S, "weight_scale") = moment_df[["dbreg_moment_weight_scale"]]
   }
+  # Projection roundoff must not become an identified regressor. Compare each
+  # column with its original centered scale, preserving small within variation
+  # even when the raw regressor has a large constant location.
+  original = paste0("dbreg_moment_original_", seq_along(vars))
+  if (length(vars) && all(original %in% names(moment_df))) {
+    maximum = vapply(original, function(name) as.numeric(moment_df[[name]]), numeric(1))
+    floor = as.numeric(moment_df[["sum_w"]]) * (128 * .Machine[["double.eps"]] * maximum)^2
+    absorbed = vars[diag(S[vars, vars, drop = FALSE]) <= floor]
+    S[absorbed, ] = 0
+    S[, absorbed] = 0
+  }
   S
 }
 

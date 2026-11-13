@@ -21,12 +21,19 @@ Alternating projections (AP) recover exact fixed effects when the
 \code{"demean"} strategy can't demean analytically, e.g. for unbalanced or
 weighted two-way FE, or three or more FE. Used by \code{\link[=dbreg]{dbreg()}} and \code{\link[=dbivreg]{dbivreg()}}.
 \itemize{
+\item \code{dbreg.ap_accelerate}: Use Irons-Tuck extrapolation after two AP cycles.
+Default \code{TRUE}. The same absolute/relative certificate applies; a step
+that does not reduce the residual is followed by plain AP. \code{FALSE} restores
+ordinary AP. Fitted objects report \code{ap_iterations}, \code{ap_accelerated_steps},
+\code{ap_max_abs}, \code{ap_max_relative} and \code{ap_method} when iterative AP is used.
+Iterations count projection cycles, including two per extrapolation.
 \item \code{dbreg.ap_max_iter}: Maximum number of AP cycles. Default \code{100}.
-\item \code{dbreg.ap_tol}: Convergence tolerance, i.e. the largest absolute
-(weighted) group mean left in any demeaned variable. Default \code{1e-10}. On
-large datasets, AP can stall around \code{1e-8} because of floating-point
-noise, so a looser tolerance (e.g. \code{1e-7}) or \code{strategy = "mundlak"} may
-be needed.
+\item \code{dbreg.ap_tol}: Convergence tolerance for both the largest absolute
+(weighted) group mean and that mean relative to each projected column's
+weighted RMS. Columns below original-scale floating-point roundoff are
+treated as absorbed. Default \code{1e-10}. The relative check prevents a small
+but unfinished FE-only column from appearing identified after rescaling.
+Large datasets may need a looser tolerance (e.g. \code{1e-7}).
 \item \code{dbreg.ap_method}: How each AP cycle is computed in SQL. \code{"join"} writes
 group means to a table and joins them back, once per fixed effect.
 \code{"window"} uses window functions instead, chaining several cycles into a

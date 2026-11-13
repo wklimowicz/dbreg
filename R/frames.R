@@ -93,12 +93,13 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     message(sprintf("[%s] Using alternating projections for FE demeaning", tag))
   }
   if (use_ap && sql_only) {
-    stop(sprintf("[%s] sql_only is not supported for alternating projections.", tag), call. = FALSE)
+    return(dbreg_ap_query_plan(inputs, x_sql, x_names))
   }
 
   cleanup = function() invisible(NULL)
   if (use_ap) {
     ap_res = dbreg_alternating_projections(inputs, x_sql, x_names)
+    inputs[["ap_diagnostics"]] = ap_res[c("iterations", "accelerated_steps", "max_abs", "max_relative", "method")]
     ap_tables = c(ap_res[["table"]], ap_res[["base_table"]])
     cleanup = function() {
       backend = detect_backend(conn)[["name"]]
@@ -171,7 +172,8 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
       sql_count(conn, "n_total"),
       fe_count_terms
     ),
-    cleanup = cleanup
+    cleanup = cleanup,
+    rank_values = if (use_ap) ap_res[["original_scale"]] else NULL
   )
 }
 
@@ -189,6 +191,20 @@ frame_moments_sql = function(frame, y, x, conn) {
   variables = c(x, y)
   fields = paste0("dbreg_moment_center_", seq_along(variables))
   w = frame[["weights_expr"]]
+  rank_sql = rank_join = ""
+  rank_terms = character()
+  if (length(x) && !is.null(frame[["rank_values"]])) {
+    original = sql_cast_double(sprintf("%.17g", unname(frame[["rank_values"]][x])), conn)
+    rank_terms = sprintf("MAX(%s) AS dbreg_moment_original_%d", original, seq_along(x))
+  } else if (length(x) && !is.null(frame[["rank_source"]])) {
+    rank_fields = paste0("dbreg_moment_original_", seq_along(x))
+    rank_cte = moment_sql_names("dbreg_original", frame[["cte_sql"]], conn)[[1L]]
+    rank_sql = paste0(",\n", rank_cte, " AS (SELECT ",
+      paste(sprintf("(MAX(%s)/2-MIN(%s)/2) AS %s", sql_cast_double(x, conn), sql_cast_double(x, conn), rank_fields), collapse = ","),
+      " FROM ", frame[["rank_source"]], ")")
+    rank_terms = paste0("MAX(", rank_fields, ") AS ", rank_fields)
+    rank_join = paste0(" CROSS JOIN ", rank_cte)
+  }
   private = moment_sql_names(c("dbreg_moment_location", fields, "dbreg_moment_weight_scale"),
     frame[["cte_sql"]], conn)
   location_name = private[[1L]]
@@ -207,11 +223,12 @@ frame_moments_sql = function(frame, y, x, conn) {
     centered = setNames(vapply(variables, col, character(1)), variables)
     location_terms = c(paste0("MAX(0.0) AS ", fields), "MAX(1.0) AS dbreg_moment_weight_scale")
   }
+
   terms = build_weighted_moment_terms(conn = conn, y_sql = centered[[y]], x_sql = unname(centered[x]),
     weights_expr = if (!is.null(w)) paste0("(", sql_cast_double(w, conn), ")/", weight_field),
     intercept = frame[["intercept"]], prefix_terms = frame[["prefix_terms"]])
-  paste0(frame[["cte_sql"]], stats, ",\nmoments AS (SELECT ",
-    paste(c(terms, location_terms), collapse = ",\n"), " FROM ", frame[["cte_name"]],
-    location_join, ") SELECT * FROM moments")
+  paste0(frame[["cte_sql"]], rank_sql, stats, ",\nmoments AS (SELECT ",
+    paste(c(terms, location_terms, rank_terms), collapse = ",\n"), " FROM ", frame[["cte_name"]],
+    rank_join, location_join, ") SELECT * FROM moments")
 }
 

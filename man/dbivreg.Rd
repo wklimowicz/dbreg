@@ -26,6 +26,8 @@ dbivreg(
   diagnostics = FALSE,
   row_id = NULL,
   sample_table = NULL,
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   ...
 )
 }
@@ -68,7 +70,7 @@ or character string.}
 
 \item{ssc}{Small-sample policy: \code{"full"} (default), \code{"nested"}, \code{"none"},
 or a named list with \code{K.adj}, \code{K.fixef}, \code{K.exact}, \code{G.adj}, \code{G.df}, and
-\code{t.df}, as in \code{\link[fixest]{ssc}}. \code{"full"} counts all fixed-effect parameters;
+\code{t.df}, as in \code{fixest::ssc()}. \code{"full"} counts all fixed-effect parameters;
 \code{"nested"} excludes effects nested in the cluster; \code{"none"} excludes
 fixed-effect parameters. Mundlak group means remain ordinary regressors.
 List defaults are \code{K.adj=TRUE}, \code{K.fixef="nonnested"}, \code{K.exact=FALSE},
@@ -82,7 +84,9 @@ positive residual df and, for clustering, at least two clusters. Under
 nesting convention; external cluster columns use functional nesting checks.}
 
 \item{sql_only}{Logical indicating whether to return only the underlying SQL
-query.}
+query.
+For iterative AP, returns a \code{dbreg_query_plan} of ordinary-projection SQL
+templates and certificates without fitting. See \link{dbreg-options}.}
 
 \item{data_only}{Logical indicating whether to return only the aggregated
 sufficient statistics. Compressed cells use source coordinates; moment
@@ -95,33 +99,25 @@ dropped.}
 \item{verbose}{Logical indicating whether progress messages are printed.}
 
 \item{subset}{Optional logical column name or restricted one-sided predicate
-formula, evaluated before missing-value/weight filtering. Supports column
-comparisons, arithmetic, boolean operators, \code{is.na()} and literal \code{\%in\%}.
-Supports DuckDB and native Databricks; positional vectors are rejected.
-Weights are validated on the source before subsetting.}
+formula, evaluated before missing-value/weight filtering. See \code{\link[=dbreg]{dbreg()}}.}
 
-\item{offset}{Optional numeric column name or one-sided formula such as \code{~o},
-added to the predictor with coefficient one. Estimation uses outcome minus
-offset. Rows with nonfinite outcome, offset or adjusted difference are
-excluded. Supports DuckDB/native Databricks. Prediction requires newdata
-containing the offset; intervals condition on its known value.}
+\item{offset}{Optional numeric column name or one-sided formula, added to
+the predictor with coefficient one. See \code{\link[=dbreg]{dbreg()}}.}
 
-\item{diagnostics}{Logical. Run an additional source aggregate for input,
-subset-selected, missing-by-role, nonpositive-weight and invalid-offset
-counts? Default is \code{FALSE}. Counts may overlap. Fitted objects return
-\code{sample_diagnostics} and \code{nobs_input}; inspection modes skip the audit.}
+\item{diagnostics}{Logical indicating whether to run an additional source
+audit aggregate. See \code{\link[=dbreg]{dbreg()}}.}
 
 \item{row_id}{Optional character vector of unique, nonmissing source key
-columns. Keys are validated before subset/missing/weight filtering, using
-native SQL tuples; no key values are collected for validation.}
+columns. See \code{\link[=dbreg]{dbreg()}}.}
 
 \item{sample_table}{Optional new temporary table receiving the fitted source
-keys. Requires \code{row_id} and a caller-owned connection (including inference
-from a lazy table). DuckDB/native Databricks exports use an owned snapshot
-for consistent fitting and keys. Existing relations are never replaced.
-The caller owns the export; private intermediates are cleaned on errors
-and success. Unacknowledged cleanup remains queued for synchronous retry.
-Cannot be combined with \code{sql_only} or \code{data_only}.}
+keys. See \code{\link[=dbreg]{dbreg()}}.}
+
+\item{fe_tol}{Positive per-fit tolerance for fixed-effect projection. Defaults
+to \code{getOption("dbreg.ap_tol", 1e-10)} without changing that option.}
+
+\item{fe_max_iter}{Positive maximum number of projection cycles for this fit.
+Defaults to \code{getOption("dbreg.ap_max_iter", 100L)} without changing it.}
 
 \item{...}{Additional unused arguments.}
 }
@@ -140,17 +136,4 @@ backend. The current implementation supports three exact strategies:
 Multi-way fixed effects use exact alternating projections when there are
 more than two fixed effects, or when two-way fixed effects are unbalanced or
 weights are supplied.
-}
-\section{Sample audits}{
-
-With \code{diagnostics = TRUE}, \code{sample_diagnostics} reports original source rows
-(\code{n_input}), subset-selected rows (\code{n_selected}), final original observations
-(\code{n_fitted}) and their difference (\code{n_dropped}). \code{detail} gives missing counts
-by public source role before filtering; DuckDB/Spark numeric NaNs are missing.
-Nonpositive-weight and invalid-offset counts also refer to the original
-source. An invalid offset has a nonfinite operand or adjusted difference.
-These counts overlap and cannot be added to reconstruct the fitted count.
-\code{query_string} reproduces the source aggregate, with columns mapped by
-\code{count_aliases}. Only metadata and counts are collected. Without an audit,
-\code{nobs_input} is \code{NA}; \code{sql_only} and \code{data_only} skip auditing.
 }

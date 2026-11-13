@@ -8,8 +8,10 @@ dbreg_alternating_projections(
   inputs,
   xvars_sql,
   xvar_names,
-  max_iter = getOption("dbreg.ap_max_iter", 100L),
-  tol = getOption("dbreg.ap_tol", 1e-10)
+  max_iter = if (is.null(inputs[["fe_max_iter"]])) getOption("dbreg.ap_max_iter", 100L)
+    else inputs[["fe_max_iter"]],
+  tol = if (is.null(inputs[["fe_tol"]])) getOption("dbreg.ap_tol", 1e-10) else
+    inputs[["fe_tol"]]
 )
 }
 \description{

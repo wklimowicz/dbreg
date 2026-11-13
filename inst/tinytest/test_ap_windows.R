@@ -89,6 +89,9 @@ for (case in cases) {
 }
 
 # Batching: checks after each batch, final partial batch honours max_iter ----
+# This contract concerns ordinary AP; accelerated steps use two cycles.
+accelerate_before_batch = getOption("dbreg.ap_accelerate")
+options(dbreg.ap_accelerate = FALSE)
 options(dbreg.ap_method = "window", dbreg.ap_batch_size = 6L, dbreg.ap_max_iter = 14L, dbreg.ap_tol = 1e-30)
 iters = character(0)
 expect_error(withCallingHandlers(
@@ -101,6 +104,7 @@ expect_error(withCallingHandlers(
   }
 ), "did not converge within 14 iterations")
 expect_equal(iters, c("6", "12", "14"), info = "Convergence checked after cycles 6, 12 and 14")
+options(dbreg.ap_accelerate = accelerate_before_batch)
 expect_equal(sort(DBI::dbListTables(con)), c("decimal_fixture", "fixture"), info = "Tables dropped on failure")
 
 # Validation ----

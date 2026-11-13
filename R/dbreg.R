@@ -101,9 +101,10 @@
 #'   positive residual df and, for clustering, at least two clusters. Under
 #'   `K.exact=FALSE`, clustering directly on an FE uses the declared matching-FE
 #'   nesting convention; external cluster columns use functional nesting checks.
-#' @param sql_only Logical indicating whether only the underlying compression
-#'   SQL query should be returned (i.e., no computation will be performed).
-#'   Default is `FALSE`.
+#' @param sql_only Logical indicating whether to return only the underlying SQL
+#'   query (default `FALSE`). For iterative AP, returns a `dbreg_query_plan`
+#'   of ordinary-projection SQL templates and certificates without fitting.
+#'   See [dbreg-options].
 #' @param data_only Logical indicating whether only the compressed dataset
 #'   should be returned (i.e., no regression is run). Default is `FALSE`.
 #'   Compressed cells use source coordinates. Moment rows use centered, weight-
@@ -148,6 +149,13 @@
 #'   regressors. Naming a numeric-coded column treats it as categorical. Each
 #'   entry must identify one observed level; `i()` terms use their own selectors.
 #'   Exact fitted coding is retained for prediction across strategies.
+#' @param fixef_rm Character string controlling singleton fixed-effect removal:
+#'   `"none"` (default) keeps all observations; `"singletons"` iteratively
+#'   prunes observations belonging to singleton fixed-effect groups.
+#' @param fe_tol Positive per-fit tolerance for fixed-effect projection. Defaults
+#'   to `getOption("dbreg.ap_tol", 1e-10)` without changing that option.
+#' @param fe_max_iter Positive maximum number of projection cycles for this fit.
+#'   Defaults to `getOption("dbreg.ap_max_iter", 100L)` without changing it.
 #' @param ... Additional arguments. Currently ignored, except to handle
 #'   superseded arguments for backwards compatibility.
 #'
@@ -406,6 +414,8 @@ dbreg = function(
   fixef_rm = c("none", "singletons"),
   row_id = NULL,
   sample_table = NULL,
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   ...
 ) {
 
@@ -459,6 +469,9 @@ dbreg = function(
   inputs[["offset"]] = offset
   inputs[["diagnostics"]] = diagnostics
   inputs[["fixef_rm"]] = fixef_rm
+  inputs[["fe_tol"]] = fe_tol
+  inputs[["fe_max_iter"]] = fe_max_iter
+  validate_fe_controls(inputs)
   # Release any connection/registration/temp tables we create, including on errors during
   # input processing (process_dbreg_inputs() records them in `inputs` first)
   on.exit({
@@ -840,8 +853,8 @@ dbreg_alternating_projections = function(
   inputs,
   xvars_sql,
   xvar_names,
-  max_iter = getOption("dbreg.ap_max_iter", 100L),
-  tol = getOption("dbreg.ap_tol", 1e-10)
+  max_iter = if (is.null(inputs[["fe_max_iter"]])) getOption("dbreg.ap_max_iter", 100L) else inputs[["fe_max_iter"]],
+  tol = if (is.null(inputs[["fe_tol"]])) getOption("dbreg.ap_tol", 1e-10) else inputs[["fe_tol"]]
 ) {
   env2env(inputs, environment(), c(
     "conn", "from_statement", "fe", "yvar", "weights", "cluster_var",
@@ -903,98 +916,117 @@ dbreg_alternating_projections = function(
   create_temp_table_as(conn, base_table, base_sql, backend)
 
   vars_all = c(yvar, xvar_names)
+  original = dbGetQuery(conn, sql_ap_original_scale(base_table, vars_all, conn))
+  original_scale = vapply(original, as.numeric, numeric(1))
+  roundoff = 128 * .Machine[["double.eps"]] * original_scale
   tilde_names = paste0(vars_all, "_tilde")
-  mean_names = paste0(vars_all, "_mean")
 
   # Iterate in double precision (e.g. averaging DECIMAL inputs keeps their
   # fixed scale on some backends)
-  tilde_cols = sprintf("%s AS %s", sql_cast_double(vars_all, conn), tilde_names)
-  init_sql = paste0(
-    "SELECT ",
-    paste(c(id_cols, "__w", tilde_cols), collapse = ", "),
-    " FROM ",
-    base_table
-  )
+  init_sql = sql_ap_initialization(base_table, vars_all, id_cols, conn)
   create_temp_table_as(conn, cur_table, init_sql, backend)
 
   # Windows run `batch_size` cycles per table write (fewer writes, but up to
   # batch_size - 1 extra cycles past convergence); joins check every cycle.
   iter = 0L
+  accelerate = ap_accelerate()
+  plain_next = FALSE
+  previous_abs = Inf
+  accelerated_steps = 0L
   while (iter < max_iter) {
-    cycles = min(batch_size, max_iter - iter)
-    iter = iter + cycles
-    if (use_windows) {
-      window_sql = sql_ap_window_sweeps(cur_table, c(id_cols, "__w"), tilde_names, fe, cycles)
-      create_temp_table_as(conn, alt_table, window_sql, backend)
+    accelerated = accelerate && !plain_next && max_iter - iter >= 2L
+    if (accelerated) {
+      # Irons-Tuck: two cycles keeping X and F(X), then one extrapolation.
+      iter = iter + 2L
+      accelerated_steps = accelerated_steps + 1L
+      if (use_windows) {
+        create_temp_table_as(conn, alt_table, sql_ap_window_irons_tuck(cur_table, c(id_cols, "__w"), tilde_names, fe), backend)
+        drop_table_if_exists(conn, cur_table, backend)
+        tmp = cur_table
+        cur_table = alt_table
+        alt_table = tmp
+      } else {
+        carried = character()
+        for (snapshot in c("ita", "itb")) {
+          for (k in seq_along(fe)) {
+            create_temp_table_as(conn, mean_table, sql_ap_group_means(cur_table, vars_all, fe[[k]]), backend)
+            update_sql = sql_ap_join_projection(cur_table, mean_table, c(id_cols, carried), vars_all, fe[[k]],
+              snapshot = if (k == 1L) snapshot else NULL)
+            create_temp_table_as(conn, alt_table, update_sql, backend)
+            drop_table_if_exists(conn, cur_table, backend)
+            drop_table_if_exists(conn, mean_table, backend)
+            tmp = cur_table
+            cur_table = alt_table
+            alt_table = tmp
+            if (k == 1L) carried = c(carried, paste0(vars_all, "_", snapshot))
+          }
+        }
+      }
+      alpha = ap_irons_tuck_alpha(dbGetQuery(conn, sql_ap_irons_tuck_moments(cur_table, tilde_names)), length(tilde_names))
+      create_temp_table_as(conn, alt_table, sql_ap_irons_tuck_step(cur_table, c(id_cols, "__w"), tilde_names, alpha), backend)
       drop_table_if_exists(conn, cur_table, backend)
       tmp = cur_table
       cur_table = alt_table
       alt_table = tmp
     } else {
-      for (fe_k in fe) {
-        mean_cols = vapply(vars_all, function(v) {
-          sprintf("SUM(__w * %s_tilde) / SUM(__w) AS %s_mean", v, v)
-        }, character(1))
-        mean_sql = paste0(
-          "SELECT ",
-          fe_k,
-          ", ",
-          paste(mean_cols, collapse = ", "),
-          " FROM ",
-          cur_table,
-          " GROUP BY ",
-          fe_k
-        )
-        create_temp_table_as(conn, mean_table, mean_sql, backend)
-
-        update_cols = c(
-          sprintf("t.%s", id_cols),
-          "t.__w",
-          sprintf("t.%s_tilde - m.%s_mean AS %s_tilde", vars_all, vars_all, vars_all)
-        )
-        update_sql = paste0(
-          "SELECT ",
-          paste(update_cols, collapse = ", "),
-          " FROM ",
-          cur_table,
-          " t JOIN ",
-          mean_table,
-          " m ON t.",
-          fe_k,
-          " = m.",
-          fe_k
-        )
-        create_temp_table_as(conn, alt_table, update_sql, backend)
-
+      cycles = min(batch_size, max_iter - iter)
+      iter = iter + cycles
+      if (use_windows) {
+        window_sql = sql_ap_window_sweeps(cur_table, c(id_cols, "__w"), tilde_names, fe, cycles)
+        create_temp_table_as(conn, alt_table, window_sql, backend)
         drop_table_if_exists(conn, cur_table, backend)
-        drop_table_if_exists(conn, mean_table, backend)
         tmp = cur_table
         cur_table = alt_table
         alt_table = tmp
+      } else {
+        for (fe_k in fe) {
+          mean_sql = sql_ap_group_means(cur_table, vars_all, fe_k)
+          create_temp_table_as(conn, mean_table, mean_sql, backend)
+
+          update_sql = sql_ap_join_projection(cur_table, mean_table, id_cols, vars_all, fe_k)
+          create_temp_table_as(conn, alt_table, update_sql, backend)
+
+          drop_table_if_exists(conn, cur_table, backend)
+          drop_table_if_exists(conn, mean_table, backend)
+          tmp = cur_table
+          cur_table = alt_table
+          alt_table = tmp
+        }
       }
     }
 
-    # Convergence check: max absolute weighted group mean across all FEs
-    # in a single UNION ALL query.
-    mean_cols = paste(
-      sprintf("SUM(__w * %s_tilde) / SUM(__w) AS %s_mean", vars_all, vars_all),
-      collapse = ", "
-    )
-    inner_sql = paste(
-      sprintf("SELECT %s FROM %s GROUP BY %s", mean_cols, cur_table, fe),
-      collapse = " UNION ALL "
-    )
-    outer_cols = paste(sprintf("MAX(ABS(%s)) AS max_%s", mean_names, vars_all), collapse = ", ")
-    res = dbGetQuery(conn, paste0("SELECT ", outer_cols, " FROM (", inner_sql, ") t"))
-    max_abs = max(0, max(res[1, ], na.rm = TRUE))
+    res = dbGetQuery(conn, sql_ap_convergence(cur_table, vars_all, fe))
+    column_abs = vapply(res, as.numeric, numeric(1))
+    max_abs = if (length(column_abs) && all(is.finite(column_abs))) max(column_abs) else Inf
+
+    # Follow an extrapolation that did not reduce the residual with plain AP.
+    plain_next = accelerated && !(max_abs < previous_abs)
+    previous_abs = max_abs
 
     if (isTRUE(verbose)) {
       message("[AP] iter ", iter, ": max abs mean = ", sprintf("%.4e", max_abs))
     }
 
-    if (is.finite(max_abs) && max_abs < tol) {
+    # Group-mean residuals in units of max(1, column half-range), as in the
+    # bounded certificates: absolute for unit-scale columns, relative for dollars.
+    max_level = if (is.finite(max_abs)) max(column_abs / pmax(1, original_scale)) else Inf
+    max_relative = Inf
+    if (is.finite(max_level) && max_level < tol) {
+      rms = vapply(dbGetQuery(conn, sql_ap_rms(cur_table, vars_all, conn)), as.numeric, numeric(1))
+      # Below original-scale roundoff a column is absorbed. Otherwise require
+      # its group equations to converge relative to its remaining variation.
+      if (all(is.finite(rms)) && all(is.finite(roundoff))) {
+        identified = rms > roundoff
+        max_relative = if (any(identified)) max(column_abs[identified] / rms[identified]) else 0
+      }
+    }
+    if (is.finite(max_level) && max_level < tol && is.finite(max_relative) && max_relative <= tol) {
       success = TRUE
-      return(list(table = cur_table, base_table = base_table))
+      return(list(table = cur_table, base_table = base_table,
+        original_scale = setNames(original_scale, vars_all),
+        iterations = iter, accelerated_steps = accelerated_steps,
+        max_abs = max_abs, max_relative = max_relative,
+        method = if (use_windows) "window" else "row_tables"))
     }
   }
 
@@ -1003,7 +1035,7 @@ dbreg_alternating_projections = function(
     max_iter,
     " iterations (max abs mean = ",
     sprintf("%.4e", max_abs),
-    ").\n\n",
+    "; tolerance ", format(tol), " in units of max(1, column range) and relative to projected RMS).\n\n",
     "Options:\n",
     "  - Increase tolerance: options(dbreg.ap_tol = 1e-7)\n",
     "  - Increase iterations: options(dbreg.ap_max_iter = 500)\n",
@@ -1190,7 +1222,7 @@ choose_strategy = function(inputs) {
 #' @keywords internal
 finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg") {
   if (inputs[["sql_only"]]) {
-    cat(result)
+    if (inherits(result, "dbreg_query_plan")) print(result) else cat(result)
     return(invisible(result))
   }
   result = restore_result_names(result, inputs)
@@ -1210,6 +1242,10 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   result[["pruning_rounds"]] = if (is.null(inputs[["pruning"]])) 0L else inputs[["pruning"]][["rounds"]]
   result[["nobs_pruned"]] = if (is.null(inputs[["pruning"]])) 0 else inputs[["pruning"]][["counts"]][["singleton"]]
   result[["strategy"]] = chosen_strategy
+  result[["ap_tolerance"]] = inputs[["fe_tol"]]
+  result[["ap_max_iter"]] = inputs[["fe_max_iter"]]
+  diagnostics = inputs[["ap_diagnostics"]]
+  for (field in names(diagnostics)) result[[paste0("ap_", field)]] = diagnostics[[field]]
   # i() columns (display names), for predict()
   result[["i_columns"]] = inputs[["i_columns"]]
   class(result) = c(class, class(result))

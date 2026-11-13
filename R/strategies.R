@@ -129,6 +129,7 @@ execute_demean_strategy = function(inputs) {
   register_sql_design(inputs, sql_design)
   
   frame = build_demean_frame(inputs, xvars_sql, xvar_names)
+  if (inherits(frame, "dbreg_query_plan")) return(frame)
   on.exit(frame[["cleanup"]](), add = TRUE)
   demean_sql = frame_moments_sql(frame, yvar, xvar_names, conn)
   if (sql_only) {

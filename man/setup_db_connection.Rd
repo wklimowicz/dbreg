@@ -4,7 +4,14 @@
 \alias{setup_db_connection}
 \title{Set up database connection and data source}
 \usage{
-setup_db_connection(conn, table, data, path, caller = "dbreg")
+setup_db_connection(
+  conn,
+  table,
+  data,
+  path,
+  caller = "dbreg",
+  resources = NULL
+)
 }
 \arguments{
 \item{conn}{Database connection, or NULL to create a DuckDB connection}
@@ -17,6 +24,8 @@ setup_db_connection(conn, table, data, path, caller = "dbreg")
 
 \item{caller}{Character string identifying the calling function for error messages
 and temp table naming (e.g., "dbreg" or "dbbinsreg")}
+
+\item{resources}{Optional private tracker for fit-owned resource cleanup.}
 }
 \value{
 A list containing:

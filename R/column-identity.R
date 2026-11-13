@@ -41,6 +41,7 @@ sql_design_reserved = function(inputs) {
     inputs[["fe"]],
     inputs[["weights"]],
     inputs[["offset_safe"]],
+    inputs[["row_id_safe"]],
     inputs[["cluster_var"]]
   ))
 }

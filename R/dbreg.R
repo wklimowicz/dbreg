@@ -112,6 +112,16 @@
 #'   regression software. It is *strongly* recommended not to change this value
 #'   unless you are absolutely sure that your data have no missings and you wish
 #'   to skip some internal checks. (Even then, it probably isn't worth it.)
+#' @param row_id Optional character vector of unique, nonmissing source key
+#'   columns. Keys are validated before subset/missing/weight filtering, using
+#'   native SQL tuples; no key values are collected for validation.
+#' @param sample_table Optional new temporary table receiving the fitted source
+#'   keys. Requires `row_id` and a caller-owned connection (including inference
+#'   from a lazy table). DuckDB/native Databricks exports use an owned snapshot
+#'   for consistent fitting and keys. Existing relations are never replaced.
+#'   The caller owns the export; private intermediates are cleaned on errors
+#'   and success. Unacknowledged cleanup remains queued for synchronous retry.
+#'   Cannot be combined with `sql_only` or `data_only`.
 #' @param diagnostics Logical. Run an additional source aggregate for input,
 #'   subset-selected, missing-by-role, nonpositive-weight and invalid-offset
 #'   counts? Default is `FALSE`. Counts may overlap. Fitted objects return
@@ -390,6 +400,8 @@ dbreg = function(
   offset = NULL,
   diagnostics = FALSE,
   fixef_rm = c("none", "singletons"),
+  row_id = NULL,
+  sample_table = NULL,
   ...
 ) {
 
@@ -435,6 +447,10 @@ dbreg = function(
     )
   )
   inputs[["factor_refs"]] = factor_refs
+  validate_sample_args(row_id, sample_table, conn, table, sql_only, data_only)
+  inputs[["row_id"]] = row_id
+  inputs[["sample_table"]] = sample_table
+  inputs[["resources"]] = fit_resources()
   inputs[["subset"]] = subset
   inputs[["offset"]] = offset
   inputs[["diagnostics"]] = diagnostics
@@ -447,7 +463,7 @@ dbreg = function(
         try(DBI::dbExecute(inputs[["conn"]], paste("DROP TABLE IF EXISTS", tbl)), silent = TRUE)
       }
     }
-    release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]])
+    release_fit_resources(inputs[["resources"]])
   }, add = TRUE)
 
   # Process and validate inputs (writes parsed/derived fields into `inputs`)
@@ -491,7 +507,7 @@ process_dbreg_inputs = function(inputs) {
     )
   )
 
-  db_setup = setup_db_connection(conn, table, data, path, caller = "dbreg")
+  db_setup = setup_db_connection(conn, table, data, path, caller = "dbreg", resources = inputs[["resources"]])
   conn = db_setup[["conn"]]
   own_conn = db_setup[["own_conn"]]
   registered_table = db_setup[["registered_table"]]
@@ -508,9 +524,11 @@ process_dbreg_inputs = function(inputs) {
 
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
   # results are mapped back to display names at the end
-  src = safe_source(conn, from_statement, c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]])))
+  from_statement = prepare_linear_sample(inputs, from_statement, c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]])))
+  src = safe_source(conn, from_statement, c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]]), inputs[["row_id"]]))
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
+  inputs[["row_id_safe"]] = src[["to_safe"]](inputs[["row_id"]])
   source_map = name_map
   names(factor_refs) = src[["to_safe"]](names(factor_refs))
   inputs[["factor_refs"]] = factor_refs
@@ -1191,5 +1209,5 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   # i() columns (display names), for predict()
   result[["i_columns"]] = inputs[["i_columns"]]
   class(result) = c(class, class(result))
-  result
+  finalize_linear_sample(result, inputs)
 }

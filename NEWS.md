@@ -95,6 +95,10 @@ Bug fixes
 - `dbreg()` now supports recursive OLS singleton fixed-effect removal via
   `fixef_rm = "singletons"`.
 
+- `dbreg()` and `dbivreg()` now support `row_id` source-key validation
+  (including native compound keys and `BIGINT` handling) and `sample_table`
+  exports over owned source snapshots with automatic resource cleanup.
+
 - Alternating projections no longer fail with an SQL error when a fixed-effect
   or cluster variable also appears as a regressor. Invalid `dbreg.ap_max_iter`
   and `dbreg.ap_tol` options now produce a clear error.

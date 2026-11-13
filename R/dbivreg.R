@@ -79,6 +79,8 @@ dbivreg = function(
   subset = NULL,
   offset = NULL,
   diagnostics = FALSE,
+  row_id = NULL,
+  sample_table = NULL,
   ...
 ) {
   source = normalize_data_source(table, data, path)
@@ -130,12 +132,16 @@ dbivreg = function(
       "sql_only", "data_only", "drop_missings", "verbose"
     )
   )
+  validate_sample_args(row_id, sample_table, conn, table, sql_only, data_only)
+  inputs[["row_id"]] = row_id
+  inputs[["sample_table"]] = sample_table
+  inputs[["resources"]] = fit_resources()
   inputs[["subset"]] = subset
   inputs[["offset"]] = offset
   inputs[["diagnostics"]] = diagnostics
   # Release any connection/registration we create, including on errors during
   # input processing (process_dbivreg_inputs() records them in `inputs` first)
-  on.exit(release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]]), add = TRUE)
+  on.exit(release_fit_resources(inputs[["resources"]]), add = TRUE)
 
   # Process and validate inputs (writes parsed/derived fields into `inputs`)
   process_dbivreg_inputs(inputs)
@@ -171,7 +177,7 @@ process_dbivreg_inputs = function(inputs) {
   yvar = parsed_fml[["yvar"]]
   fe = parsed_fml[["fe"]]
 
-  db_setup = setup_db_connection(conn, table, data, path, caller = "dbivreg")
+  db_setup = setup_db_connection(conn, table, data, path, caller = "dbivreg", resources = inputs[["resources"]])
   conn = db_setup[["conn"]]
   own_conn = db_setup[["own_conn"]]
   from_statement = db_setup[["from_statement"]]
@@ -188,9 +194,11 @@ process_dbivreg_inputs = function(inputs) {
 
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
   # results are mapped back to display names at the end
-  src = safe_source(conn, from_statement, c(model_vars(fml), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]])))
+  from_statement = prepare_linear_sample(inputs, from_statement, c(model_vars(fml), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]])))
+  src = safe_source(conn, from_statement, c(model_vars(fml), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]]), inputs[["row_id"]]))
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
+  inputs[["row_id_safe"]] = src[["to_safe"]](inputs[["row_id"]])
   parsed_fml = dbivreg_parse_formula(src[["to_safe"]](fml))
   yvar = parsed_fml[["yvar"]]
   fe = parsed_fml[["fe"]]
@@ -231,7 +239,7 @@ process_dbivreg_inputs = function(inputs) {
 
   design_source = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
   intercept = parsed_fml[["intercept"]]
-  reserved = unique(c(raw_vars, yvar, fe, weights, cluster_var))
+  reserved = unique(c(raw_vars, yvar, fe, weights, cluster_var, inputs[["offset_safe"]], inputs[["row_id_safe"]]))
   designs = dbivreg_shared_aliases(list(
     dbivreg_expand_block(parsed_fml[["exog_rhs"]], conn, design_source, fe, intercept, reserved_names = reserved),
     dbivreg_expand_block(parsed_fml[["endog_rhs"]], conn, design_source, fe, reserved_names = reserved),

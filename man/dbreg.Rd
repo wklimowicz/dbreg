@@ -26,6 +26,8 @@ dbreg(
   offset = NULL,
   diagnostics = FALSE,
   fixef_rm = c("none", "singletons"),
+  row_id = NULL,
+  sample_table = NULL,
   ...
 )
 }
@@ -178,6 +180,18 @@ containing the offset; intervals condition on its known value.}
 subset-selected, missing-by-role, nonpositive-weight and invalid-offset
 counts? Default is \code{FALSE}. Counts may overlap. Fitted objects return
 \code{sample_diagnostics} and \code{nobs_input}; inspection modes skip the audit.}
+
+\item{row_id}{Optional character vector of unique, nonmissing source key
+columns. Keys are validated before subset/missing/weight filtering, using
+native SQL tuples; no key values are collected for validation.}
+
+\item{sample_table}{Optional new temporary table receiving the fitted source
+keys. Requires \code{row_id} and a caller-owned connection (including inference
+from a lazy table). DuckDB/native Databricks exports use an owned snapshot
+for consistent fitting and keys. Existing relations are never replaced.
+The caller owns the export; private intermediates are cleaned on errors
+and success. Unacknowledged cleanup remains queued for synchronous retry.
+Cannot be combined with \code{sql_only} or \code{data_only}.}
 
 \item{...}{Additional arguments. Currently ignored, except to handle
 superseded arguments for backwards compatibility.}

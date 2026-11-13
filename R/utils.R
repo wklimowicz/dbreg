@@ -121,6 +121,7 @@ solve_with_fallback = function(XtX, Xty) {
 #' @param table Character table name or tbl_lazy object
 #' @param data R data.frame to register with DuckDB
 #' @param path Character path to file(s) on disk
+#' @param resources Optional private tracker for fit-owned resource cleanup.
 #' @param caller Character string identifying the calling function for error messages
 #'   and temp table naming (e.g., "dbreg" or "dbbinsreg")
 #'
@@ -133,14 +134,16 @@ solve_with_fallback = function(XtX, Xty) {
 #'   \item{is_duckdb}{Logical, TRUE if the connection is DuckDB}
 #'
 #' @keywords internal
-setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
+setup_db_connection = function(conn, table, data, path, caller = "dbreg", resources = NULL) {
   own_conn = FALSE
   registered_table = NULL
   is_duckdb = FALSE
   table_name = NULL
   from_statement = NULL
   setup_complete = FALSE
-  on.exit(if (!setup_complete) release_db_setup(conn, own_conn, registered_table), add = TRUE)
+  on.exit(if (!setup_complete) {
+    if (is.null(resources)) release_db_setup(conn, own_conn, registered_table) else release_fit_resources(resources)
+  }, add = TRUE)
 
 
   # If table is tbl_lazy and conn is NULL, try to infer conn from the table
@@ -169,6 +172,12 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
     backend_info = detect_backend(conn)
     is_duckdb = (backend_info[["name"]] == "duckdb")
   }
+
+  if (!is.null(resources)) {
+    resources[["conn"]] = conn
+    resources[["own_conn"]] = own_conn
+  }
+  flush_retired_resources(conn)
 
   # Process data source with precedence: table > data > path
   if (!is.null(table)) {
@@ -209,6 +218,7 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
     # Register ownership before the driver call: a failing registration may
     # already have created a relation. Cleanup is harmless if it did not.
     registered_table = temp_name
+    if (!is.null(resources)) resources[["registered_table"]] = registered_table
     duckdb_register(conn, temp_name, data)
     integer64_columns = names(data)[vapply(data, inherits, logical(1), "integer64")]
     if (length(integer64_columns)) {

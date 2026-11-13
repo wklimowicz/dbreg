@@ -110,6 +110,7 @@ finalize_retained_linear_rows = function(inputs, selected, aliases, n, fitted_rs
 #' @return A numeric vector for R inputs or a keyed result for SQL inputs.
 #' @export
 fitted.dbreg = function(object, ...) {
+  require_inference_rows(object)
   retained_row_values(object, "__dbreg_saved_fit", ".fitted")
 }
 

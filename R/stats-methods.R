@@ -131,7 +131,15 @@ predict.dbreg = function(
     if (interval != "none") stop("Retained-sample prediction requires interval = 'none'.", call. = FALSE)
     return(retained_row_values(object, "__dbreg_saved_fit", ".fitted", na.rm = sample == "estimation"))
   }
-  strategy = object[["strategy"]] 
+  strategy = object[["strategy"]]
+  if (!is.null(newdata) && length(object[["fe"]]) && !inherits(object, "dbivreg") &&
+      isTRUE(object[["retain"]] %in% c("prediction", "all"))) {
+    if (interval != "none") stop("Learned-effect predictions require interval = 'none'.", call. = FALSE)
+    if (is.null(object[["fitted_state"]])) {
+      stop("The fit has no portable learned-effect state. Inspect prediction_diagnostics.", call. = FALSE)
+    }
+    return(predict_learned_effects(object, as.data.frame(newdata)))
+  } 
 
   # Demean strategy doesn't support intervals (FE uncertainty not available)
   if (strategy == "demean" && interval != "none") {

@@ -479,12 +479,18 @@ linear_category_invalid = function(layout, data) {
   invalid
 }
 
-linear_prediction_matrix = function(object, data) {
+linear_prediction_matrix = function(object, data, all_columns = FALSE, ids = NULL) {
   validate_linear_layout(object)
   layout = object[["linear_design"]]
   columns = layout[["columns"]]
-  recipes = columns[["recipe"]][match(layout[["fitted_ids"]], columns[["id"]])]
-  weights = if (identical(object[["strategy"]], "mundlak")) prediction_weights(data, object[["weights"]]) else NULL
+  requested = !is.null(ids)
+  if (!requested) ids = if (all_columns) columns[["id"]] else layout[["fitted_ids"]]
+  positions = match(ids, columns[["id"]])
+  recipes = columns[["recipe"]][positions]
+  if (requested) layout[["columns"]] = columns[positions, , drop = FALSE]
+  weights = if (!requested && identical(object[["strategy"]], "mundlak")) {
+    prediction_weights(data, object[["weights"]])
+  }
   rows = positions = values = vector("list", length(recipes))
   invalid = linear_category_invalid(layout, data)
   for (k in seq_along(recipes)) {
@@ -503,7 +509,7 @@ linear_prediction_matrix = function(object, data) {
     j = as.integer(unlist(positions, use.names = FALSE)),
     x = as.numeric(unlist(values, use.names = FALSE)),
     dims = c(nrow(data), length(recipes)),
-    dimnames = list(NULL, layout[["fitted_ids"]])
+    dimnames = list(NULL, ids)
   )
   attr(matrix, "dbreg_invalid_rows") = invalid
   matrix

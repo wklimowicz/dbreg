@@ -219,8 +219,13 @@ steps for this fit. Defaults to \code{getOption("dbreg.ap_max_iter", 100L)}
 without changing it. Bounded refinement uses at most eight steps; inner
 PCG has a separate cap. See \link{dbreg-options}.}
 
-\item{retain}{Keep keyed original fitted values and residuals. Use
-\code{close()} to release the fit. Compressed fits use bounded SQL lookup state.}
+\item{retain}{Choose \code{"prediction"} for learned fixed effects,
+\code{"inference"} for original fitted rows and post-fit score inference,
+or \code{"all"} for both. Use \code{close()} to release owned tables.
+Prediction alone keeps portable dictionaries or database dictionaries;
+temporary fitted rows are released before returning the fit.
+When one or two additive families exceed the portable budget, their
+dictionaries stay in the owning database session.}
 
 \item{...}{Additional arguments. Currently ignored, except to handle
 superseded arguments for backwards compatibility.}

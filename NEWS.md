@@ -45,6 +45,9 @@ New features
   recomputation, and consistent coefficient inference methods across `summary()`,
   `confint()`, `tidy()`, and `fixest` helpers (`R/linear-retained.R`,
   `R/linear-postfit.R`, `R/inference-methods.R`, `R/augment.R`).
+- Added portable learned fixed-effect prediction and `fixef.dbreg()` extraction
+  in original trend coordinates (`R/linear-learned.R`, `R/learned-effects.R`,
+  `R/fixef.R`), retaining only learned dictionaries under `retain = "prediction"`.
 - Added `dbivreg()` for instrumental-variables (2SLS) regression on database
   backends. Uses `fixest`-style IV formulas, e.g. `y ~ x | d ~ z` or
   `y ~ x | fe1 + fe2 | d ~ z`, and supports multiple endogenous regressors,

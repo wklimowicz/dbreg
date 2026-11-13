@@ -170,8 +170,13 @@
 #'   The caller owns the export; private intermediates are cleaned on errors
 #'   and success. Unacknowledged cleanup remains queued for synchronous retry.
 #'   Cannot be combined with `sql_only` or `data_only`.
-#' @param retain Keep keyed original fitted values and residuals. Use
-#'   `close()` to release the fit. Compressed fits use bounded SQL lookup state.
+#' @param retain Choose \code{"prediction"} for learned fixed effects,
+#'   \code{"inference"} for original fitted rows and post-fit score inference,
+#'   or \code{"all"} for both. Use \code{close()} to release owned tables.
+#'   Prediction alone keeps portable dictionaries or database dictionaries;
+#'   temporary fitted rows are released before returning the fit.
+#'   When one or two additive families exceed the portable budget, their
+#'   dictionaries stay in the owning database session.
 #' @param diagnostics Logical. Run an additional source aggregate for input,
 #'   subset-selected, missing-by-role, nonpositive-weight and invalid-offset
 #'   counts? Default is `FALSE`. Counts may overlap. Fitted objects return
@@ -1408,9 +1413,20 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   result = finalize_linear_sample(result, inputs)
   state = inputs[["linear_retained_state"]]
   if (!is.null(state)) {
-    result[["retained_rows"]] = state[["rows"]]
-    result[["retained_inference"]] = state[["inference"]]
-    result[["resource_state"]] = retain_fit_resources(inputs[["resources"]], state[["name"]])
+    if (!inherits(result, "dbivreg") && length(result[["fe"]]) &&
+        inputs[["retain"]] %in% c("prediction", "all")) {
+      learned = projection_attempt("portable_prediction", linear_learned_state(result, inputs, state[["rows"]]))
+      result[["fitted_state"]] = learned[["result"]]
+      result[["prediction_diagnostics"]] = learned[setdiff(names(learned), "result")]
+    }
+    keep_sample = inputs[["retain"]] %in% c("inference", "all")
+    if (keep_sample) {
+      result[["rss_unweighted"]] = state[["rss_unweighted"]]
+      result[["retained_rows"]] = state[["rows"]]
+      result[["retained_inference"]] = state[["inference"]]
+    }
+    tables = c(if (keep_sample) state[["name"]], result[["fitted_state"]][["tables"]])
+    if (length(tables)) result[["resource_state"]] = retain_fit_resources(inputs[["resources"]], tables)
     result[["retain"]] = inputs[["retain"]]
     result[["row_id"]] = inputs[["public_row_id"]]
   }

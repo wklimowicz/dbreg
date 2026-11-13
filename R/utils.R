@@ -344,7 +344,8 @@ parse_regression_formula = function(fml, allow_empty = FALSE) {
     has_interactions = has_interactions,
     has_intercept = has_intercept,
     fe = fe,
-    fe_components = fe_components
+    fe_components = fe_components,
+    fe_slopes = attr(fe_components, "slopes", exact = TRUE)
   )
 }
 
@@ -470,10 +471,14 @@ rename_expr_vars = function(e, map) {
 #'   - `to_safe()`, `to_display()`: map names (character vectors, `NULL`, or
 #'     formulas for `to_safe()`) between the two. Identity if nothing was
 #'     renamed.
+#' @param conn Database connection.
+#' @param from_statement Source FROM clause.
+#' @param vars Model source column names.
+#' @param reserved Names reserved for generated output fields.
 #' @keywords internal
-safe_source = function(conn, from_statement, vars) {
+safe_source = function(conn, from_statement, vars, reserved = character()) {
   vars = unique(vars[!is.na(vars) & nzchar(vars)])
-  safe = safe_identifiers(vars, fold_case = folds_identifier_case(conn))
+  safe = safe_identifiers(vars, taken = reserved, fold_case = folds_identifier_case(conn))
   renamed = safe != vars
   map = setNames(vars[renamed], safe[renamed])
   if (any(renamed)) {
@@ -583,6 +588,8 @@ coef_var_name = function(v) ifelse(make.names(v) == v, v, paste0("`", v, "`"))
 #' restores the user's formula.
 #' @keywords internal
 restore_result_names = function(result, inputs) {
+  if (is.data.frame(result)) result = restore_varying_cells(result, inputs)
+  if (is.data.frame(result[["data"]])) result[["data"]] = restore_varying_cells(result[["data"]], inputs)
   map = inputs[["name_map"]]
   specs = inputs[["composite_fes"]]
   if (length(specs) && !is.null(result[["fml"]]) && !is.data.frame(result)) {
@@ -595,10 +602,12 @@ restore_result_names = function(result, inputs) {
   coef_map = map
   is_var = names(coef_map) %in% names(inputs[["source_map"]])
   coef_map[is_var] = coef_var_name(coef_map[is_var])
+  cell_aliases = c(names(specs), names(inputs[["composite_rhs_aliases"]]),
+    names(inputs[["composite_cell_sources"]]))
+  data_map = map[!names(map) %in% cell_aliases]
   if (is.data.frame(result)) {
-    data_map = map[!names(map) %in% c(names(specs), names(inputs[["composite_rhs_aliases"]]))]
     names(result) = restore_names(names(result), data_map)
-    return(restore_composite_cell_names(result, inputs))
+    return(restore_varying_cells(restore_composite_cell_names(result, inputs), inputs))
   }
   if (!is.null(result[["coeftable"]])) {
     rownames(result[["coeftable"]]) = restore_names(rownames(result[["coeftable"]]), coef_map)
@@ -616,9 +625,8 @@ restore_result_names = function(result, inputs) {
     names(result[["n_fe_levels"]]) = restore_names(names(result[["n_fe_levels"]]), map)
   }
   if (is.data.frame(result[["data"]])) {
-    data_map = map[!names(map) %in% c(names(specs), names(inputs[["composite_rhs_aliases"]]))]
     names(result[["data"]]) = restore_names(names(result[["data"]]), data_map)
-    result[["data"]] = restore_composite_cell_names(result[["data"]], inputs)
+    result[["data"]] = restore_varying_cells(restore_composite_cell_names(result[["data"]], inputs), inputs)
   }
   for (d in c("first_stage_f", "first_stage_wald")) {
     if (!is.null(names(result[["diagnostics"]][[d]]))) {

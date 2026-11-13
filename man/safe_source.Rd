@@ -4,7 +4,16 @@
 \alias{safe_source}
 \title{Give model variables SQL-safe names at the source}
 \usage{
-safe_source(conn, from_statement, vars)
+safe_source(conn, from_statement, vars, reserved = character())
+}
+\arguments{
+\item{conn}{Database connection.}
+
+\item{from_statement}{Source FROM clause.}
+
+\item{vars}{Model source column names.}
+
+\item{reserved}{Names reserved for generated output fields.}
 }
 \value{
 List with:

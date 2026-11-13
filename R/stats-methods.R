@@ -143,7 +143,8 @@ predict.dbreg = function(
     }
   }
 
-  if (strategy == "compress" && !stored_cells) newdata = prepare_composite_prediction(object, newdata)
+  coordinate_cells = strategy == "compress" && !is.null(object[["compressed_design"]][["bindings"]])
+  if (strategy == "compress" && !stored_cells && !coordinate_cells) newdata = prepare_composite_prediction(object, newdata)
   prediction_offset = linear_prediction_offset(object, newdata)
   cohort = NULL
   if (strategy %in% c("demean", "mundlak")) {
@@ -169,7 +170,9 @@ predict.dbreg = function(
     newdata[[f]] = factor(newdata[[f]])
   }
 
-  if (!is.null(object[["linear_design"]])) {
+  if (coordinate_cells) {
+    mm = varying_compressed_prediction_matrix(object, newdata)
+  } else if (!is.null(object[["linear_design"]])) {
     cells = object[["compressed_design"]]
     if (stored_cells && !is.null(cells)) {
       names(newdata) = cells[["data_names"]]
@@ -244,7 +247,10 @@ predict.dbreg = function(
     has_y = yvar %in% names(newdata)
     working = as.matrix(mm)
     if (has_y) working = cbind(working, as.numeric(newdata[[yvar]]) - prediction_offset)
-    projected = demean_prediction_data(working, prediction_fe_groups(object, newdata),
+    projected = if (length(unlist(object[["varying_slopes"]]))) {
+      demean_prediction_coordinates(working, prediction_fe_groups(object, newdata),
+        lapply(object[["varying_slopes"]], function(vars) newdata[vars]), prediction_weights(newdata, object[["weights"]]))
+    } else demean_prediction_data(working, prediction_fe_groups(object, newdata),
       prediction_weights(newdata, object[["weights"]]))
     mm = projected[, seq_len(ncol(mm)), drop = FALSE]
     if (has_y) {

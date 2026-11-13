@@ -36,6 +36,10 @@ New features
 - Added bounded two-family DuckDB projection through the shared Schur solver
   and bounded coefficient-space SQL conjugate-gradient fallback (`R/fe-cg.R`)
   for general DuckDB fixed effects.
+- Added group-specific varying slopes (`fe[slope]`) across bounded projection,
+  SQL CG, and compressed OLS (`R/fe-coordinates.R`, `R/compress-varying.R`),
+  giving ordinary compressed fixed effects rank priority and preserving exact
+  double keys and source column names.
 - Added `dbivreg()` for instrumental-variables (2SLS) regression on database
   backends. Uses `fixest`-style IV formulas, e.g. `y ~ x | d ~ z` or
   `y ~ x | fe1 + fe2 | d ~ z`, and supports multiple endogenous regressors,

@@ -312,6 +312,10 @@ compute_meat_cluster_compress_sql = function(inputs, cells_from, group_cols, cel
     sprintf("SELECT %d AS dbreg_cell, %s", cell, do.call(paste, c(cols, sep = ", "))),
     collapse = " UNION ALL\n"
   )
+  upload_limit = inputs[["score_upload_bytes"]]
+  if (!is.null(upload_limit) && nchar(fitted_sql, type = "bytes") + 1024 > upload_limit) {
+    projection_abort("upload_limit", "Compressed score literals exceed the upload budget.")
+  }
   w = if (is.null(weights)) NULL else gsub(weights, paste0("s.", weights), sql_weight_expr(weights), fixed = TRUE)
   if (!is.null(w)) w = paste0("(", sql_cast_double(w, conn), ")/(", num(weight_scale), ")")
   outcome = paste0("(", sql_cast_double(paste0("s.", yvar), conn), "-(", num(y_center), "))")
@@ -368,7 +372,10 @@ query_cluster_cells = function(inputs, from_statement, group_cols, y_center = 0,
     from_statement, "\n",
     "GROUP BY ", group_cols_sql
   )
+  expected = inputs[["cluster_cell_count"]]
+  if (!is.null(expected)) sql = paste0("SELECT * FROM (", sql_limit(sql, expected + 1, detect_backend(conn)[["name"]]), ") bounded_cluster_cells")
   cells = read_keyed_query(conn, sql, unique(c(cluster_var, group_cols)), integer_text = inputs[["composite_integer_keys"]])
+  if (!is.null(expected) && nrow(cells) != expected) stop("Compressed cluster-cell support changed.", call. = FALSE)
   fields = c("sum_w_gc", "sum_wy_gc")
   cells[fields] = lapply(cells[fields], as.numeric)
   cells

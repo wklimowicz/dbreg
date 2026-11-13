@@ -36,7 +36,7 @@ fe_cg_control = function() {
   values
 }
 
-fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, control, create, drop, budget, limits) {
+fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, control, create, drop, budget, limits, allow_zero = FALSE) {
   backend_info = detect_backend(conn)
   sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   number = function(x) sprintf("%.17e", x)
@@ -90,8 +90,12 @@ fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, con
     ))
   }
   info = moments(table, columns, r)
-  checked = fetch(paste0("SELECT COUNT(*) AS n,SUM(CASE WHEN __cg_scale IS NULL OR NOT ", sql_is_finite(conn, "__cg_scale"), " OR __cg_scale<=0 THEN 1 ELSE 0 END) AS bad FROM ", info), 2L)
+  checked = fetch(paste0("SELECT COUNT(*) AS n,SUM(CASE WHEN __cg_scale IS NULL OR NOT ", sql_is_finite(conn, "__cg_scale"), if (allow_zero) " OR __cg_scale<0 THEN 1 ELSE 0 END) AS bad FROM " else " OR __cg_scale<=0 THEN 1 ELSE 0 END) AS bad FROM ", info), 2L)
   if (!isTRUE(as.numeric(checked[["bad"]]) == 0) || !isTRUE(as.numeric(checked[["n"]]) > 0)) projection_abort("singular", "SQL CG has invalid group scales.")
+  if (allow_zero) {
+    active_info = create(paste("SELECT * FROM", info, "WHERE __cg_scale>0"))
+    drop(info); info = active_info
+  }
   state_rows = as.numeric(checked[["n"]])
   if (state_rows * length(columns) > limits[["design_entries"]] || 128 * state_rows * length(columns) > limits[["memory_bytes"]]) {
     projection_abort("system_limit", "SQL CG coefficient state exceeds its resource budget.")

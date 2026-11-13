@@ -376,7 +376,9 @@ linear_recipe_value = function(recipe, data, dictionaries = list(), weights = NU
     return(value)
   }
   if (kind %in% c("numeric", "raw")) {
-    return(numeric_column(variable))
+    value = numeric_column(variable)
+    if (!is.null(recipe[["center"]])) value = value - recipe[["center"]]
+    return(value)
   }
   if (kind == "power") return(numeric_column(variable)^recipe[["exponent"]])
   if (kind %in% c("i", "indicator") && !is.null(recipe[["key_type"]])) {
@@ -438,9 +440,12 @@ linear_category_invalid = function(layout, data) {
       if (!is.null(recipe[["dictionary"]])) levels = layout[["dictionaries"]][[recipe[["dictionary"]]]]
       if (!is.null(levels)) {
         type = recipe[["key_type"]]
+        numeric_labels = is.null(type) && is.numeric(levels) &&
+          !inherits(levels, c("integer64", "Date"))
         if (is.null(type)) type = if (inherits(levels, "integer64")) "integer" else
           if (is.numeric(levels) && !inherits(levels, "Date")) "numeric" else "character"
-        result = list(list(variable = recipe[["variable"]], type = type, levels = levels))
+        result = list(list(variable = recipe[["variable"]], type = type,
+          levels = levels, numeric_labels = numeric_labels))
       }
     }
     for (child in c("left", "right", "source")) {
@@ -463,6 +468,9 @@ linear_category_invalid = function(layout, data) {
       stop("Prediction column `", variable, "` is ", class(value)[1L],
         ", but the fitted levels were stored as ", record[["type"]],
         " values; convert it to the stored values.", call. = FALSE)
+    }
+    if (record[["numeric_labels"]] && (is.factor(value) || is.character(value))) {
+      value = suppressWarnings(as.numeric(as.character(value)))
     }
     value = category_key_part(value, record[["type"]])
     keys = category_key_part(record[["levels"]], record[["type"]])

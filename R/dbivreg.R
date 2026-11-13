@@ -773,6 +773,7 @@ dbivreg_parse_formula = function(fml) {
   fe_components = list()
   if (length(blocks) == 3L) {
     fe_components = parse_fe_components(blocks[[2]])
+    if (length(unlist(attr(fe_components, "slopes", exact = TRUE)))) stop("Varying slopes are not supported in dbivreg().", call. = FALSE)
     fe = unique(unlist(fe_components, use.names = FALSE))
     fe_rhs_text = text(blocks[[2]])
   }

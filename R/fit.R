@@ -63,7 +63,12 @@ cross_moments = function(moment_df, vars, y, intercept = TRUE) {
 
 # RSS from moments: y'y - 2b'X'y + b'X'Xb
 moment_rss = function(S, y, x, beta) {
-  as.numeric(S[y, y] - 2 * crossprod(beta, S[x, y]) + crossprod(beta, S[x, x] %*% beta))
+  terms = as.numeric(c(S[y, y], -2 * crossprod(beta, S[x, y]), crossprod(beta, S[x, x] %*% beta)))
+  rss = sum(terms)
+  if (!is.finite(rss) || rss < -64 * .Machine[["double.eps"]] * max(abs(terms))) {
+    stop("Residual moments imply an invalid negative or nonfinite RSS.", call. = FALSE)
+  }
+  max(0, rss)
 }
 
 # TSS from moments: centered if S carries an intercept, else uncentered

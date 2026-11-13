@@ -7,6 +7,37 @@
 #' highly efficient computation, while robust standard errors are computed from
 #' sufficient statistics.
 #'
+#' @section Varying slopes:
+#' OLS `group[trend]` and `group[trend1, trend2]` absorb a group intercept plus
+#' numeric group-specific slopes; `(group1^group2)[trend]` uses native tuples.
+#' Repeated group declarations merge their trend columns. Both `"demean"` and
+#' `"compress"` are supported. Auto includes trend values in its compression
+#' estimate and uses demeaning after a compressed capacity decline. Mundlak
+#' and SQL-only within projections are unavailable. IV varying slopes
+#' remain unsupported. Trend columns participate in finite/missing filtering
+#' and sample audits, independently of their RHS or native-key roles.
+#'
+#' Within fits prefer bounded signed coordinate moments, with SQL coefficient-CG
+#' fallback after a numerical/capacity decline or with `dbreg.ap_solver="iterative"`.
+#' Zero/redundant axes preserve the actual projected span. Resource bounds and
+#' independent count/finite/absolute/RMS coordinate certificates apply to both
+#' engines. Expected moment declines never use additive-only AP for these fits.
+#' An explicit `fe_max_iter` (argument or option) bounds CG work, otherwise
+#' `dbreg.cg_max_iter` does; either way at most eight refinement steps. Under the
+#' declared `K.exact=FALSE` convention, each trend contributes one coefficient
+#' per declared group level, even for a locally redundant trend. `K.fixef`
+#' changes FE intercept counts; varying coefficients remain in K. Within predictions reconstruct the weighted projection of the supplied cohort,
+#' including trends, without recovering training effects.
+#'
+#' Compressed fits group by the actual design, FE and trend values. Each cell
+#' carries one representative native raw tuple and moments in source units.
+#' `data_only` returns these cells; `sql_only` returns the runnable cell query.
+#' Row, scalar, key byte, allocation and score upload budgets apply. A large
+#' score upload can use bounded cluster-by-cell statistics instead. Trend
+#' nuisance coefficients use per-group centered coordinates. Compressed
+#' predictions rebuild those fitted coordinates and return `NA` for unknown
+#' groups or rows outside the identified training span.
+#'
 #' @param fml A \code{\link[stats]{formula}} representing the relation to be
 #' estimated. Fixed effects should be included after a pipe, e.g
 #' `fml = y ~ x1 + x2 | fe1 + f2`. Interaction terms are supported using
@@ -28,7 +59,7 @@
 #'   limits; individual key strings must stay below 65535 bytes. Compressed raw newdata
 #'   must provide all components, with integer64 or exact decimal strings for
 #'   BIGINT values beyond double precision. Unknown training tuples produce NA.
-#'   In compressed output, source components that conflict with count/moment
+#'   In compressed output, source columns that conflict with count/moment
 #'   fields get separate `_source` names; the `dbreg_source_columns` attribute
 #'   records their actual columns. Counts and raw key values remain distinct.
 #' @param conn Database connection, e.g. created with
@@ -491,6 +522,7 @@ dbreg = function(
   inputs[["fixef_rm"]] = fixef_rm
   inputs[["fe_tol"]] = fe_tol
   inputs[["fe_max_iter"]] = fe_max_iter
+  inputs[["fe_max_iter_explicit"]] = !missing(fe_max_iter) || !is.null(getOption("dbreg.ap_max_iter"))
   validate_fe_controls(inputs)
   # Release any connection/registration/temp tables we create, including on errors during
   # input processing (process_dbreg_inputs() records them in `inputs` first)
@@ -509,8 +541,16 @@ dbreg = function(
   # Choose strategy (mutates inputs[["is_balanced"]], inputs[["compression_ratio_est"]])
   chosen_strategy = choose_strategy(inputs)
 
-  # Execute chosen strategy (see R/strategies.R)
-  result = switch(
+  # Auto may select small varying cells; a documented capacity decline can
+  # still use the certified within engine, after releasing the failed snapshot.
+  if (chosen_strategy == "compress" && strategy == "auto" && !sql_only && length(unlist(inputs[["fe_slopes"]]))) {
+    attempt = projection_attempt("compressed_coordinates", execute_compress_strategy(inputs))
+    result = record_projection_attempt(inputs, attempt)
+    if (is.null(result)) {
+      chosen_strategy = "demean"
+      result = execute_demean_strategy(inputs)
+    }
+  } else result = switch(
     chosen_strategy,
     # sufficient statistics with no fixed effects
     "moments" = execute_moments_strategy(inputs),
@@ -562,7 +602,10 @@ process_dbreg_inputs = function(inputs) {
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
   # results are mapped back to display names at the end
   from_statement = prepare_linear_sample(inputs, from_statement, c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]])))
-  src = safe_source(conn, from_statement, c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]]), inputs[["row_id"]]))
+  src = safe_source(conn, from_statement,
+    c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]],
+      subset_variables(inputs[["subset"]]), inputs[["row_id"]]),
+    reserved = compressed_moment_fields())
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
   inputs[["row_id_safe"]] = src[["to_safe"]](inputs[["row_id"]])
@@ -573,11 +616,18 @@ process_dbreg_inputs = function(inputs) {
   weights = src[["to_safe"]](weights)
   cluster_var = src[["to_safe"]](cluster_var)
   fml = fml_parsed[["fml"]]
+  if (length(unlist(fml_parsed[["fe_slopes"]]))) inputs[["varying_fml"]] = fml
   yvar = fml_parsed[["yvar"]]
   xvars = fml_parsed[["xvars"]]
   term_labels = fml_parsed[["term_labels"]]
   has_interactions = fml_parsed[["has_interactions"]] || length(factor_refs) > 0L
   fe = fml_parsed[["fe"]]
+  inputs[["fe_slopes"]] = fml_parsed[["fe_slopes"]]
+  trend_vars = unique(unlist(inputs[["fe_slopes"]], use.names = FALSE))
+  if (length(trend_vars)) {
+    schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT", paste(as.character(DBI::dbQuoteIdentifier(conn, trend_vars)), collapse = ","), from_statement), 0, detect_backend(conn)[["name"]]))
+    if (any(!vapply(schema, is.numeric, logical(1)))) stop("Varying-slope columns in fixed effects must be numeric.", call. = FALSE)
+  }
   # With FE the intercept is absorbed, so `- 1` / `0 +` only matters without FE
   intercept = fml_parsed[["has_intercept"]] || length(fe) > 0
 
@@ -591,14 +641,14 @@ process_dbreg_inputs = function(inputs) {
   yvar = adjusted[["yvar"]]
   inputs[["sample_diagnostics"]] = sample_diagnostics(
     inputs, audit_from_statement, list(outcome = fml_parsed[["yvar"]], regressors = xvars,
-      fe = fe, weights = weights, cluster = cluster_var, offset = src[["to_safe"]](inputs[["offset"]])), src
+      fe = fe, trends = trend_vars, weights = weights, cluster = cluster_var, offset = src[["to_safe"]](inputs[["offset"]])), src
   )
 
   compress_ratio = resolve_compress_ratio(compress_ratio, fe)
 
   from_statement = filter_estimation_sample(
     from_statement,
-    vars = c(yvar, xvars, fe, cluster_var),
+    vars = c(yvar, xvars, fe, trend_vars, cluster_var),
     weights = weights,
     drop_missings = drop_missings,
     conn = conn
@@ -609,7 +659,7 @@ process_dbreg_inputs = function(inputs) {
   fe = composite[["fe"]]
   inputs[["composite_fes"]] = composite[["specs"]]
   inputs[["composite_types"]] = composite[["types"]]
-  if (length(composite[["specs"]])) {
+  if (length(composite[["specs"]]) || length(trend_vars)) {
     fml = replace_fe_formula(fml, fe)
     name_map = c(name_map, setNames(fe_component_labels(lapply(composite[["specs"]], restore_names, map = source_map)), names(composite[["specs"]])))
   }
@@ -899,6 +949,7 @@ dbreg_alternating_projections = function(
   }
   backend_info = detect_backend(conn)
   backend = backend_info[["name"]]
+  if (length(unlist(inputs[["fe_slopes"]]))) return(dbreg_varying_projections(inputs, xvars_sql, xvar_names, max_iter, tol))
   solver = getOption("dbreg.ap_solver", "auto")
   if (!is.character(solver) || length(solver) != 1L || is.na(solver) || !solver %in% c("auto", "moments", "iterative")) {
     stop("dbreg.ap_solver must be auto, moments or iterative.", call. = FALSE)
@@ -1120,9 +1171,12 @@ choose_strategy = function(inputs) {
   ))
   tag = if (is.null(caller)) "dbreg" else caller
 
+  varying = length(unlist(inputs[["fe_slopes"]])) > 0L
+  if (varying && strategy == "mundlak") stop("Varying slopes do not support the Mundlak strategy.", call. = FALSE)
+
   # Compression ratio estimator
   estimate_compression = function() {
-    key_cols = c(xvars, fe)
+    key_cols = unique(c(xvars, fe, unlist(inputs[["fe_slopes"]], use.names = FALSE)))
     # Total rows (safe: COUNT(*) is supported pretty much everywhere)
     total_sql = glue(
       "SELECT CAST(COUNT(*) AS BIGINT) AS n FROM (SELECT * {from_statement}) t"
@@ -1238,7 +1292,7 @@ choose_strategy = function(inputs) {
     } else if (length(fe) >= 1) {
       if (fail_compress_ratio || fail_compress_nmax) {
         chosen_strategy = "demean"
-        if (length(fe) == 2 && is.null(weights)) {
+        if (length(fe) == 2 && !varying && is.null(weights)) {
           is_balanced = dbreg_is_balanced_panel(inputs)
           if (verbose) {
             if (isTRUE(is_balanced)) {
@@ -1300,7 +1354,9 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
     at = which(vapply(inputs[["composite_fes"]], identical, logical(1), columns))
     if (length(at)) inputs[["composite_types"]][[at[1L]]] else NULL
   })
+  result[["varying_slopes"]] = lapply(inputs[["fe_slopes"]], function(x) unname(restore_names(x, inputs[["source_map"]])))
   result[["composite_dictionaries"]] = inputs[["composite_dictionaries"]]
+  if (!is.null(inputs[["varying_fml"]])) result[["fml"]] = Formula(rename_expr_vars(stats::formula(inputs[["varying_fml"]]), inputs[["source_map"]]))
   result = finalize_linear_layout(result, inputs)
   result = finalize_sample_diagnostics(result, inputs)
   if (!is.null(inputs[["offset"]])) {

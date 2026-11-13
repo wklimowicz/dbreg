@@ -159,12 +159,14 @@ execute_demean_strategy = function(inputs) {
   p_kept = length(xvar_names_kept)
   rss = fit[["rss"]]
   n_fe = length(fe)
-  df_fe = sum(n_fe_levels) - (n_fe - 1)
+  df_intercepts = fe_intercept_df(n_fe_levels)
+  df_slopes = sum(n_fe_levels * lengths(inputs[["fe_slopes"]]))
+  df_fe = df_intercepts + df_slopes
   df_res = n_total - p_kept - df_fe
   
   # Compute meat matrix if needed (HC1 or cluster)
   meat = fit_meat(fit, frame, yvar, inputs)
-  n_params_cluster = linear_parameter_count(inputs, p_kept + df_fe, df_fe)
+  n_params_cluster = linear_parameter_count(inputs, p_kept + df_fe, df_intercepts)
 
   vcov_mat = compute_vcov(
     ssc = inputs[["ssc"]],
@@ -441,6 +443,7 @@ execute_mundlak_strategy = function(inputs) {
 #' Execute compress strategy (groupby compression)
 #' @keywords internal
 execute_compress_strategy = function(inputs) {
+  if (length(unlist(inputs[["fe_slopes"]]))) return(execute_varying_compress(inputs))
   env2env(
     inputs,
     environment(),
@@ -458,13 +461,22 @@ execute_compress_strategy = function(inputs) {
 
   component_vars = unique(unlist(inputs[["composite_fes"]], use.names = FALSE))
   component_types = if (length(component_vars)) category_key_metadata(conn, sub("^FROM\\s+", "", from_statement), component_vars)[["types"]] else character()
-  inputs[["composite_integer_keys"]] = component_vars[component_types == "integer"]
   overlap = intersect(xvars, component_vars[component_types %in% c("integer", "numeric", "float")])
-  moment_fields = c("n", "sum_w", "sum_wy", "sum_wy_sq", "sum_w2", "sum_w2y", "sum_w2y_sq", "mean_Y", "wts", "dbreg_cell")
+  shared_fe = intersect(xvars, fe)
+  absorbed_cat_fe = character()
+  if (length(shared_fe)) {
+    schema = DBI::dbGetQuery(conn, sql_limit(
+      paste("SELECT", paste(shared_fe, collapse = ","), from_statement),
+      0, detect_backend(conn)[["name"]]
+    ))
+    is_num_fe = vapply(schema, is.numeric, logical(1))
+    overlap = union(overlap, shared_fe[is_num_fe])
+    absorbed_cat_fe = shared_fe[!is_num_fe]
+  }
+  moment_fields = compressed_moment_fields()
   protected = component_vars[tolower(component_vars) %in% tolower(moment_fields)]
   cell_sources = if (length(protected)) setNames(protected,
     safe_identifiers(paste0("dbreg_joint_component_", seq_along(protected)), taken = c(sql_design_reserved(inputs), moment_fields), fold_case = folds_identifier_case(conn))) else character()
-  inputs[["composite_cell_sources"]] = cell_sources
   component_columns = component_vars
   component_columns[match(unname(cell_sources), component_vars)] = names(cell_sources)
   inputs[["composite_integer_keys"]] = component_columns[component_types == "integer"]
@@ -519,6 +531,9 @@ execute_compress_strategy = function(inputs) {
   if (length(cell_sources)) select_exprs = c(select_exprs, paste(unname(cell_sources), "AS", names(cell_sources)))
   emitted_names = c(xvar_names, names(cell_sources))
   group_cols = unique(c(xvar_names, fe, component_columns))
+  source_map = inputs[["source_map"]]
+  reserved_sources = intersect(group_cols, names(source_map)[tolower(source_map) %in% tolower(moment_fields)])
+  inputs[["composite_cell_sources"]] = c(cell_sources, setNames(reserved_sources, reserved_sources))
   expanded_from = if (isTRUE(has_interactions)) paste0("FROM (SELECT ", paste(c(select_exprs,
     setdiff(unique(c(fe, yvar, weights, component_columns)), emitted_names)), collapse = ","), " ", from_statement, ") dbreg_compress_source") else from_statement
   packet = compressed_moment_query(conn, expanded_from, group_cols, yvar, weights, intercept)
@@ -547,9 +562,19 @@ execute_compress_strategy = function(inputs) {
     ))
   }
 
-  if (length(fe)) {
-    for (f in fe) {
-      compressed_dat[[f]] = factor(compressed_dat[[f]])
+  exact_fe_levels = list()
+  for (f in fe) {
+    value = compressed_dat[[f]]
+    if (is.double(value) && !is.object(value)) {
+      keys = sort(unique(value))
+      labels = as.character(keys)
+      if (any(as.numeric(labels) != keys)) {
+        labels = sprintf("%.17g", keys)
+        exact_fe_levels[[f]] = setNames(keys, labels)
+      }
+      compressed_dat[[f]] = factor(labels[match(value, keys)], levels = labels)
+    } else {
+      compressed_dat[[f]] = factor(value)
     }
   }
   if (data_only) {
@@ -559,7 +584,7 @@ execute_compress_strategy = function(inputs) {
 
   # Build design matrix
   # Use expanded column names if interactions were present
-  design_vars = if (isTRUE(has_interactions)) xvar_names else xvars
+  design_vars = setdiff(if (isTRUE(has_interactions)) xvar_names else xvars, absorbed_cat_fe)
   # Factor dummies (incl. FE) built in R are named after their (safe) variable
   # and level; register display names for them
   is_cat = vapply(c(design_vars, fe), function(v) {
@@ -578,6 +603,16 @@ execute_compress_strategy = function(inputs) {
   X = sparse.model.matrix(matrix_formula, matrix_data, contrasts.arg = contrasts)
   columns = matrix_column_layout(X, matrix_formula, matrix_data,
     inputs[["design_columns"]], slope_terms = seq_along(design_vars))
+  for (i in which(columns[["role"]] == "fixed_effect")) {
+    recipe = columns[["recipe"]][[i]]
+    keys = exact_fe_levels[[recipe[["variable"]]]]
+    if (recipe[["kind"]] == "indicator" && length(keys)) {
+      recipe[["label"]] = recipe[["value"]]
+      recipe[["value"]] = unname(keys[[recipe[["label"]]]])
+      recipe[["levels"]] = unname(keys)
+      columns[["recipe"]][[i]] = recipe
+    }
+  }
   absorbed = composite_absorbed_columns(columns, inputs[["composite_fes"]])
   if (length(absorbed)) X[, absorbed] = 0
   generated = vapply(columns[["recipe"]], function(recipe)
@@ -592,11 +627,19 @@ execute_compress_strategy = function(inputs) {
     is.numeric(compressed_dat[[name]]) && !is.factor(compressed_dat[[name]]), logical(1)))
   S = compressed_cross_moments(X, compressed_dat, yvar,
     center_columns = which(attr(X, "assign") %in% numeric_terms))
-  fit = fit_ols(S, yvar, colnames(X), drop_collinear = TRUE, verbose = verbose)
+  # Give fixed effects rank priority and keep the fitted output in design order.
+  rank_order = c(columns[["alias"]][columns[["role"]] == "fixed_effect"],
+    columns[["alias"]][columns[["role"]] != "fixed_effect"])
+  rank_order = c(intersect("(Intercept)", rank_order), setdiff(rank_order, "(Intercept)"))
+  rank = detect_collinearity(S[rank_order, rank_order, drop = FALSE],
+    S[rank_order, yvar, drop = FALSE], verbose = verbose)
+  kept = intersect(colnames(X), rank[["keep_names"]])
+  fit = fit_ols(S, yvar, kept)
+  fit[["dropped"]] = setdiff(colnames(X), kept)
   layout = list(version = 1L, columns = columns, fitted_ids = columns[["id"]][match(fit[["x"]], columns[["alias"]])])
   compressed_design = list(formula = matrix_formula, data_names = names(compressed_dat), contrasts = contrasts,
     positions = match(fit[["x"]], columns[["alias"]]))
-  collin_vars = fit[["dropped"]]
+  collin_vars = unique(c(absorbed_cat_fe, fit[["dropped"]]))
   X = X[, fit[["x"]], drop = FALSE]
   betahat = fit[["coef"]]
   XtX_inv = fit[["bread"]]

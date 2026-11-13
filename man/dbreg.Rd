@@ -55,7 +55,7 @@ a bounded training-tuple dictionary under the projection row/cell/memory
 limits; individual key strings must stay below 65535 bytes. Compressed raw newdata
 must provide all components, with integer64 or exact decimal strings for
 BIGINT values beyond double precision. Unknown training tuples produce NA.
-In compressed output, source components that conflict with count/moment
+In compressed output, source columns that conflict with count/moment
 fields get separate \verb{_source} names; the \code{dbreg_source_columns} attribute
 records their actual columns. Counts and raw key values remain distinct.}
 
@@ -231,6 +231,39 @@ which may not fit into R's memory. Various acceleration strategies allow for
 highly efficient computation, while robust standard errors are computed from
 sufficient statistics.
 }
+\section{Varying slopes}{
+
+OLS \code{group[trend]} and \code{group[trend1, trend2]} absorb a group intercept plus
+numeric group-specific slopes; \code{(group1^group2)[trend]} uses native tuples.
+Repeated group declarations merge their trend columns. Both \code{"demean"} and
+\code{"compress"} are supported. Auto includes trend values in its compression
+estimate and uses demeaning after a compressed capacity decline. Mundlak
+and SQL-only within projections are unavailable. IV varying slopes
+remain unsupported. Trend columns participate in finite/missing filtering
+and sample audits, independently of their RHS or native-key roles.
+
+Within fits prefer bounded signed coordinate moments, with SQL coefficient-CG
+fallback after a numerical/capacity decline or with \code{dbreg.ap_solver="iterative"}.
+Zero/redundant axes preserve the actual projected span. Resource bounds and
+independent count/finite/absolute/RMS coordinate certificates apply to both
+engines. Expected moment declines never use additive-only AP for these fits.
+An explicit \code{fe_max_iter} (argument or option) bounds CG work, otherwise
+\code{dbreg.cg_max_iter} does; either way at most eight refinement steps. Under the
+declared \code{K.exact=FALSE} convention, each trend contributes one coefficient
+per declared group level, even for a locally redundant trend. \code{K.fixef}
+changes FE intercept counts; varying coefficients remain in K. Within predictions reconstruct the weighted projection of the supplied cohort,
+including trends, without recovering training effects.
+
+Compressed fits group by the actual design, FE and trend values. Each cell
+carries one representative native raw tuple and moments in source units.
+\code{data_only} returns these cells; \code{sql_only} returns the runnable cell query.
+Row, scalar, key byte, allocation and score upload budgets apply. A large
+score upload can use bounded cluster-by-cell statistics instead. Trend
+nuisance coefficients use per-group centered coordinates. Compressed
+predictions rebuild those fitted coordinates and return \code{NA} for unknown
+groups or rows outside the identified training span.
+}
+
 \section{Bounded fixed-effect projection}{
 
 DuckDB/native Databricks can use bounded FE moment projection before AP;

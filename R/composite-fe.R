@@ -7,14 +7,29 @@ parse_fe_components = function(expr) {
     }
     list(node)
   }
-  components = lapply(flatten(expr, "+"), function(term) {
+  terms = flatten(expr, "+")
+  slopes = lapply(terms, function(term) {
+    if (!is.call(term) || !identical(term[[1L]], as.name("["))) return(character())
+    args = as.list(term)[-(1:2)]
+    if (!length(args) || !all(vapply(args, is.symbol, logical(1)))) {
+      stop("Use group[trend] or group[trend1, trend2] with numeric source columns.", call. = FALSE)
+    }
+    unique(vapply(args, as.character, character(1)))
+  })
+  components = lapply(terms, function(term) {
+    if (is.call(term) && identical(term[[1L]], as.name("["))) term = term[[2L]]
     columns = flatten(term, "^")
     if (!length(columns) || !all(vapply(columns, is.symbol, logical(1)))) {
-      stop("Unsupported fixed effects: use simple additive variable names or column-name tuples joined by ^.", call. = FALSE)
+      stop("Unsupported fixed effects: use additive variable names, tuples joined by ^ or group[trend].", call. = FALSE)
     }
     unique(vapply(columns, as.character, character(1)))
   })
-  components[!duplicated(vapply(components, function(x) paste(nchar(x), x, collapse = "|"), character(1)))]
+  labels = vapply(components, function(x) paste(nchar(x), x, collapse = "|"), character(1))
+  unique_labels = unique(labels)
+  components = components[match(unique_labels, labels)]
+  merged = lapply(unique_labels, function(label) unique(unlist(slopes[labels == label], use.names = FALSE)))
+  if (length(unlist(merged))) attr(components, "slopes") = merged
+  components
 }
 
 fe_component_labels = function(components) {
@@ -156,8 +171,8 @@ prediction_fe_groups = function(object, data) {
 
 prepare_composite_prediction = function(object, data) {
   dictionaries = object[["composite_dictionaries"]]
-  if (!length(dictionaries)) return(data)
   source_columns = attr(data, "dbreg_source_columns", exact = TRUE)
+  if (!length(dictionaries) && !length(source_columns)) return(data)
   data = as.data.frame(data)
   for (source in names(source_columns)) data[[source]] = data[[source_columns[[source]]]]
   for (alias in names(dictionaries)) {

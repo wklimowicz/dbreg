@@ -77,8 +77,9 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
   y = yvar
   vars = c(y, x_names)
 
-  use_ap = length(fe) > 2
-  if (length(fe) == 2) {
+  varying = length(unlist(inputs[["fe_slopes"]])) > 0L
+  use_ap = length(fe) > 2 || varying
+  if (length(fe) == 2 && !varying) {
     if (!is.null(weights)) {
       use_ap = TRUE
     } else {
@@ -93,6 +94,7 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     message(sprintf("[%s] Using alternating projections for FE demeaning", tag))
   }
   if (use_ap && sql_only) {
+    if (varying) stop("SQL-only projection plans for varying slopes are not implemented.", call. = FALSE)
     return(dbreg_ap_query_plan(inputs, x_sql, x_names))
   }
 
@@ -163,7 +165,6 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
       if (!is.null(weights)) sprintf("b.%s AS weights", weights),
       if (!is.null(cluster_var) && !cluster_var %in% fe) sprintf("b.%s AS %s", cluster_var, cluster_var)
     )
-    if (length(x_names)) passthrough = c(passthrough, paste0(first, ".", rank_names))
     key_columns = setdiff(keys, c(fe, cluster_var))
     if (length(key_columns)) passthrough = c(passthrough, paste0("b.", key_columns))
     cte_sql = paste0(
@@ -198,7 +199,8 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     cleanup = cleanup,
     moments = if (use_ap) ap_res[["moments"]] else NULL,
     rank_values = if (use_ap) ap_res[["original_scale"]] else NULL,
-    rank_columns = if (!use_ap && length(x_names)) rank_names else NULL
+    rank_columns = if (!use_ap && length(x_names)) rank_names else NULL,
+    rank_cte = if (!use_ap && length(x_names)) (if (length(fe) == 1) "group_means" else "unit_means") else NULL
   )
 }
 
@@ -219,11 +221,16 @@ frame_moments_sql = function(frame, y, x, conn) {
   rank_sql = rank_join = ""
   rank_terms = character()
   if (length(x) && !is.null(frame[["rank_values"]])) {
-    original = sql_cast_double(sprintf("%.17g", unname(frame[["rank_values"]][x])), conn)
+    original = sql_cast_double(sprintf("%.17e", unname(frame[["rank_values"]][x])), conn)
     rank_terms = sprintf("MAX(%s) AS dbreg_moment_original_%d", original, seq_along(x))
   } else if (length(x) && !is.null(frame[["rank_columns"]])) {
-    rank_terms = sprintf("MAX(%s) AS dbreg_moment_original_%d",
-      sql_cast_double(unname(frame[["rank_columns"]][x]), conn), seq_along(x))
+    if (!is.null(frame[["rank_cte"]])) {
+      rank_terms = sprintf("(SELECT MAX(%s) FROM %s) AS dbreg_moment_original_%d",
+        sql_cast_double(unname(frame[["rank_columns"]][x]), conn), frame[["rank_cte"]], seq_along(x))
+    } else {
+      rank_terms = sprintf("MAX(%s) AS dbreg_moment_original_%d",
+        sql_cast_double(unname(frame[["rank_columns"]][x]), conn), seq_along(x))
+    }
   } else if (length(x) && !is.null(frame[["rank_source"]])) {
     rank_fields = paste0("dbreg_moment_original_", seq_along(x))
     rank_cte = moment_sql_names("dbreg_original", frame[["cte_sql"]], conn)[[1L]]

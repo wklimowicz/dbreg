@@ -115,7 +115,7 @@ prepare_fe_projection = function(inputs, x_sql, x_names, materialize = TRUE, coe
   conn = inputs[["conn"]]
   fe = inputs[["fe"]]
   backend = detect_backend(conn)
-  if (!(backend[["name"]] == "duckdb" || isTRUE(backend[["is_databricks"]])) || length(fe) < 2L || (!coefficient_cg && length(fe) > 30L)) return(NULL)
+  if (!(backend[["name"]] == "duckdb" || isTRUE(backend[["is_databricks"]])) || length(fe) < (if (length(unlist(inputs[["fe_slopes"]]))) 1L else 2L) || (!coefficient_cg && length(fe) > 30L)) return(NULL)
   validate_native_temp_query(conn, backend)
   limits = inputs[["projection_limits"]]
   if (is.null(limits)) limits = projection_limits()
@@ -131,16 +131,19 @@ prepare_fe_projection = function(inputs, x_sql, x_names, materialize = TRUE, coe
   sum_sql = function(x) if (backend[["name"]] == "duckdb") paste0("FSUM(", x, ")") else paste0("SUM(", x, ")")
   vars = c(inputs[["yvar"]], x_names)
   columns = paste0("v", seq_along(vars))
+  trends = unique(unlist(inputs[["fe_slopes"]], use.names = FALSE))
+  trend_columns = setNames(if (length(trends)) paste0("t", seq_along(trends)) else character(), trends)
   ids = unique(c(fe, inputs[["cluster_var"]]))
   id_columns = paste0("id", seq_along(ids))
   fe_ids = id_columns[match(fe, ids)]
   fe_columns = paste0("f", seq_along(fe))
   w = if (is.null(inputs[["weights"]])) "1.0" else sql_cast_double(q(inputs[["weights"]]), conn)
   source = snapshot(paste("SELECT", paste(c(paste(q(ids), "AS", id_columns),
-    paste(sql_cast_double(c(q(inputs[["yvar"]]), x_sql), conn), "AS", columns), paste(w, "AS raw_w")), collapse = ","), inputs[["from_statement"]]), c(id_columns, columns, "raw_w"))
+    paste(sql_cast_double(c(q(inputs[["yvar"]]), x_sql), conn), "AS", columns), paste(w, "AS raw_w"), if (length(trends)) paste(sql_cast_double(q(trends), conn), "AS", unname(trend_columns))), collapse = ","), inputs[["from_statement"]]), c(id_columns, columns, "raw_w", unname(trend_columns)))
   stats = DBI::dbGetQuery(conn, paste("SELECT", paste(c("COUNT(*) AS n", "MAX(raw_w) AS sw",
     paste0("MIN(", columns, ") AS lo", seq_along(columns)),
     paste0("MAX(", columns, ") AS hi", seq_along(columns)),
+    if (length(trends)) paste0("MAX(ABS(", trend_columns, ")) AS ts", seq_along(trends)),
     paste0("COUNT(DISTINCT ", fe_ids, ") AS n", seq_along(fe)),
     paste0("SUM(CASE WHEN ", fe_ids, " IS NULL THEN 1 ELSE 0 END) AS bad", seq_along(fe))), collapse = ","), "FROM", source))
   sizes = vapply(stats[paste0("n", seq_along(fe))], as.numeric, numeric(1))
@@ -160,8 +163,14 @@ prepare_fe_projection = function(inputs, x_sql, x_names, materialize = TRUE, coe
   if (sum(sizes) > .Machine[["integer.max"]] - 1 || sum(sizes) * length(columns) > limits[["design_entries"]] || !feasible) {
     projection_abort("system_limit", "Fixed-effect system exceeds its projection budget.", list(fe_sizes = sizes, columns = length(columns), limits = limits))
   }
+  trend_scale = if (length(trends)) pmax(vapply(stats[paste0("ts", seq_along(trends))], as.numeric, numeric(1)), .Machine[["double.xmin"]]) else numeric()
+  names(trend_scale) = trends
+  if (any(!is.finite(trend_scale))) projection_abort("singular", "Varying-slope snapshot has invalid numeric scales.")
   dictionaries = vapply(seq_along(fe), function(i) paste0(" JOIN (SELECT ", fe_ids[i], ",ROW_NUMBER() OVER (ORDER BY ", fe_ids[i], ") AS ", fe_columns[i],
     " FROM (SELECT DISTINCT ", fe_ids[i], " FROM ", source, ") keys) d", i, " ON s.", fe_ids[i], "=d", i, ".", fe_ids[i]), character(1))
+  # Center before scaling so a large location cannot quantize a small,
+  # representable within-coordinate variation. Every model includes FE
+  # intercepts, so this affine change preserves the exact projected span.
   w_expr = paste0("s.raw_w/(", sprintf("%.17e", weight_scale), ")")
   units = paste0("(s.", columns, "-(", sprintf("%.17e", anchors), "))/(", sprintf("%.17e", scale), ")")
   # Compute weighted centers directly from source without FE dictionary joins.
@@ -170,10 +179,11 @@ prepare_fe_projection = function(inputs, x_sql, x_names, materialize = TRUE, coe
   if (any(!is.finite(centers))) projection_abort("singular", "Nonfinite fixed-effect projection centers.")
   centered = create(paste0("SELECT ", paste(c(paste0("s.", id_columns), "s.raw_w", paste0(w_expr, " AS w"),
     paste0("(", units, "-(", sprintf("%.17e", centers), ")) AS ", columns),
+    if (length(trends)) paste0("s.", trend_columns, " AS ", trend_columns),
     paste0("d", seq_along(fe), ".", fe_columns)), collapse = ","), " FROM ", source, " s", paste(dictionaries, collapse = "")),
-    c(id_columns, "raw_w", "w", columns, fe_columns))
+    c(id_columns, "raw_w", "w", columns, fe_columns, unname(trend_columns)))
   success = TRUE
-  mget(c("conn","fe","limits","resources","snapshot","create","q","vars","columns","ids","id_columns","fe_columns","sizes","original_scale","scale","nobs","weight_scale","source","centered"), envir = environment(), inherits = FALSE)
+  mget(c("conn","fe","limits","resources","snapshot","create","q","vars","columns","ids","id_columns","fe_columns","sizes","original_scale","scale","nobs","weight_scale","source","centered","trend_columns","trend_scale"), envir = environment(), inherits = FALSE)
 }
 
 # This result implements the AP frame contract, including owned-table cleanup.
@@ -254,10 +264,13 @@ projection_frame_inputs = function(inputs, x_sql, x_names) {
   x = paste0("dbreg_p_x", seq_along(x_names))
   y = "dbreg_p_y"
   w = if (is.null(inputs[["weights"]])) NULL else "dbreg_p_w"
-  fields = c(paste(q(ids), "AS", id_map), paste(q(inputs[["yvar"]]), "AS", y),
+  trends = unique(unlist(inputs[["fe_slopes"]], use.names = FALSE))
+  trend_map = setNames(if (length(trends)) paste0("dbreg_p_t", seq_along(trends)) else character(), trends)
+  fields = c(if (length(trends)) paste(q(trends), "AS", unname(trend_map)), paste(q(ids), "AS", id_map), paste(q(inputs[["yvar"]]), "AS", y),
     paste(x_sql, "AS", x), if (!is.null(w)) paste(q(inputs[["weights"]]), "AS", w))
   bound = list2env(as.list(inputs), parent = emptyenv())
   bound[["from_statement"]] = paste0("FROM (SELECT ", paste(fields, collapse = ","), " ", inputs[["from_statement"]], ") dbreg_projection_source")
+  bound[["fe_slopes"]] = lapply(inputs[["fe_slopes"]], function(x) unname(trend_map[x]))
   bound[["fe"]] = unname(id_map[inputs[["fe"]]])
   bound[["cluster_var"]] = if (length(inputs[["cluster_var"]])) unname(id_map[inputs[["cluster_var"]]]) else NULL
   bound[["yvar"]] = y

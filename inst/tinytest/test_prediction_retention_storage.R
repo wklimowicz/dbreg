@@ -8,8 +8,7 @@ local({
   DBI::dbWriteTable(conn,"source",d,temporary=TRUE)
   dense=list(lm(y~x+factor(g),data=d,weights=w,offset=o),
     glm(y~x+factor(g),data=d,family=poisson(),weights=w,offset=o))
-  db_modes = if (exists("predict_keyed_sql", mode = "function")) c(FALSE, TRUE) else FALSE
-  for (database in db_modes) {
+  for (database in c(FALSE, TRUE)) {
     prior=options(dbreg.prediction_max_entries=if(database)4 else 2e6)
     models=list(dbreg(y~x|g,conn=conn,table="source",weights=~w,offset=~o,strategy="demean",retain="prediction"))
     if (exists("dbglm", mode = "function")) {

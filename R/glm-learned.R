@@ -117,6 +117,7 @@ learned_effect_operations = function(state) {
 
 predict_learned_effects = function(object, data) {
   state = object[["fitted_state"]]
+  if (is_database_effect_state(state)) return(predict_database_effects_r(object, data))
   design = linear_prediction_matrix(object, data, all_columns = TRUE, ids = state[["design_ids"]])
   invalid = attr(design, "dbreg_invalid_rows")
   offset = linear_prediction_offset(object, data)

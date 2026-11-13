@@ -77,7 +77,7 @@ Use \code{\link{dbreg-prediction}} to preview, collect or close results.
 
 Fits with `retain = "prediction"` or `"all"` use the saved training
 effects on new R data. Predictions are independent of the other rows
-supplied and remain available after closing the fit. Unseen groups and
+supplied. Portable effects remain available after closing the fit. Unseen groups and
 non-estimable combinations return missing values. Learned effects support
 point predictions with `interval = "none"`.
 }

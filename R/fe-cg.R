@@ -13,7 +13,7 @@ fe_cg_fetch = function(conn, sql, width, budget, limits) {
 
 fe_cg_manager = function(conn, resources) {
   factory = fe_projection_tables(conn, resources)
-  resources[["peak_tables"]] = length(resources[["tables"]])
+  resources[["peak_tables"]] = max(resources[["peak_tables"]], length(resources[["tables"]]))
   list(create = function(sql) {
     table = factory(sql, character())
     resources[["peak_tables"]] = max(resources[["peak_tables"]], length(resources[["tables"]]))
@@ -36,7 +36,7 @@ fe_cg_control = function() {
   values
 }
 
-fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, control, create, drop, budget, limits, allow_zero = FALSE) {
+fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, control, create, drop, budget, limits, allow_zero = FALSE, retain_coefficients = FALSE) {
   backend_info = detect_backend(conn)
   sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   number = function(x) sprintf("%.17e", x)
@@ -145,10 +145,15 @@ fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, con
       active = residual_columns > target
       if (!is.finite(residual)) projection_abort("singular", "Nonfinite SQL CG certificate.")
       if (residual <= target) {
+        coefficients = if (retain_coefficients) {
+          fields = sprintf("%s/NULLIF(__cg_scale,0) AS c%d", g, index)
+          create(paste("SELECT", paste(c(key, fields), collapse = ","), "FROM", state))
+        } else NULL
         drop(certificate)
         drop(state)
         drop(info)
-        return(list(table = projected, cycles = cycle, residual = residual, restarts = restarts, method = "cg"))
+        return(list(table = projected, cycles = cycle, residual = residual,
+          restarts = restarts, method = "cg", coefficients = coefficients))
       }
       drop(projected)
       if (zero_steps >= 2L) projection_abort("nonconverged", "SQL CG stalled above its equation tolerance.", list(residual = residual, target = target))

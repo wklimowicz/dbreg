@@ -96,7 +96,9 @@ coef.dbreg = function(object, fe = FALSE, ...) {
 #' @section Keyed database output:
 #' Supply `row_id` to keep predictions in a database session. This path
 #' supports OLS and GLM models on DuckDB and native Databricks. Fixed-effect
-#' fits require portable learned effects saved by prediction retention.
+#' fits require learned effects saved by prediction retention. Database-resident
+#' effects require their fitted session. R prediction inputs for native Databricks
+#' are uploaded with explicit SQL types under the prediction upload budget.
 #' Mundlak and IV database output are unavailable.
 #' Use \code{\link{dbreg-prediction}} to preview, collect or close results.
 #'
@@ -110,7 +112,7 @@ coef.dbreg = function(object, fe = FALSE, ...) {
 #' @section Learned fixed effects:
 #' Fits with `retain = "prediction"` or `"all"` use the saved training
 #' effects on new R data. Predictions are independent of the other rows
-#' supplied and remain available after closing the fit. Unseen groups and
+#' supplied. Portable effects remain available after closing the fit. Unseen groups and
 #' non-estimable combinations return missing values. Learned effects support
 #' point predictions with `interval = "none"`.
 #' 

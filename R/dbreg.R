@@ -1423,7 +1423,7 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   if (!is.null(state)) {
     if (!inherits(result, "dbivreg") && length(result[["fe"]]) &&
         inputs[["retain"]] %in% c("prediction", "all")) {
-      learned = projection_attempt("portable_prediction", linear_learned_state(result, inputs, state[["rows"]]))
+      learned = linear_learned_state(result, inputs, state[["rows"]])
       result[["fitted_state"]] = learned[["result"]]
       result[["prediction_diagnostics"]] = learned[setdiff(names(learned), "result")]
     }

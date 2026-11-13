@@ -31,7 +31,7 @@ learned_effect_labels = function(dictionary) {
 #' Returns the saved fixed-effect intercepts and varying slopes on the
 #' original trend scale. The identifying normalization assigns the model
 #' constant to the first fixed-effect family.
-#' @param object A database OLS or GLM fit with portable learned effects.
+#' @param object A database OLS or GLM fit with learned effects.
 #' @param ... Unused.
 #' @return A list of named coefficient vectors. Composite groups use quoted
 #'   tuples of the native key components. Varying slopes use names of the form
@@ -45,6 +45,7 @@ fixef.dbreg = function(object, ...) {
     stop("Fixed-effect extraction requires a portable learned-effect state from retain = 'prediction' or 'all'.",
       call. = FALSE)
   }
+  if (is_database_effect_state(state)) return(database_fixed_effects(object, state))
   dictionaries = state[["dictionaries"]]
   group_names = vapply(dictionaries, function(dict) paste(dict[["columns"]], collapse = "^"), character(1))
   labels = lapply(dictionaries, learned_effect_labels)

@@ -70,7 +70,7 @@ linear_learned_state = function(object, inputs, rows) {
   moments = DBI::dbGetQuery(conn, paste("SELECT", paste(c("COUNT(*) AS n", "MAX(prior_weight) AS max_weight",
     centers_sql("eta", "eta"), if (length(x)) centers_sql(x, x), paste("MAX(", fe, ") AS", fe)),
     collapse = ","), "FROM", base))
-  sizes = as.numeric(moments[1, fe, drop = TRUE])
+  sizes = vapply(moments[fe], as.numeric, numeric(1))
   centers = if (length(x)) as.numeric(moments[1, x, drop = TRUE]) else numeric()
   constant = moments[["eta"]]
   scale = 2^floor(log2(as.numeric(moments[["max_weight"]])))
@@ -79,9 +79,6 @@ linear_learned_state = function(object, inputs, rows) {
     projection_abort("certificate_failed", "The retained OLS sample has invalid prediction coordinates.")
   }
   limits = projection_limits()
-  check_learned_budget(sizes, slopes, length(x), groups, limits)
-  dictionaries = lapply(seq_along(groups), function(i) learned_key_dictionary(conn, base,
-    fe[i], key_columns[[i]], groups[[i]], sizes[i], limits[["memory_bytes"]] / (8 * length(groups))))
   coefficients = coef(object, fe = TRUE)
   positions = match(columns[["id"]], layout[["fitted_ids"]])
   beta = unname(coefficients[positions])
@@ -92,10 +89,21 @@ linear_learned_state = function(object, inputs, rows) {
     paste0("prior_weight/(", dbglm_number(scale), ") AS __dbglm_a"),
     "0.0 AS __dbglm_o"), collapse = ","), " FROM ", base, ") learned_ols")
   budget = list2env(list(rows = 0, cells = 0, summary_bytes = 0, upload_bytes = 0), parent = emptyenv())
-  state = recover_learned_effects(conn, working, fe, slopes, trend_fields, sizes, x, beta,
-    centers, nobs(object), budget, limits)
-  state[["dictionaries"]] = dictionaries
-  state[["design_ids"]] = columns[["id"]]
-  state[["constant"]] = constant
-  state
+  recover_portable = function() {
+    check_learned_budget(sizes, slopes, length(x), groups, limits)
+    dictionaries = lapply(seq_along(groups), function(i) learned_key_dictionary(conn, base,
+      fe[i], key_columns[[i]], groups[[i]], sizes[i], limits[["memory_bytes"]] / (8 * length(groups))))
+    state = recover_learned_effects(conn, working, fe, slopes, trend_fields, sizes, x, beta,
+      centers, nobs(object), budget, limits)
+    state[["dictionaries"]] = dictionaries
+    state
+  }
+  attempt = learned_effect_attempt(recover_portable(),
+    if (!length(trend_names)) database_additive_effects(conn, working, base,
+      fe, key_columns, groups, x, beta, centers, nobs(object), inputs[["resources"]]))
+  if (!is.null(attempt[["result"]])) {
+    attempt[["result"]][["design_ids"]] = columns[["id"]]
+    attempt[["result"]][["constant"]] = constant
+  }
+  attempt
 }

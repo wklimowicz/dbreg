@@ -7,7 +7,7 @@
 \method{fixef}{dbreg}(object, ...)
 }
 \arguments{
-\item{object}{A database OLS or GLM fit with portable learned effects.}
+\item{object}{A database OLS or GLM fit with learned effects.}
 
 \item{...}{Unused.}
 }

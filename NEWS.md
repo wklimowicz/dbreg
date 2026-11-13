@@ -51,6 +51,9 @@ New features
 - Added keyed database-session prediction (`predict(..., row_id = ..., prediction_table = ...)`)
   for structural OLS models and portable learned effects (`R/sql-prediction.R`,
   `R/sql-prediction-effects.R`).
+- Added database-resident learned effect dictionaries for oversized one- and
+  two-family additive fixed effects (`R/database-effects.R`,
+  `R/database-two-effects.R`, `R/sql-prediction-upload.R`).
 - Added `dbivreg()` for instrumental-variables (2SLS) regression on database
   backends. Uses `fixest`-style IV formulas, e.g. `y ~ x | d ~ z` or
   `y ~ x | fe1 + fe2 | d ~ z`, and supports multiple endogenous regressors,

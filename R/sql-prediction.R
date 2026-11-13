@@ -189,7 +189,8 @@ sql_fitted_predictor = function(object, conn, input, row_id, prediction, state, 
   effects = NULL
   beta = coef(object, fe = TRUE)
   if (!is.null(state)) {
-    effects = sql_prediction_effects(conn, state, column, schema, resources)
+    effects = if (is_database_effect_state(state)) sql_database_effects(conn, state, column, schema)
+      else sql_prediction_effects(conn, state, column, schema, resources)
     beta = state[["beta"]]
     if (length(expr)) expr = paste0("((", expr, ")-(", dbglm_number(state[["center"]]), "))")
   } else if (!is.null(sc <- object[["prediction_coordinates"]])) {
@@ -222,8 +223,9 @@ sql_fitted_predictor = function(object, conn, input, row_id, prediction, state, 
     check(c(conditions("precision"), effects[["precision"]]), error("Prediction integer keys require exact values.")),
     check(effects[["valid"]], absent),
     check(conditions("indicator"), absent),
-    check(conditions("factor"), error("newdata contains unseen factor levels.")),
-    if (!is.null(state)) check(sql_learned_estimability(state, expr, effects), absent),
+    check(conditions("factor"), if (isTRUE(state[["r_prediction"]])) absent else error("newdata contains unseen factor levels.")),
+    if (is_database_effect_state(state)) check(sql_database_estimability(state, expr, effects), absent) else
+      if (!is.null(state)) check(sql_learned_estimability(state, expr, effects), absent),
     check(sql_is_finite(conn, eta), absent))
   value = paste("CASE", paste(branches, collapse = " "), "ELSE", eta, "END")
   keys = paste(raw_column(row_id), "AS", q(row_id))
@@ -239,18 +241,28 @@ sql_prediction_requested = function(conn, table, path, row_id, prediction_table)
   !all(vapply(list(conn, table, path, row_id, prediction_table), is.null, logical(1)))
 }
 
-predict_keyed_sql = function(object, newdata, conn, table, path, row_id, prediction_table, type = "link") {
+predict_keyed_sql = function(object, newdata, conn, table, path, row_id, prediction_table, type = "link", for_r = FALSE) {
   if (is.null(row_id)) stop("Database prediction requires explicit row_id columns.", call. = FALSE)
   validate_sample_args(row_id, prediction_table, conn, table, FALSE, FALSE)
   if (sum(!vapply(list(newdata, table, path), is.null, logical(1))) != 1L) {
     stop("Provide exactly one of newdata, table, or path for database prediction.", call. = FALSE)
   }
-  if (inherits(object, "dbivreg") || identical(object[["strategy"]], "mundlak")) {
+  if (inherits(object, "dbivreg") || (!for_r && identical(object[["strategy"]], "mundlak"))) {
     stop("Database prediction does not support IV or Mundlak fits.", call. = FALSE)
   }
   state = if (length(object[["fe"]])) object[["fitted_state"]]
   if (length(object[["fe"]]) && is.null(state)) {
     stop("Database prediction with fixed effects requires a retained learned-effect state.", call. = FALSE)
+  }
+  if (is_database_effect_state(state)) {
+    owner = retained_fit_connection(object[["resource_state"]])
+    if (is.null(conn) && inherits(table, "tbl_lazy")) conn = dbplyr::remote_con(table)
+    if (!is.null(conn) && !resource_same_connection(conn, owner)) {
+      stop("Database-backed effects require the fitted owning session.", call. = FALSE)
+    }
+    conn = owner
+    attr(conn, "dbreg_resource_lease") = object[["resource_state"]]
+    state[["r_prediction"]] = for_r
   }
   if (is.null(conn) && !is.null(table) && !inherits(table, "tbl_lazy")) {
     stop("A named table requires a database connection.", call. = FALSE)

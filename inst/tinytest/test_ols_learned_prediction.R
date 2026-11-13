@@ -54,7 +54,7 @@ if (requireNamespace("duckdb", quietly = TRUE)) {
   expect_equal(predict(flag, d), unname(fitted(lm(y ~ x + flag + g, data = d))), tolerance = 1e-10)
 
   previous = options(dbreg.prediction_max_entries = 1)
-  limited = dbreg(y ~ x | g, data = d, strategy = "demean", retain = "prediction")
+  expect_warning(limited <- dbreg(y ~ x | g, data = d, strategy = "demean", retain = "prediction"), "could not be retained")
   options(previous)
   expect_identical(limited[["prediction_diagnostics"]][["reason"]], "system_limit")
   expect_error(predict(limited, d), "no portable learned-effect state")

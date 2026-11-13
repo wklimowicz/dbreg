@@ -4,7 +4,16 @@
 \alias{basis_column_sql}
 \title{SQL expressions for the per-bin polynomial basis (binsreg compatible)}
 \usage{
-basis_column_sql(geo, x_name, degree)
+basis_column_sql(geo, x_name, degree, aliases = NULL)
+}
+\arguments{
+\item{geo}{Bin geometry with bin ids and boundaries.}
+
+\item{x_name}{SQL name of the running variable.}
+
+\item{degree}{Polynomial degree.}
+
+\item{aliases}{Optional named map from basis labels to collision-safe SQL names.}
 }
 \description{
 Uses binsreg's basis: u = (x - x_left) / h, where h is the bin width, so u is

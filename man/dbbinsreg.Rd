@@ -107,8 +107,8 @@ major speed gains on big datasets; see the \verb{Smoothness Constraints} section
 below. If \code{NULL} (the default), sampling is enabled automatically when
 applicable, with a message. Explicitly set to \code{TRUE} to enable the same
 sampling behaviour, but without the message. Alternatively, set to \code{FALSE}
-to use the full dataset. Ignored when \code{s = 0}, since that estimation
-already runs on in-database aggregates.}
+to use the full dataset. Ignored when \code{s = 0}, since the \code{"compress"}
+strategy already handles these aggregation cases efficiently.}
 
 \item{ci}{Logical. Calculate standard errors and confidence intervals for points?
 Default is \code{TRUE}.}
@@ -124,16 +124,13 @@ clustered standard errors (e.g., \code{~cluster_var}).}
 \item{level}{Numeric in the range \verb{[0,1]}, giving the confidence level for
 the confidence levels and/or bands. Default is \code{0.95}.}
 
-\item{nsims}{Number of simulation draws for confidence band computation.
-Default is 500. Only used when \code{cb = TRUE}.}
+\item{nsims}{Integer of at least two giving the number of simulation draws
+for confidence bands. Default is 500. Used when \code{cb = TRUE}.}
 
-\item{strategy}{Acceleration strategy passed to \code{\link{dbreg}} for
-unconstrained estimation (\code{s = 0}). Without fixed effects, the default
-\code{"auto"} lets \code{dbreg()} choose \code{"compress"} when the binned data compress
-well (e.g. bin means, or a discrete \code{x}) and \code{"moments"} otherwise (e.g. a
-continuous \code{x} with \code{p > 0}, or continuous controls). With fixed effects,
-\code{"auto"} uses \code{"compress"}. Set \code{"compress"} to always compress. Ignored
-when smoothness \code{s > 0}.}
+\item{strategy}{Acceleration strategy passed to \code{\link{dbreg}}.
+\code{"auto"} chooses from the SQL bin design cardinality. Fixed-effect
+models use compression to keep level coefficients and joint covariance.
+Spline models construct the row-level basis before fitting.}
 
 \item{plot}{Logical. If \code{TRUE} (default), a plot is produced as a side effect.
 Set to \code{FALSE} to suppress plotting.}
@@ -219,8 +216,7 @@ derivatives up to order \eqn{s-1}) at bin boundaries. For example, \code{c(1,1)}
 gives a piecewise linear fit that is continuous; \code{c(2,2)} gives a piecewise
 quadratic with continuous first derivatives.
 
-\strong{Important:} Unlike \code{s = 0} (which estimates from in-database aggregates),
-\code{s > 0} requires row-level spline basis construction and can
+Spline fits with \code{s > 0} require row-level basis construction and can
 be very slow on large datasets. As a result, \code{dbbinsreg} re-uses the
 random sample (used to compute the bin boundaries) for estimating the spline
 fits in these cases, ensuring much faster computation at the cost of reduced
@@ -241,10 +237,10 @@ sup-\eqn{t} procedure:
 \item Use the (\eqn{1-\alpha}) quantile of these suprema as the critical value
 }
 
-The confidence band is wider than pointwise CIs and provides simultaneous
-coverage: with (\eqn{1-\alpha}) probability, the entire true function lies
-within the band. This is useful for making statements about the overall shape
-of the relationship rather than individual point estimates.
+Pointwise intervals use the fitted testing degrees of freedom. Bands use
+Gaussian simulation of the fitted polynomial values at bin means. Their
+simultaneous coverage applies to those evaluation points under the Gaussian
+approximation. Bands may be requested with \code{ci = FALSE}.
 
 There are two important caveats, regarding \code{dbbinsreg}'s CB support:
 \itemize{

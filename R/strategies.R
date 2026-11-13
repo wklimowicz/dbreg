@@ -23,11 +23,13 @@ execute_moments_strategy = function(inputs) {
     table_ref,
     expand = "all",
     fe_vars = fe,
+    reserved_names = sql_design_reserved(inputs),
+    factor_refs = inputs[["factor_refs"]],
     intercept = intercept
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["i_columns"]])
+  register_sql_design(inputs, sql_design)
   
   frame = build_base_frame(inputs, xvars_sql, xvar_names)
   moments_sql = frame_moments_sql(frame, yvar, xvar_names, conn)
@@ -72,13 +74,16 @@ execute_moments_strategy = function(inputs) {
   attr(vcov_mat, "tss") = tss
 
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
+  layout = linear_fit_layout(inputs[["design_columns"]], fit[["x"]])
 
   list(
     coeftable = coeftable,
+    linear_design = layout,
     vcov = vcov_mat,
     fml = fml,
     yvar = yvar,
     xvars = standardize_coef_names(xvars),
+    collin.var = standardize_coef_names(fit[["dropped"]]),
     fe = NULL,
     weights = weights,
     query_string = moments_sql,
@@ -114,11 +119,13 @@ execute_demean_strategy = function(inputs) {
     conn,
     table_ref,
     expand = "all",
-    fe_vars = fe
+    fe_vars = fe,
+    reserved_names = sql_design_reserved(inputs),
+    factor_refs = inputs[["factor_refs"]]
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["i_columns"]])
+  register_sql_design(inputs, sql_design)
   
   frame = build_demean_frame(inputs, xvars_sql, xvar_names)
   on.exit(frame[["cleanup"]](), add = TRUE)
@@ -177,9 +184,11 @@ execute_demean_strategy = function(inputs) {
   attr(vcov_mat, "tss") = source_tss(inputs)
 
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
+  layout = linear_fit_layout(inputs[["design_columns"]], fit[["x"]])
 
   list(
     coeftable = coeftable,
+    linear_design = layout,
     vcov = vcov_mat,
     fml = fml,
     yvar = yvar,
@@ -226,11 +235,13 @@ execute_mundlak_strategy = function(inputs) {
     conn,
     table_ref,
     expand = "all",
-    fe_vars = fe
+    fe_vars = fe,
+    reserved_names = sql_design_reserved(inputs),
+    factor_refs = inputs[["factor_refs"]]
   )
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
-  register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["i_columns"]])
+  register_sql_design(inputs, sql_design)
   
   weights_expr_base = sql_weight_expr(weights)
   weights_expr_aug = if (is.null(weights)) NULL else sql_weight_expr("weights")
@@ -300,6 +311,14 @@ execute_mundlak_strategy = function(inputs) {
   )
   inputs[["name_map"]] = c(map, setNames(mundlak_means[["name"]], xbar_all))
 
+  mean_columns = inputs[["design_columns"]][rep(seq_len(nrow(inputs[["design_columns"]])), length(fe)), , drop = FALSE]
+  mean_columns[["id"]] = paste0("mean", seq_along(xbar_all))
+  mean_columns[["alias"]] = xbar_all
+  mean_columns[["role"]] = "nuisance"
+  mean_columns[["recipe"]] = Map(function(recipe, group) list(kind = "mean", source = recipe, variable = group),
+    mean_columns[["recipe"]], rep(fe, each = length(xvar_names)))
+  inputs[["design_columns"]] = rbind(inputs[["design_columns"]], mean_columns)
+
   # Regressors before means, so collinearity (e.g. a regressor that's constant
   # within groups) drops the mean and keeps the regressor, as in CRE
   all_regressors = c(xvar_names, xbar_all)
@@ -367,9 +386,11 @@ execute_mundlak_strategy = function(inputs) {
   attr(vcov_mat, "tss") = tss
 
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
+  layout = linear_fit_layout(inputs[["design_columns"]], fit[["x"]])
 
   list(
     coeftable = coeftable,
+    linear_design = layout,
     vcov = vcov_mat,
     fml = fml,
     yvar = yvar,
@@ -419,21 +440,23 @@ execute_compress_strategy = function(inputs) {
       table_ref,
       expand = "interactions",
       fe_vars = fe,
+      reserved_names = sql_design_reserved(inputs),
+      factor_refs = inputs[["factor_refs"]],
       intercept = intercept
     )
     
     # Build SELECT expressions with aliases
-    select_exprs = paste0(sql_design[["select_exprs"]], " AS ", sql_design[["aliases"]])
+    select_exprs = if (length(sql_design[["aliases"]])) paste0(sql_design[["select_exprs"]], " AS ", sql_design[["aliases"]]) else character()
     xvars_sql = paste(select_exprs, collapse = ", ")
     xvar_names = sql_design[["aliases"]]
-    register_factor_display(inputs, sql_design[["factor_levels"]], sql_design[["level_aliases"]], sql_design[["i_columns"]])
+    register_sql_design(inputs, sql_design)
   } else {
     xvars_sql = paste(xvars, collapse = ", ")
     xvar_names = xvars
   }
   
   group_cols = unique(c(xvar_names, fe))
-  expanded_from = if (isTRUE(has_interactions)) paste0("FROM (SELECT ", paste(c(xvars_sql,
+  expanded_from = if (isTRUE(has_interactions)) paste0("FROM (SELECT ", paste(c(select_exprs,
     setdiff(unique(c(fe, yvar, weights)), xvar_names)), collapse = ","), " ", from_statement, ") dbreg_compress_source") else from_statement
   packet = compressed_moment_query(conn, expanded_from, group_cols, yvar, weights, intercept)
   query_string = packet[["sql"]]
@@ -478,10 +501,23 @@ execute_compress_strategy = function(inputs) {
     v %in% names(compressed_dat) && (is.factor(compressed_dat[[v]]) || is.character(compressed_dat[[v]]))
   }, logical(1))
   register_factor_display(inputs, lapply(setNames(nm = c(design_vars, fe)[is_cat]), function(v) unique(compressed_dat[[v]])))
-  X = sparse.model.matrix(
-    if (length(c(design_vars, fe))) reformulate(c(design_vars, fe), intercept = intercept) else ~1,
-    compressed_dat
-  )
+  matrix_formula = if (length(c(design_vars, fe))) reformulate(c(design_vars, fe), intercept = intercept) else ~1
+  categorical = unique(c(design_vars, fe))[vapply(compressed_dat[unique(c(design_vars, fe))], function(value)
+    is.factor(value) || is.character(value) || is.logical(value), logical(1))]
+  contrasts = lapply(compressed_dat[categorical], function(value) {
+    levels = if (is.logical(value)) c("FALSE", "TRUE") else if (is.factor(value)) levels(value) else levels(factor(value))
+    stats::contr.treatment(levels)
+  })
+  if (!length(contrasts)) contrasts = NULL
+  matrix_data = linear_matrix_data(compressed_dat)
+  X = sparse.model.matrix(matrix_formula, matrix_data, contrasts.arg = contrasts)
+  columns = matrix_column_layout(X, matrix_formula, matrix_data,
+    inputs[["design_columns"]], slope_terms = seq_along(design_vars))
+  generated = vapply(columns[["recipe"]], function(recipe)
+    !recipe[["kind"]] %in% c("raw", "numeric") && !is.null(recipe[["variable"]]), logical(1))
+  columns[["alias"]] = allocate_sql_aliases(columns[["alias"]], generated,
+    sql_design_reserved(inputs), folds_identifier_case(conn))
+  colnames(X) = columns[["alias"]]
   if (ncol(X) == 0) {
     stop("Design matrix has zero columns.")
   }
@@ -490,6 +526,9 @@ execute_compress_strategy = function(inputs) {
   S = compressed_cross_moments(X, compressed_dat, yvar,
     center_columns = which(attr(X, "assign") %in% numeric_terms))
   fit = fit_ols(S, yvar, colnames(X), drop_collinear = TRUE, verbose = verbose)
+  layout = list(version = 1L, columns = columns, fitted_ids = columns[["id"]][match(fit[["x"]], columns[["alias"]])])
+  compressed_design = list(formula = matrix_formula, data_names = names(compressed_dat), contrasts = contrasts,
+    positions = match(fit[["x"]], columns[["alias"]]))
   collin_vars = fit[["dropped"]]
   X = X[, fit[["x"]], drop = FALSE]
   betahat = fit[["coef"]]
@@ -526,7 +565,7 @@ execute_compress_strategy = function(inputs) {
     # other columns the query needs) to it
     cells_from = if (isTRUE(has_interactions)) {
       cols = setdiff(unique(c(inputs[["cluster_var"]], yvar, weights, fe)), xvar_names)
-      paste0("FROM (SELECT ", paste(c(cols, xvars_sql), collapse = ", "), " ", from_statement, ") AS dbreg_cells")
+      paste0("FROM (SELECT ", paste(c(cols, select_exprs), collapse = ", "), " ", from_statement, ") AS dbreg_cells")
     } else {
       from_statement
     }
@@ -578,6 +617,8 @@ execute_compress_strategy = function(inputs) {
     list(
       coeftable = coeftable,
       data = restore_compressed_data(compressed_dat),
+      linear_design = layout,
+      compressed_design = compressed_design,
       vcov = vcov_mat,
       fml = fml,
       yvar = yvar,

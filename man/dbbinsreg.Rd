@@ -46,7 +46,12 @@ ephemeral (in-memory). If no connection is provided, then an ephemeral
 \code{\link[duckdb]{duckdb}} connection will be created automatically and
 closed before the function exits. Note that a persistent (disk-backed)
 database connection is required for larger-than-RAM datasets in order to take
-advantage of out-of-core functionality like streaming (where supported).}
+advantage of out-of-core functionality like streaming (where supported).
+Default connections for integer64 data use exact BIGINT reads. Native BIGINT
+registration is verified before fitting; failed setup releases its resources.
+Caller connection settings are preserved. On DuckDB, large numeric BIGINT
+category/cell keys are re-read exactly using bit64; numeric regression
+arithmetic still uses double precision.}
 
 \item{table, data, path}{Mutually exclusive arguments for specifying the data
 table (object) to be queried. In order of precedence:

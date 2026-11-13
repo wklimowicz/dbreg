@@ -139,6 +139,8 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
   is_duckdb = FALSE
   table_name = NULL
   from_statement = NULL
+  setup_complete = FALSE
+  on.exit(if (!setup_complete) release_db_setup(conn, own_conn, registered_table), add = TRUE)
 
 
   # If table is tbl_lazy and conn is NULL, try to infer conn from the table
@@ -157,7 +159,9 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
 
   # Create default connection if still NULL (for data.frame or path inputs)
   if (is.null(conn)) {
-    conn = dbConnect(duckdb(), shutdown = TRUE)
+    integer64_data = is.null(table) && is.data.frame(data) &&
+      any(vapply(data, inherits, logical(1), "integer64"))
+    conn = dbConnect(duckdb(bigint = if (integer64_data) "integer64" else "numeric"), shutdown = TRUE)
     own_conn = TRUE
     is_duckdb = TRUE
   } else {
@@ -201,11 +205,15 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
       stop("In-memory data frames are only supported with DuckDB connections. ",
            "Use `table` or `path` for other backends.")
     }
-    temp_name = sprintf("__%s_%s",
-                        caller,
-                        gsub("[^0-9]", "", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3")))
-    duckdb_register(conn, temp_name, data)
+    temp_name = basename(tempfile(paste0("__", caller, "_")))
+    # Register ownership before the driver call: a failing registration may
+    # already have created a relation. Cleanup is harmless if it did not.
     registered_table = temp_name
+    duckdb_register(conn, temp_name, data)
+    integer64_columns = names(data)[vapply(data, inherits, logical(1), "integer64")]
+    if (length(integer64_columns)) {
+      validate_integer64_import(conn, temp_name, integer64_columns)
+    }
     table_name = temp_name
     from_statement = paste("FROM", temp_name)
   } else if (!is.null(path)) {
@@ -225,6 +233,7 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
     stop("Provide one of `table`, `data`, or `path`.")
   }
 
+  setup_complete = TRUE
   list(
     conn = conn,
     table_name = table_name,
@@ -233,6 +242,20 @@ setup_db_connection = function(conn, table, data, path, caller = "dbreg") {
     registered_table = registered_table,
     is_duckdb = is_duckdb
   )
+}
+
+
+# Verify native import types before any fitting arithmetic or category query.
+# A driver's R output mode is not evidence about its registration behavior.
+validate_integer64_import = function(conn, table, columns) {
+  schema = dbGetQuery(conn, paste("DESCRIBE", DBI::dbQuoteIdentifier(conn, table)))
+  types = schema[["column_type"]][match(columns, schema[["column_name"]])]
+  if (length(types) != length(columns) || anyNA(types) || any(types != "BIGINT")) {
+    stop("DuckDB did not preserve integer64 input columns. Use a connection created with ",
+      "duckdb::duckdb(bigint = 'integer64'), or convert those columns explicitly before fitting.",
+      call. = FALSE)
+  }
+  invisible(TRUE)
 }
 
 
@@ -246,11 +269,9 @@ model_vars = function(x) {
   walk = function(e) {
     if (is.name(e)) return(as.character(e))
     if (!is.call(e)) return(character())
-    args = if (identical(e[[1]], as.name("i"))) {
-      as.list(match.call(i_template, e))[c("factor_var", "var")]
-    } else {
-      as.list(e)[-1]
-    }
+    declaration = parse_i_term(e)
+    if (!is.null(declaration)) return(c(declaration[["f"]], declaration[["var"]]))
+    args = as.list(e)[-1L]
     unlist(lapply(args, walk))
   }
   unique(walk(x))
@@ -292,7 +313,8 @@ parse_regression_formula = function(fml, allow_empty = FALSE) {
   xvars = model_vars(rhs1)  # unique variable names
   # i() terms need SQL expansion, like interactions
   has_i = vapply(term_labels, function(t) !is.null(parse_i_term(t)), logical(1))
-  has_interactions = any(grepl(":", term_labels)) || any(has_i)
+  has_interactions = any(grepl(":", term_labels)) || any(has_i) ||
+    any(vapply(linear_term_nodes(term_labels[!has_i]), function(node) !is.null(node) && node[["kind"]] != "numeric", logical(1)))
   
   if (!length(xvars) && !(isTRUE(allow_empty) && has_intercept && length(fml)[2] == 1L)) {
     stop("No regressors on RHS.")
@@ -337,7 +359,7 @@ release_db_setup = function(conn, own_conn, registered_table) {
     try(duckdb_unregister(conn, registered_table), silent = TRUE)
   }
   if (isTRUE(own_conn)) {
-    dbDisconnect(conn, shutdown = TRUE)
+    try(dbDisconnect(conn, shutdown = TRUE), silent = TRUE)
   }
   invisible(NULL)
 }
@@ -610,9 +632,10 @@ check_simple_terms = function(term_labels, what = "regressors", allow_interactio
   is_simple = function(term) {
     # fixest-style i() terms are expanded by sql_model_matrix()
     if (allow_interactions && !is.null(parse_i_term(term))) return(TRUE)
-    parts = if (allow_interactions) strsplit(term, ":", fixed = TRUE)[[1]] else term
+    parts = if (allow_interactions) split_interaction_term(term) else term
     all(vapply(parts, function(x) {
-      isTRUE(tryCatch(is.name(str2lang(x)), error = function(e) FALSE))
+      if (allow_interactions) !is.null(parse_linear_term(x)) else
+        isTRUE(tryCatch(is.name(str2lang(x)), error = function(e) FALSE))
     }, logical(1)))
   }
   bad = term_labels[!vapply(term_labels, is_simple, logical(1))]
@@ -1008,4 +1031,59 @@ drop_table_if_exists = function(conn, table_name, backend) {
     sql = glue("DROP TABLE IF EXISTS {table_name}")
   }
   tryCatch(dbExecute(conn, sql), error = function(e) NULL)
+}
+
+# Public row identities must preserve exact SQL keys, while compressed model
+# designs intentionally collect numeric grouping columns for arithmetic. Only
+# identity reads opt into DECIMAL/wide-integer text transport. Keep the original
+# large-BIGINT integer64 contract for ordinary grouped reads.
+read_keyed_query = function(conn, sql, keys, exact_keys = FALSE) {
+  backend = detect_backend(conn)
+  data = dbGetQuery(conn, sql)
+  if (!backend[["name"]] %in% c("duckdb", "spark") || !nrow(data) ||
+      (!exact_keys && backend[["name"]] != "duckdb")) return(data)
+  candidates = intersect(keys, names(data))
+  candidates = candidates[vapply(data[candidates], function(value) {
+    (is.double(value) || is.integer(value)) && !inherits(value, c("Date", "POSIXt")) &&
+      (exact_keys || !inherits(value, "integer64") && any(abs(value) >= 2^53, na.rm = TRUE))
+  }, logical(1))]
+  if (!length(candidates)) return(data)
+  if (backend[["name"]] == "duckdb") {
+    schema = dbGetQuery(conn, paste("DESCRIBE", sql))
+    types = schema[["column_type"]][match(candidates, schema[["column_name"]])]
+  } else {
+    quoted = as.character(DBI::dbQuoteIdentifier(conn, candidates))
+    schema = dbGetQuery(conn, paste0("SELECT ", paste0("typeof(", quoted, ") AS t",
+      seq_along(candidates), collapse = ","), " FROM (", sql, ") dbreg_key_types LIMIT 1"))
+    types = vapply(schema, function(value) as.character(value)[1L], character(1), USE.NAMES = FALSE)
+  }
+  types = toupper(types)
+  if (anyNA(types)) stop("Cannot establish native grouping key types.", call. = FALSE)
+  decimal = grepl("^DECIMAL\\([0-9]+,[[:space:]]*[0-9]+\\)$", types)
+  integral = !decimal | grepl(",[[:space:]]*0\\)$", types)
+  bigint = types == "BIGINT"
+  large_bigint = vapply(data[candidates], function(value) {
+    if (inherits(value, "integer64")) anyNA(value) else any(abs(value) >= 2^53, na.rm = TRUE)
+  }, logical(1))
+  exact = candidates[exact_keys & (decimal | types %in% c("HUGEINT", "UHUGEINT", "UBIGINT")) |
+    bigint & large_bigint]
+  if (!length(exact)) return(data)
+  integer64 = requireNamespace("bit64", quietly = TRUE)
+  if (any(bigint[match(exact, candidates)]) && !integer64) {
+    stop("Exact BIGINT key reads require bit64. Use bigint = 'integer64' or install bit64.", call. = FALSE)
+  }
+  columns = as.character(DBI::dbQuoteIdentifier(conn, names(data)))
+  positions = match(exact, names(data))
+  columns[positions] = paste(sql_cast_text(conn, columns[positions], backend), "AS", columns[positions])
+  data = dbGetQuery(conn, paste0("SELECT ", paste(columns, collapse = ","), " FROM (", sql, ") dbreg_exact_keys"))
+  for (name in exact) {
+    text = data[[name]]
+    if (integer64 && integral[match(name, candidates)]) {
+      value = suppressWarnings(bit64::as.integer64(text))
+      # Native HUGEINT/DECIMAL and BIGINT's minimum can exceed bit64's domain
+      # (whose most negative bit pattern is NA). Keep the original exact text.
+      if (!any(is.na(value) != is.na(text))) data[[name]] = value
+    }
+  }
+  data
 }

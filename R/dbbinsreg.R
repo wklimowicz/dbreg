@@ -414,6 +414,7 @@ dbbinsreg = function(
   conn_managed = db_setup[["own_conn"]]
   table_name = db_setup[["table_name"]]
   registered_table = db_setup[["registered_table"]]
+  on.exit(release_db_setup(conn, conn_managed, registered_table), add = TRUE)
   is_duckdb = db_setup[["is_duckdb"]]
 
   # Give model variables SQL-safe names (see safe_source()); mapped back at the end
@@ -430,22 +431,6 @@ dbbinsreg = function(
   # Detect backend for SQL compatibility
   backend_info = detect_backend(conn)
   backend = backend_info[["name"]]
-  
-  # Cleanup function for connection
-  cleanup = function() {
-    if (conn_managed && dbIsValid(conn)) {
-      dbDisconnect(conn, shutdown = TRUE)
-    }
-  }
-  on.exit(cleanup(), add = TRUE)
-  
-  # Cleanup registered table
-  cleanup_registered = function() {
-    if (!is.null(registered_table) && dbIsValid(conn)) {
-      try(duckdb_unregister(conn, registered_table), silent = TRUE)
-    }
-  }
-  on.exit(cleanup_registered(), add = TRUE)
   
   # Construct formula for display
   formula_str = if (!is.null(controls) && !is.null(fe)) {

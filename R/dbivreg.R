@@ -203,11 +203,16 @@ process_dbivreg_inputs = function(inputs) {
 
   design_source = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
   intercept = parsed_fml[["intercept"]]
-  designs = dbivreg_shared_i_aliases(list(
-    dbivreg_expand_block(parsed_fml[["exog_rhs"]], conn, design_source, fe, intercept),
-    dbivreg_expand_block(parsed_fml[["endog_rhs"]], conn, design_source, fe),
-    dbivreg_expand_block(parsed_fml[["instr_rhs"]], conn, design_source, fe)
-  ))
+  reserved = unique(c(raw_vars, yvar, fe, weights, cluster_var))
+  designs = dbivreg_shared_aliases(list(
+    dbivreg_expand_block(parsed_fml[["exog_rhs"]], conn, design_source, fe, intercept, reserved_names = reserved),
+    dbivreg_expand_block(parsed_fml[["endog_rhs"]], conn, design_source, fe, reserved_names = reserved),
+    dbivreg_expand_block(parsed_fml[["instr_rhs"]], conn, design_source, fe, reserved_names = reserved)
+  ), reserved_names = reserved, fold_case = folds_identifier_case(conn))
+  i_columns = unique(unlist(lapply(designs, function(design) design[["i_columns"]][["alias"]]), use.names = FALSE))
+  if (length(i_columns) && length(i_columns) > i_column_limit()) {
+    stop("i() columns exceed dbreg.i_max_columns across IV blocks.", call. = FALSE)
+  }
   exog_design = designs[[1]]
   endog_design = designs[[2]]
   instr_design = designs[[3]]
@@ -217,6 +222,7 @@ process_dbivreg_inputs = function(inputs) {
     rbind(exog_design[["level_aliases"]], endog_design[["level_aliases"]], instr_design[["level_aliases"]]),
     rbind(exog_design[["i_columns"]], endog_design[["i_columns"]], instr_design[["i_columns"]])
   )
+  for (design in designs) register_sql_design(inputs, design)
   # Without an intercept, factor coding of the endogenous/instrument blocks
   # would depend on the combined X and Z designs; not supported yet
   if (!intercept && length(c(endog_design[["factor_levels"]], instr_design[["factor_levels"]]))) {
@@ -260,11 +266,16 @@ process_dbivreg_inputs = function(inputs) {
     keep_iv = !instr_design[["names"]] %in% overlap_exog_iv
     instr_design[["sql"]] = instr_design[["sql"]][keep_iv]
     instr_design[["names"]] = instr_design[["names"]][keep_iv]
+    instr_design[["columns"]] = instr_design[["columns"]][keep_iv, , drop = FALSE]
   }
   if (length(instr_design[["names"]]) < length(endog_design[["names"]])) {
     stop("Need at least as many excluded instrument columns as endogenous regressor columns.")
   }
 
+  structural_columns = rbind(exog_design[["columns"]], endog_design[["columns"]])
+  structural_columns[["id"]] = paste0("iv", seq_len(nrow(structural_columns)))
+  inputs[["design_columns"]] = structural_columns
+  inputs[["iv_label_columns"]] = list(endogenous = endog_design[["columns"]], instruments = instr_design[["columns"]])
   x_all_sql = c(exog_design[["sql"]], endog_design[["sql"]])
   x_all_names = c(exog_design[["names"]], endog_design[["names"]])
   z_all_names = c(exog_design[["names"]], instr_design[["names"]])
@@ -442,7 +453,7 @@ execute_iv_compress_strategy = function(inputs) {
 
   # Cell-level design over the union of X and Z, and the cross moments
   # U'WU, U'Wy, y'Wy (exact, since U is constant within cells)
-  U = as.matrix(dat[, union_names, drop = FALSE])
+  U = as.matrix(linear_matrix_data(dat[, union_names, drop = FALSE]))
   if (intercept) {
     U = cbind("(Intercept)" = 1, U)
   }
@@ -514,6 +525,8 @@ execute_iv_compress_strategy = function(inputs) {
     meats_fn = meats_fn,
     query_string = compress_sql
   )
+  result[["prediction_cells"]] = dat
+  result[["compressed_design"]] = list(data_names = names(dat), columns = c(if (intercept) "(Intercept)", inputs[["x_all_names"]]))
   result[["nobs"]] = nrow(dat)
   result[["compression_ratio"]] = compression_ratio
   result
@@ -569,6 +582,7 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
   attr(vcov_mat, "tss") = tss
 
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
+  layout = linear_fit_layout(inputs[["design_columns"]], fit[["x"]])
   iv_diagnostics = compute_dbivreg_diagnostics(
     inputs = inputs,
     S = S,
@@ -585,6 +599,7 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
 
   out = list(
     coeftable = coeftable,
+    linear_design = layout,
     vcov = vcov_mat,
     fml = structural_fml,
     yvar = yvar,
@@ -703,9 +718,9 @@ dbivreg_parse_formula = function(fml) {
   )
 }
 
-#' @keywords internal
 #' Expands the right-hand side of the structural formula into SQL expressions for the design matrix, including fixed effects if specified.
-dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(), intercept = TRUE) {
+#' @keywords internal
+dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(), intercept = TRUE, reserved_names = character()) {
   if (is.null(fe_vars)) {
     fe_vars = character()
   }
@@ -715,7 +730,8 @@ dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(),
     table,
     expand = "all",
     fe_vars = fe_vars,
-    intercept = intercept
+    intercept = intercept,
+    reserved_names = reserved_names
   )
   if (anyDuplicated(sql_design$aliases) > 0) {
     dupes = unique(sql_design$aliases[duplicated(sql_design$aliases)])
@@ -730,29 +746,46 @@ dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(),
     factor_levels = sql_design$factor_levels,
     level_aliases = sql_design$level_aliases,
     i_columns = sql_design[["i_columns"]],
+    columns = sql_design[["columns"]],
+    level_rows = sql_design[["level_rows"]],
     vars = model_vars(rhs_formula),
     term_labels = attr(terms(rhs_formula), "term.labels")
   )
 }
 
-#' Give `i()` columns the same alias in every IV block
+#' Reconcile generated targets across IV blocks
 #'
-#' [sql_model_matrix()] numbers `i()` aliases per call, so blocks expanded
-#' separately could reuse an alias for different columns. Re-alias them by
-#' their SQL instead: identical columns share an alias, which keeps the
-#' name-based overlap checks between blocks working.
+#' Identical requested targets and constructed SQL share a target. `i()`
+#' expressions retain their common cross-block identity. Other distinct declared
+#' targets stay distinct even when their SQL agrees, preserving rank checks.
 #' @param designs List of [dbivreg_expand_block()] results.
+#' @param reserved_names Source-role names projected beside the designs.
+#' @param fold_case Whether target names fold identifier case.
 #' @keywords internal
-dbivreg_shared_i_aliases = function(designs) {
-  is_i = lapply(designs, function(d) d[["names"]] %in% d[["i_columns"]][["alias"]])
+dbivreg_shared_aliases = function(designs, reserved_names = character(), fold_case = FALSE) {
+  is_i = lapply(designs, function(d) which(vapply(d[["columns"]][["recipe"]], function(recipe) identical(recipe[["kind"]], "i"), logical(1))))
+  generated = lapply(designs, function(d) which(vapply(d[["columns"]][["recipe"]], function(recipe) !recipe[["kind"]] %in% c("raw", "numeric"), logical(1))))
   i_sql = unique(unlist(Map(function(d, i) d[["sql"]][i], designs, is_i)))
-  Map(function(d, i) {
-    old = d[["names"]][i]
-    new = paste0("dbreg_i", match(d[["sql"]][i], i_sql))
-    d[["names"]][i] = new
-    d[["i_columns"]][["alias"]] = new[match(d[["i_columns"]][["alias"]], old)]
-    d
+  desired = Map(function(d, i) {
+    names = d[["names"]]
+    if (length(i)) names[i] = paste0("dbreg_i", match(d[["sql"]][i], i_sql))
+    names
   }, designs, is_i)
+  expressions = unlist(Map(function(d, i) d[["sql"]][i], designs, generated))
+  candidates = unlist(Map(function(names, i) names[i], desired, generated))
+  keys = paste(match(candidates, unique(candidates)), match(expressions, unique(expressions)), sep = ":")
+  first = !duplicated(keys)
+  raw = unlist(Map(function(d, i) d[["names"]][setdiff(seq_along(d[["names"]]), i)], designs, generated))
+  aliases = allocate_sql_aliases(candidates[first], rep(TRUE, sum(first)), c(reserved_names, raw), fold_case)
+  groups = split(match(keys, unique(keys)), rep(seq_along(designs), lengths(generated)))
+  Map(function(d, generated, i, k) {
+    d[["names"]][generated] = aliases[groups[[as.character(k)]]]
+    d[["columns"]][["alias"]] = d[["names"]]
+    d[["i_columns"]][["alias"]] = d[["names"]][i]
+    present = which(!is.na(d[["level_rows"]]))
+    d[["level_aliases"]][["alias"]][d[["level_rows"]][present]] = d[["names"]][present]
+    d
+  }, designs, generated, is_i, seq_along(designs))
 }
 
 #' @keywords internal

@@ -61,11 +61,11 @@ compressed_moment_query = function(conn, from, groups, y, weights, intercept = T
       normalized_from, group_by, ") SELECT *,",
       if (fit_columns) "sum_wy/sum_w AS mean_Y,SQRT(sum_w) AS wts,", row_id, " AS dbreg_cell FROM ", cells)
   }
-  list(sql = sql, center_field = center, scale_field = scale)
+  list(sql = sql, center_field = center, scale_field = scale, keys = groups)
 }
 
 read_compressed_moments = function(conn, query) {
-  data = decode_compressed_moments(dbGetQuery(conn, query[["sql"]]))
+  data = decode_compressed_moments(read_keyed_query(conn, query[["sql"]], query[["keys"]]))
   if (!nrow(data)) stop("No observations in the compressed estimation sample.", call. = FALSE)
   attr(data, "moment_center") = as.numeric(data[[query[["center_field"]]]][[1L]])
   attr(data, "weight_scale") = as.numeric(data[[query[["scale_field"]]]][[1L]])

@@ -79,6 +79,16 @@ Bug fixes
 - Linear moments and compressed cell aggregates are centered and weight-scaled
   to avoid catastrophic cancellation on large-shift or extreme-weight inputs.
 
+- Fitted column identities, category coding, and `integer64` keys are now
+  tracked through SQL expansion and prediction, preserving exact DuckDB
+  category and cell keys.
+- `i()` terms now compile bounded typed dictionaries with exact selectors and
+  native SQL literals, and `dbreg()` supports `factor_refs` for exact
+  reference-level coding of categorical regressors.
+- Restricted `factor(col)`, `I(col^2)`, and `I(col^3)` terms and their
+  interactions now compile with stable prediction recipes, while arbitrary R
+  expressions are rejected.
+
 - Alternating projections no longer fail with an SQL error when a fixed-effect
   or cluster variable also appears as a regressor. Invalid `dbreg.ap_max_iter`
   and `dbreg.ap_tol` options now produce a clear error.

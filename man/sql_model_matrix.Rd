@@ -11,12 +11,14 @@ sql_model_matrix(
   expand = c("all", "interactions"),
   sep = "_x_",
   fe_vars = character(),
-  intercept = TRUE
+  intercept = TRUE,
+  reserved_names = character(),
+  factor_refs = NULL
 )
 }
 \arguments{
 \item{formula}{A formula (or Formula) object. Only RHS terms are expanded;
-the LHS (response variable) is ignored.}
+the LHS is reserved against generated target collisions.}
 
 \item{conn}{Database connection}
 
@@ -36,6 +38,13 @@ in interactions.}
 \item{intercept}{Logical. Whether the model has an intercept. As in
 [stats::model.matrix()], without an intercept the first factor main effect
 keeps all of its levels (no reference level is dropped).}
+
+\item{reserved_names}{Additional source-role names projected beside the design
+(for example, weights or cluster columns). Generated targets cannot use them.}
+
+\item{factor_refs}{Optional named reference levels for ordinary categorical
+regressors. Numeric-coded columns named here expand categorically; i()
+references remain controlled by their own ref/keep selectors.}
 }
 \value{
 List with:
@@ -46,23 +55,43 @@ List with:
   - `level_aliases`: data frame mapping each factor dummy `alias` to its
     `var` and `level`
   - `factor_levels`: list of factor levels by variable (for reference)
+  - `columns`: ordered producer metadata: unique IDs, SQL targets, display
+    labels and construction recipes. SQL targets are not coefficient identities.
   - `i_columns`: data frame mapping each `i()` column `alias` to its factor
     `var`, `level` and interacted variable `by` (`NA` if none)
 }
 \description{
 Expands formula terms into SQL SELECT expressions, handling factor one-hot
 encoding and interaction terms. Only the right-hand side of the formula is
-processed; the response variable (LHS) is ignored.
+processed; explicit `factor(column)`, `I(column^2)` and `I(column^3)` terms
+and their interactions are supported. Other transformations are rejected.
+The response is not expanded, but its source name is reserved
+beside generated columns.
 }
 \details{
 Terms can also use `fixest`-style `i()` syntax: `i(f)` expands `f` like a
 factor (numeric `f` included), and `i(f, x)` interacts each level of `f`
 with a numeric or logical `x`. `ref` drops the given level(s) and `keep`
-keeps only the given levels. Columns are named as in `fixest`, e.g.
+keeps only the given levels. A non-symbol second argument is a positional
+reference selector. `ref = TRUE` drops the first level; `ref = NULL` retains
+the full indicator basis before collinearity removal. Character selectors
+support unambiguous case-insensitive partial matches, `@regex` and `@!regex`.
+Numeric selectors match exact typed values. Columns are named as in `fixest`, e.g.
 `period::5:treat`. One difference: in a model without an intercept, a plain
 `i(f)` drops its first level if another factor comes first, whereas
 `fixest` drops its last level (via collinearity) instead.
 }
+\section{Typed categories and resource limits}{
+
+Integer keys are read as exact decimal text; DOUBLE, logical, character and
+Date keys retain their native identities. Single-precision floating and
+fractional DECIMAL categories are rejected. Unsupported native metadata
+fails before expansion. Set `options(dbreg.i_max_columns = 1000L)` to bound
+emitted i() columns and level discovery (at most the bound plus one level
+is retained). The bound applies across IV blocks. Fitted category coding
+and evaluated selectors are retained for prediction.
+}
+
 \examples{
 library(DBI)
 library(duckdb)

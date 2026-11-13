@@ -50,15 +50,17 @@ coef.dbreg = function(object, fe = FALSE, ...) {
   ct = object[["coeftable"]]
   
   if (!isTRUE(fe) && !is.null(object[["fe"]])) {
-    coef_names = object[["coef_names"]]
-    if (!is.null(coef_names)) {
-      ct = ct[coef_names, , drop = FALSE]
+    if (!is.null(object[["linear_design"]])) {
+      ct = ct[visible_linear_positions(object, fe), , drop = FALSE]
     } else {
-      xvars = object[["xvars"]]
-      ct = ct[xvars, , drop = FALSE]
+      coef_names = object[["coef_names"]]
+      if (!is.null(coef_names)) {
+        ct = ct[coef_names, , drop = FALSE]
+      } else {
+        ct = ct[object[["xvars"]], , drop = FALSE]
+      }
     }
   }
-  
   out = ct[, "estimate"]
   names(out) = rownames(ct)
   out
@@ -78,6 +80,11 @@ coef.dbreg = function(object, fe = FALSE, ...) {
 #' @param level One finite numeric confidence level strictly between zero and
 #'   one. Default is 0.95.
 #' @param ... Additional arguments (currently unused).
+#'
+#' Fitted column construction and category coding are retained independently of
+#' public labels. Missing values and unknown fitted categories return `NA` in
+#' their input positions. Numeric predictors require numeric or logical input.
+#' The original row order is preserved; unrelated columns do not affect it.
 #' 
 #' @section Predicting on "demean" strategy objects:
 #' 
@@ -122,8 +129,11 @@ predict.dbreg = function(
     interval = "none"
   }
 
+  stored_cells = is.null(newdata)
   if (is.null(newdata)) {
-    if (strategy == "compress" && !is.null(object[["data"]])) {
+    if (strategy == "compress" && !is.null(object[["prediction_cells"]])) {
+      newdata = object[["prediction_cells"]]
+    } else if (strategy == "compress" && !is.null(object[["data"]])) {
       newdata = object[["data"]]
     } else {
       stop("newdata is required for predictions, as dbreg does not retain the original data.")
@@ -151,6 +161,22 @@ predict.dbreg = function(
     newdata[[f]] = factor(newdata[[f]])
   }
 
+  if (!is.null(object[["linear_design"]])) {
+    cells = object[["compressed_design"]]
+    if (stored_cells && !is.null(cells)) {
+      names(newdata) = cells[["data_names"]]
+      newdata = linear_matrix_data(newdata)
+      if (!is.null(cells[["columns"]])) {
+        mm = as.matrix(newdata[, setdiff(cells[["columns"]], "(Intercept)"), drop = FALSE])
+        if ("(Intercept)" %in% cells[["columns"]]) mm = cbind("(Intercept)" = 1, mm)
+        mm = mm[, cells[["columns"]], drop = FALSE]
+      } else {
+        mm = sparse.model.matrix(cells[["formula"]], newdata, contrasts.arg = cells[["contrasts"]])[, cells[["positions"]], drop = FALSE]
+      }
+    } else {
+      mm = linear_prediction_matrix(object, newdata)
+    }
+  } else {
   # Rebuild the design from the model's own terms (so factors, interactions and
   # no-intercept models expand exactly as in estimation), then align its
   # columns to the coefficients by name
@@ -203,6 +229,9 @@ predict.dbreg = function(
   }
   mm = mm[, names(betas), drop = FALSE]
 
+  }
+
+  invalid_rows = attr(mm, "dbreg_invalid_rows", exact = TRUE)
   if (strategy == "demean") {
     # demean: sweep the FE out of the regressors (and recover the outcome's
     # group means, if available, to return level predictions)
@@ -215,7 +244,9 @@ predict.dbreg = function(
         v - ave(v, newdata[[fe[1]]], FUN = mean_fn) - ave(v, newdata[[fe[2]]], FUN = mean_fn) + mean_fn(v)
       }
     }
-    mm = apply(as.matrix(mm), 2, sweep_fe)
+    working = as.matrix(mm)
+    if (!is.null(invalid_rows)) working[invalid_rows, ] = NA_real_
+    mm = apply(working, 2, sweep_fe)
     if (is.null(dim(mm))) {
       mm = matrix(mm, nrow = 1)
     }
@@ -236,6 +267,7 @@ predict.dbreg = function(
     fit = fit + y_group_mean
   }
  
+  if (!is.null(invalid_rows)) fit[invalid_rows] = NA_real_
   if (interval != "none") {
     vcovm = vcov(object, fe = TRUE)
     dof = object[["df_residual"]]
@@ -285,7 +317,7 @@ vcov.dbreg = function(object, fe = FALSE, ...) {
   # parameter order; without FE filtering, retain positions even if labels repeat.
   dimnames(out) = rep(list(rownames(object[["coeftable"]])), 2L)
   if (!isTRUE(fe) && length(object[["fe"]])) {
-    visible = names(coef(object))
+    visible = if (!is.null(object[["linear_design"]])) visible_linear_positions(object, fe) else names(coef(object))
     out = out[visible, visible, drop = FALSE]
   }
   for (name in names(metadata)) if (!is.null(metadata[[name]])) attr(out, name) = metadata[[name]]
@@ -322,15 +354,14 @@ confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...) {
   ct = object[["coeftable"]]
   
   if (!isTRUE(fe) && !is.null(object[["fe"]])) {
-    coef_names = object[["coef_names"]]
-    if (!is.null(coef_names)) {
-      ct = ct[coef_names, , drop = FALSE]
+    if (!is.null(object[["linear_design"]])) {
+      ct = ct[visible_linear_positions(object, fe), , drop = FALSE]
+    } else if (!is.null(object[["coef_names"]])) {
+      ct = ct[object[["coef_names"]], , drop = FALSE]
     } else {
-      xvars = object[["xvars"]]
-      ct = ct[xvars, , drop = FALSE]
+      ct = ct[object[["xvars"]], , drop = FALSE]
     }
   }
-  
   cf = ct[, "estimate"]
   ses = ct[, "std.error"]
   df = object[["df_residual"]]

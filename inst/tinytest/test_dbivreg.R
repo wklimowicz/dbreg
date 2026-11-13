@@ -636,7 +636,9 @@ expect_equal(dbivreg(y ~ x | fe | d ~ z1 + z2, data = dat_auto)$strategy, "demea
 # Unsupported specifications are rejected rather than silently changed
 expect_error(dbivreg(log(y) ~ x | d ~ z, data = dat), "outcome", info = "transformed outcome rejected")
 expect_error(dbivreg(y ~ log(abs(x)) | d ~ z, data = dat), "exogenous regressors", info = "transformed regressor rejected")
-expect_error(dbivreg(y ~ x | d ~ I(z^2), data = dat), "instruments", info = "transformed instrument rejected")
+power_fit = dbivreg(y ~ x | d ~ I(z^2), data = dat)
+power_ref = rename_fixest_iv(coef(feols(y ~ x | d ~ I(z^2), data = dat)))
+expect_equal(coef(power_fit), power_ref[names(coef(power_fit))], tolerance = 1e-6, info = "squared instrument matches independent 2SLS")
 
 # Singular diagnostics are reported as unavailable instead of aborting the fit
 dat_sing = dat

@@ -21,6 +21,7 @@ dbreg(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  factor_refs = NULL,
   ...
 )
 }
@@ -31,8 +32,12 @@ estimated. Fixed effects should be included after a pipe, e.g
 standard R syntax (\code{:} for interactions, \code{*} for main effects plus
 interaction). \code{fixest}-style \code{i()} terms are also supported, e.g.
 \code{i(period, treat, ref = 5)} for event studies; see
-\code{\link[=sql_model_matrix]{sql_model_matrix()}} for details. Transformations and literals are not yet
-supported. An intercept-only model (\code{y ~ 1}) is supported without fixed effects.}
+\code{\link[=sql_model_matrix]{sql_model_matrix()}} for exact typed selectors and the \code{dbreg.i_max_columns}
+resource limit. Explicit \code{factor(column)}, \code{I(column^2)} and \code{I(column^3)}
+terms and their interactions are supported; other transformations and
+literal regressors are rejected. Treatment coding is fixed at estimation and retained for R
+prediction; changing global contrast options does not recode a fitted model.
+An intercept-only model (\code{y ~ 1}) is supported without fixed effects.}
 
 \item{conn}{Database connection, e.g. created with
 \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
@@ -40,7 +45,12 @@ ephemeral (in-memory). If no connection is provided, then an ephemeral
 \code{\link[duckdb]{duckdb}} connection will be created automatically and
 closed before the function exits. Note that a persistent (disk-backed)
 database connection is required for larger-than-RAM datasets in order to take
-advantage of out-of-core functionality like streaming (where supported).}
+advantage of out-of-core functionality like streaming (where supported).
+Default connections for integer64 data use exact BIGINT reads. Native BIGINT
+registration is verified before fitting; failed setup releases its resources.
+Caller connection settings are preserved. On DuckDB, large numeric BIGINT
+category/cell keys are re-read exactly using bit64; numeric regression
+arithmetic still uses double precision.}
 
 \item{table, data, path}{Mutually exclusive arguments for specifying the data
 table (object) to be queried. In order of precedence:
@@ -134,6 +144,11 @@ to skip some internal checks. (Even then, it probably isn't worth it.)}
 console? Defaults to \code{FALSE}. This can be overridden for a single call
 by supplying \code{verbose = TRUE}, or set globally via
 \code{options(dbreg.verbose = TRUE)}.}
+
+\item{factor_refs}{Optional named reference levels for ordinary categorical
+regressors. Naming a numeric-coded column treats it as categorical. Each
+entry must identify one observed level; i() terms use their own selectors.
+Exact fitted coding is retained for prediction across strategies.}
 
 \item{...}{Additional arguments. Currently ignored, except to handle
 superseded arguments for backwards compatibility.}

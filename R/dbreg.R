@@ -13,8 +13,12 @@
 #' standard R syntax (`:` for interactions, `*` for main effects plus
 #' interaction). `fixest`-style `i()` terms are also supported, e.g.
 #' `i(period, treat, ref = 5)` for event studies; see
-#' [sql_model_matrix()] for details. Transformations and literals are not yet
-#' supported. An intercept-only model (`y ~ 1`) is supported without fixed effects.
+#' [sql_model_matrix()] for exact typed selectors and the `dbreg.i_max_columns`
+#' resource limit. Explicit `factor(column)`, `I(column^2)` and `I(column^3)`
+#' terms and their interactions are supported; other transformations and
+#' literal regressors are rejected. Treatment coding is fixed at estimation and retained for R
+#' prediction; changing global contrast options does not recode a fitted model.
+#' An intercept-only model (`y ~ 1`) is supported without fixed effects.
 #' @param conn Database connection, e.g. created with
 #' \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
 #' ephemeral (in-memory). If no connection is provided, then an ephemeral
@@ -22,6 +26,11 @@
 #' closed before the function exits. Note that a persistent (disk-backed)
 #' database connection is required for larger-than-RAM datasets in order to take
 #' advantage of out-of-core functionality like streaming (where supported).
+#' Default connections for integer64 data use exact BIGINT reads. Native BIGINT
+#' registration is verified before fitting; failed setup releases its resources.
+#' Caller connection settings are preserved. On DuckDB, large numeric BIGINT
+#' category/cell keys are re-read exactly using bit64; numeric regression
+#' arithmetic still uses double precision.
 #' @param table,data,path Mutually exclusive arguments for specifying the data
 #' table (object) to be queried. In order of precedence:
 #' - `table`: Character string giving the name of the data table in an
@@ -41,6 +50,10 @@
 #' or NULL (default) for unweighted regression. Weights must be non-negative;
 #' rows with zero weight are dropped. Weighted regressions support `"iid"`,
 #' `"hc1"`, and clustered SEs, and are compatible with all strategies.
+#' @param factor_refs Optional named reference levels for ordinary categorical
+#'   regressors. Naming a numeric-coded column treats it as categorical. Each
+#'   entry must identify one observed level; i() terms use their own selectors.
+#'   Exact fitted coding is retained for prediction across strategies.
 #' @param vcov Character string or formula denoting the desired type of variance-
 #' covariance correction / standard errors. Options are `"iid"` (default),
 #' `"hc1"` (heteroskedasticity-consistent), or a one-sided formula like
@@ -101,6 +114,10 @@
 #'   console? Defaults to `FALSE`. This can be overridden for a single call
 #'   by supplying `verbose = TRUE`, or set globally via
 #'   `options(dbreg.verbose = TRUE)`.
+#' @param factor_refs Optional named reference levels for ordinary categorical
+#'   regressors. Naming a numeric-coded column treats it as categorical. Each
+#'   entry must identify one observed level; `i()` terms use their own selectors.
+#'   Exact fitted coding is retained for prediction across strategies.
 #' @param ... Additional arguments. Currently ignored, except to handle
 #'   superseded arguments for backwards compatibility.
 #'
@@ -340,6 +357,7 @@ dbreg = function(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  factor_refs = NULL,
   ...
 ) {
 
@@ -372,6 +390,7 @@ dbreg = function(
       "compress_nmax", "drop_missings", "verbose"
     )
   )
+  inputs[["factor_refs"]] = factor_refs
   # Release any connection/registration we create, including on errors during
   # input processing (process_dbreg_inputs() records them in `inputs` first)
   on.exit(release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]]), add = TRUE)
@@ -430,6 +449,7 @@ process_dbreg_inputs = function(inputs) {
   fml_parsed = parse_regression_formula(fml, allow_empty = TRUE)
   any_continuous = any_continuous_vars(data, fml_parsed[["xvars"]])
   weights_display = weights
+  factor_refs = validate_factor_refs(inputs[["factor_refs"]], fml_parsed[["xvars"]])
 
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
   # results are mapped back to display names at the end
@@ -437,6 +457,8 @@ process_dbreg_inputs = function(inputs) {
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
   source_map = name_map
+  names(factor_refs) = src[["to_safe"]](names(factor_refs))
+  inputs[["factor_refs"]] = factor_refs
   fml_parsed = parse_regression_formula(src[["to_safe"]](fml), allow_empty = TRUE)
   weights = src[["to_safe"]](weights)
   cluster_var = src[["to_safe"]](cluster_var)
@@ -444,7 +466,7 @@ process_dbreg_inputs = function(inputs) {
   yvar = fml_parsed[["yvar"]]
   xvars = fml_parsed[["xvars"]]
   term_labels = fml_parsed[["term_labels"]]
-  has_interactions = fml_parsed[["has_interactions"]]
+  has_interactions = fml_parsed[["has_interactions"]] || length(factor_refs) > 0L
   fe = fml_parsed[["fe"]]
   # With FE the intercept is absorbed, so `- 1` / `0 +` only matters without FE
   intercept = fml_parsed[["has_intercept"]] || length(fe) > 0
@@ -1060,6 +1082,7 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
   if (inputs[["data_only"]]) {
     return(result)
   }
+  result = finalize_linear_layout(result, inputs)
   result[["strategy"]] = chosen_strategy
   # i() columns (display names), for predict()
   result[["i_columns"]] = inputs[["i_columns"]]

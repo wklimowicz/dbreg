@@ -14,7 +14,7 @@
 #' interaction). `fixest`-style `i()` terms are also supported, e.g.
 #' `i(period, treat, ref = 5)` for event studies; see
 #' [sql_model_matrix()] for details. Transformations and literals are not yet
-#' supported.
+#' supported. An intercept-only model (`y ~ 1`) is supported without fixed effects.
 #' @param conn Database connection, e.g. created with
 #' \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
 #' ephemeral (in-memory). If no connection is provided, then an ephemeral
@@ -87,6 +87,10 @@
 #'   Default is `FALSE`.
 #' @param data_only Logical indicating whether only the compressed dataset
 #'   should be returned (i.e., no regression is run). Default is `FALSE`.
+#'   Compressed cells use source coordinates. Moment rows use centered, weight-
+#'   normalized coordinates and include `dbreg_moment_center_*` and
+#'   `dbreg_moment_weight_scale` metadata. Raw compressed sums returned here
+#'   remain subject to the numeric range of R doubles.
 #' @param drop_missings Logical indicating whether incomplete cases (i.e., rows
 #'   where any of the dependent, independent or FE variables are
 #'   missing) should be dropped. The default is `TRUE`, according with standard
@@ -423,7 +427,7 @@ process_dbreg_inputs = function(inputs) {
   from_statement = db_setup[["from_statement"]]
 
   # Parse (and validate) the formula with the user's names
-  fml_parsed = parse_regression_formula(fml)
+  fml_parsed = parse_regression_formula(fml, allow_empty = TRUE)
   any_continuous = any_continuous_vars(data, fml_parsed[["xvars"]])
   weights_display = weights
 
@@ -433,7 +437,7 @@ process_dbreg_inputs = function(inputs) {
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
   source_map = name_map
-  fml_parsed = parse_regression_formula(src[["to_safe"]](fml))
+  fml_parsed = parse_regression_formula(src[["to_safe"]](fml), allow_empty = TRUE)
   weights = src[["to_safe"]](weights)
   cluster_var = src[["to_safe"]](cluster_var)
   fml = fml_parsed[["fml"]]
@@ -610,8 +614,14 @@ build_weighted_moment_terms = function(
   intercept = TRUE,
   prefix_terms = NULL,
   include_w_sq = FALSE,
-  w_sq_alias_base = "sum_w2"
+  w_sq_alias_base = "sum_w2",
+  conn
 ) {
+  # Cast operands, not their products: integer/DECIMAL multiplication can
+  # overflow before an outer SUM or cast is evaluated.
+  y_sql = sql_cast_double(y_sql, conn)
+  x_sql = sql_cast_double(x_sql, conn)
+  if (!is.null(weights_expr)) weights_expr = sql_cast_double(weights_expr, conn)
   weights_sq_expr = if (is.null(weights_expr)) NULL else glue("({weights_expr}) * ({weights_expr})")
   moment_terms = c(
     prefix_terms,
@@ -887,15 +897,12 @@ choose_strategy = function(inputs) {
   # Compression ratio estimator
   estimate_compression = function() {
     key_cols = c(xvars, fe)
-    if (!length(key_cols)) {
-      return(1)
-    }
-
     # Total rows (safe: COUNT(*) is supported pretty much everywhere)
     total_sql = glue(
       "SELECT CAST(COUNT(*) AS BIGINT) AS n FROM (SELECT * {from_statement}) t"
     )
-    total_n = dbGetQuery(conn, total_sql)[["n"]]
+    total_n = as.numeric(dbGetQuery(conn, total_sql)[["n"]])
+    if (!length(key_cols)) return(structure(1/max(total_n, 1), comp_size = 1))
 
     # Helper to count distinct tuples (works for single or multi-column)
     count_distinct_tuples = function(cols) {

@@ -42,7 +42,7 @@ execute_moments_strategy = function(inputs) {
   if (data_only) {
     return(moments_df)
   }
-  n_total = moments_df[["n_total"]]
+  n_total = as.numeric(moments_df[["n_total"]])
 
   S = cross_moments(moments_df, xvar_names, yvar, intercept = frame[["intercept"]])
   vars_all = c(if (frame[["intercept"]]) "(Intercept)", xvar_names)
@@ -61,6 +61,7 @@ execute_moments_strategy = function(inputs) {
     vcov_type = vcov_type_req,
     strategy = "moments",
     XtX_inv = fit[["bread"]],
+    sandwich_bread = fit[["sandwich_bread"]],
     rss = rss,
     df_res = df_res,
     nobs_orig = n_total,
@@ -134,11 +135,11 @@ execute_demean_strategy = function(inputs) {
   if (data_only) {
     return(demean_df)
   }
-  n_total = demean_df[["n_total"]]
+  n_total = as.numeric(demean_df[["n_total"]])
   n_fe_levels = vapply(seq_along(fe), function(k) {
     val = demean_df[[sprintf("n_fe%d", k)]]
-    if (is.null(val)) 1L else as.integer(val)
-  }, integer(1))
+    if (is.null(val)) 1 else as.numeric(val)
+  }, numeric(1))
 
   S = cross_moments(demean_df, xvar_names, yvar, intercept = FALSE)
   fit = fit_ols(S, yvar, xvar_names, drop_collinear = TRUE, verbose = verbose)
@@ -165,6 +166,7 @@ execute_demean_strategy = function(inputs) {
     vcov_type = vcov_type_req,
     strategy = "demean",
     XtX_inv = fit[["bread"]],
+    sandwich_bread = fit[["sandwich_bread"]],
     rss = rss,
     df_res = df_res,
     nobs_orig = n_total,
@@ -333,9 +335,9 @@ execute_mundlak_strategy = function(inputs) {
     return(mundlak_df)
   }
 
-  n_total = mundlak_df[["n_total"]]
-  n_fe1 = mundlak_df[["n_fe1"]]
-  n_fe2 = mundlak_df[["n_fe2"]]
+  n_total = as.numeric(mundlak_df[["n_total"]])
+  n_fe1 = as.numeric(mundlak_df[["n_fe1"]])
+  n_fe2 = if (is.null(mundlak_df[["n_fe2"]])) NULL else as.numeric(mundlak_df[["n_fe2"]])
 
   S = cross_moments(mundlak_df, all_regressors, yvar)
   vars_all = c("(Intercept)", all_regressors)
@@ -354,6 +356,7 @@ execute_mundlak_strategy = function(inputs) {
     vcov_type = vcov_type_req,
     strategy = "mundlak",
     XtX_inv = fit[["bread"]],
+    sandwich_bread = fit[["sandwich_bread"]],
     rss = rss,
     df_res = df_res,
     nobs_orig = n_total,
@@ -429,34 +432,11 @@ execute_compress_strategy = function(inputs) {
     xvar_names = xvars
   }
   
-  weights_expr = sql_weight_expr(weights)
-  # FE columns (no expansion needed - used for grouping)
-  fe_sql = if (length(fe)) paste(fe, collapse = ", ") else NULL
-  
-  # Combined columns for SELECT and GROUP BY
-  all_cols_sql = if (!is.null(fe_sql)) paste(xvars_sql, fe_sql, sep = ", ") else xvars_sql
-  group_cols = if (!is.null(fe_sql)) c(xvar_names, fe) else xvar_names
-  group_cols_sql = paste(group_cols, collapse = ", ")
-  moment_terms = build_weighted_moment_terms(
-    y_sql = yvar,
-    weights_expr = weights_expr,
-    prefix_terms = "COUNT(*) AS n",
-    include_w_sq = TRUE
-  )
-  
-  query_string = paste0(
-    "WITH cte AS (\n    SELECT\n        ",
-    all_cols_sql,
-    ",\n        ",
-    paste(moment_terms, collapse = ",\n        "),
-    "\n    ",
-    from_statement,
-    "\n    GROUP BY ",
-    group_cols_sql,
-    "\n    )\n    SELECT\n    *,\n    sum_wy / sum_w AS mean_Y,\n    sqrt(sum_w) AS wts,\n",
-    # Cell ids, reproducible in later queries (see compute_meat_cluster_compress_sql())
-    "    ROW_NUMBER() OVER (ORDER BY ", group_cols_sql, ") AS dbreg_cell\n    FROM cte"
-  )
+  group_cols = unique(c(xvar_names, fe))
+  expanded_from = if (isTRUE(has_interactions)) paste0("FROM (SELECT ", paste(c(xvars_sql,
+    setdiff(unique(c(fe, yvar, weights)), xvar_names)), collapse = ","), " ", from_statement, ") dbreg_compress_source") else from_statement
+  packet = compressed_moment_query(conn, expanded_from, group_cols, yvar, weights, intercept)
+  query_string = packet[["sql"]]
 
   if (sql_only) {
     return(query_string)
@@ -464,7 +444,7 @@ execute_compress_strategy = function(inputs) {
   if (verbose) {
     message(if (!is.null(weights)) "[dbreg] Executing weighted compress strategy SQL\n" else "[dbreg] Executing compress strategy SQL\n")
   }
-  compressed_dat = dbGetQuery(conn, query_string)
+  compressed_dat = read_compressed_moments(conn, packet)
   nobs_orig = sum(compressed_dat[["n"]])
   nobs_comp = nrow(compressed_dat)
   compression_ratio = nobs_comp / max(nobs_orig, 1)
@@ -486,7 +466,7 @@ execute_compress_strategy = function(inputs) {
   }
   if (data_only) {
     compressed_dat[["dbreg_cell"]] = NULL
-    return(compressed_dat)
+    return(restore_compressed_data(compressed_dat))
   }
 
   # Build design matrix
@@ -499,50 +479,37 @@ execute_compress_strategy = function(inputs) {
   }, logical(1))
   register_factor_display(inputs, lapply(setNames(nm = c(design_vars, fe)[is_cat]), function(v) unique(compressed_dat[[v]])))
   X = sparse.model.matrix(
-    reformulate(c(design_vars, fe), intercept = intercept),
+    if (length(c(design_vars, fe))) reformulate(c(design_vars, fe), intercept = intercept) else ~1,
     compressed_dat
   )
   if (ncol(X) == 0) {
     stop("Design matrix has zero columns.")
   }
-  Y = compressed_dat[, "mean_Y"]
-  wts = compressed_dat[["wts"]]
-  Xw = X * wts
-  Yw = Y * wts
-  XtX = crossprod(Xw)
-  XtY = crossprod(Xw, Yw)
-
-  # Detect and handle collinearity
-  collin = detect_collinearity(XtX, XtY, verbose = verbose)
-  XtX = collin[["XtX"]]
-  XtY = collin[["Xty"]]
-  collin_vars = collin[["drop_names"]]
-  if (collin[["collinear"]]) {
-    keep_idx = match(collin[["keep_names"]], colnames(X))
-    X = X[, keep_idx, drop = FALSE]
-  }
-
-  solve_result = solve_with_fallback(XtX, XtY)
-  betahat = solve_result[["betahat"]]
-  XtX_inv = solve_result[["XtX_inv"]]
-  if (is.null(dim(betahat))) {
-    betahat = matrix(betahat, ncol = 1)
-  }
-  rownames(betahat) = colnames(X)
-  yhat = as.numeric(X %*% betahat)
+  numeric_terms = which(vapply(c(design_vars, fe), function(name)
+    is.numeric(compressed_dat[[name]]) && !is.factor(compressed_dat[[name]]), logical(1)))
+  S = compressed_cross_moments(X, compressed_dat, yvar,
+    center_columns = which(attr(X, "assign") %in% numeric_terms))
+  fit = fit_ols(S, yvar, colnames(X), drop_collinear = TRUE, verbose = verbose)
+  collin_vars = fit[["dropped"]]
+  X = X[, fit[["x"]], drop = FALSE]
+  betahat = fit[["coef"]]
+  XtX_inv = fit[["bread"]]
+  weight_scale = fit[["weight_scale"]]
+  score_X = center_compressed_design(X, c("(Intercept)" = 0, fit[["centers"]])[colnames(X)])
+  yhat = as.numeric(score_X %*% fit[["moment_coef"]])
 
   sum_w = compressed_dat[["sum_w"]]
   sum_wy = compressed_dat[["sum_wy"]]
   sum_wy_sq = compressed_dat[["sum_wy_sq"]]
   rss_g = sum_wy_sq - 2 * yhat * sum_wy + sum_w * (yhat^2)
-  rss_total = sum(rss_g)
+  rss_total = sum(rss_g)*weight_scale
   df_res = max(nobs_orig - ncol(X), 1)
 
   # Calculate TSS for R2
   sum_wy_total = sum(compressed_dat[["sum_wy"]])
   sum_wy_sq_total = sum(compressed_dat[["sum_wy_sq"]])
   sum_w_total = sum(compressed_dat[["sum_w"]])
-  tss = sum_wy_sq_total - (sum_wy_total^2 / sum_w_total)
+  tss = (sum_wy_sq_total - (sum_wy_total^2 / sum_w_total))*weight_scale
   
   # For clustered SEs, need to query cluster-by-cell stats
   meat = NULL
@@ -552,7 +519,7 @@ execute_compress_strategy = function(inputs) {
     sum_w2y = compressed_dat[["sum_w2y"]]
     sum_w2y_sq = compressed_dat[["sum_w2y_sq"]]
     rss_g_w2 = sum_w2y_sq - 2 * yhat * sum_w2y + sum_w2 * (yhat^2)
-    meat = crossprod(X, Diagonal(x = as.numeric(rss_g_w2)) %*% X)
+    meat = crossprod(score_X, Diagonal(x = as.numeric(rss_g_w2)) %*% score_X)
   }
   if (vcov_type_req == "cluster") {
     # Cells are keyed on the expanded columns, so expose them (and only the
@@ -566,9 +533,11 @@ execute_compress_strategy = function(inputs) {
     # Many clusters but few cells: sum the scores by cluster in the database
     # instead of fetching one row per cluster and cell
     meat = if (use_cluster_sql(nrow(compressed_dat), ncol(X), inputs)) {
-      compute_meat_cluster_compress_sql(inputs, cells_from, group_cols, compressed_dat[["dbreg_cell"]], X, list(yhat))[[1]]
+      compute_meat_cluster_compress_sql(inputs, cells_from, group_cols, compressed_dat[["dbreg_cell"]], score_X, list(yhat),
+        y_center = attr(compressed_dat, "moment_center"), weight_scale = weight_scale)[[1]]
     } else {
-      compute_meat_cluster_compress(inputs, cells_from, group_cols, compressed_dat, X, yhat)
+      compute_meat_cluster_compress(inputs, cells_from, group_cols, compressed_dat, score_X, yhat,
+        y_center = attr(compressed_dat, "moment_center"), weight_scale = weight_scale)
     }
     # For ssc = "nested", exclude nested FE levels from K
     if (ssc == "nested") {
@@ -576,10 +545,15 @@ execute_compress_strategy = function(inputs) {
     }
   }
   
+  if (vcov_type_req == "hc1" && is.null(meat)) {
+    meat = crossprod(score_X, Diagonal(x = as.numeric(rss_g)) %*% score_X)
+  }
+  if (!is.null(meat)) attr(meat, "weight_scale") = weight_scale
   vcov_mat = compute_vcov(
     vcov_type = vcov_type_req,
     strategy = "compress",
     XtX_inv = XtX_inv,
+    sandwich_bread = fit[["sandwich_bread"]],
     rss = rss_total,
     df_res = df_res,
     nobs_orig = nobs_orig,
@@ -603,7 +577,7 @@ execute_compress_strategy = function(inputs) {
   return(
     list(
       coeftable = coeftable,
-      data = compressed_dat,
+      data = restore_compressed_data(compressed_dat),
       vcov = vcov_mat,
       fml = fml,
       yvar = yvar,
@@ -663,7 +637,7 @@ nested_fe_df = function(inputs, from_statement = inputs[["from_statement"]]) {
         0L
       }
     )
-    nested_df = nested_df + max(as.integer(n_levels) - 1L, 0L)
+    nested_df = nested_df + max(as.numeric(n_levels) - 1, 0)
   }
   nested_df
 }

@@ -115,14 +115,14 @@ sql_model_matrix = function(
   for (k in seq_along(term_labels)) {
     term = term_labels[k]
     if (!is.null(i_specs[[k]])) {
-      expanded = expand_i_term(i_specs[[k]], col_info, k, keep_all_levels = identical(term, full_factor))
+      expanded = expand_i_term(i_specs[[k]], col_info, k, keep_all_levels = identical(term, full_factor), conn = conn)
       i_columns = rbind(i_columns, expanded[["columns"]])
     } else {
       expanded = expand_term(
         term, col_info, expand, sep,
         all_terms = unique(c(term_labels, fe_vars)),
         fe_vars = fe_vars,
-        keep_all_levels = identical(term, full_factor)
+        keep_all_levels = identical(term, full_factor), conn = conn
       )
     }
     result[["select_exprs"]] = c(result[["select_exprs"]], expanded[["sql"]])
@@ -174,7 +174,7 @@ get_column_info = function(conn, table, vars, level_vars = character()) {
 #' Expansions are lists of parallel character vectors: `sql` (expressions),
 #' `name` (column names) and `alias` (SQL-safe column names).
 #' @keywords internal
-expand_term = function(term, col_info, expand, sep = "_x_", all_terms = character(), fe_vars = character(), keep_all_levels = FALSE) {
+expand_term = function(term, col_info, expand, sep = "_x_", all_terms = character(), fe_vars = character(), keep_all_levels = FALSE, conn) {
   vars = strsplit(term, ":")[[1]]
   is_interaction = length(vars) > 1
   
@@ -192,7 +192,7 @@ expand_term = function(term, col_info, expand, sep = "_x_", all_terms = characte
       # the reference only when the rest of the interaction enters on its own.
       drop_ref = other_term %in% all_terms || other_term %in% fe_vars
     }
-    expand_variable(v, col_info, expand, is_interaction, drop_ref)
+    expand_variable(v, col_info, expand, is_interaction, drop_ref, conn = conn)
   })
   
   # Cross product for interactions
@@ -201,13 +201,14 @@ expand_term = function(term, col_info, expand, sep = "_x_", all_terms = characte
 
 #' Expand a single variable into SQL expression(s)
 #' @keywords internal
-expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRUE) {
+expand_variable = function(var, col_info, expand, in_interaction, drop_ref = TRUE, conn) {
   is_factor = identical(col_info[["types"]][[var]], "factor")
   
   # Only expand factors if: expand="all", OR variable is part of interaction
   if (!(is_factor && (expand == "all" || in_interaction))) {
-    # Numeric or unexpanded factor: pass through
-    return(list(sql = var, name = var, alias = var))
+    # Numeric products must be floating point before multiplication.
+    sql = if (!is_factor) sql_cast_double(var, conn) else var
+    return(list(sql = sql, name = var, alias = var))
   }
   lvls = col_info[["levels"]][[var]]
   la = col_info[["level_aliases"]]
@@ -304,7 +305,7 @@ parse_i_term = function(term, env = NULL) {
 #' @param spec Result of [parse_i_term()].
 #' @param k Term index (to make aliases unique).
 #' @keywords internal
-expand_i_term = function(spec, col_info, k, keep_all_levels = FALSE) {
+expand_i_term = function(spec, col_info, k, keep_all_levels = FALSE, conn) {
   f = spec[["f"]]
   var = spec[["var"]]
   lvls = col_info[["levels"]][[f]]
@@ -347,7 +348,7 @@ expand_i_term = function(spec, col_info, k, keep_all_levels = FALSE) {
   } else if (identical(col_info[["classes"]][[var]], "logical")) {
     sql = paste0("CASE WHEN ", cond, " AND ", var, " THEN 1.0 ELSE 0.0 END")
   } else if (identical(col_info[["types"]][[var]], "numeric")) {
-    sql = paste0("CASE WHEN ", cond, " THEN ", var, " ELSE 0 END")
+    sql = paste0("CASE WHEN ", cond, " THEN ", sql_cast_double(var, conn), " ELSE 0.0 END")
   } else {
     stop("The second argument of i() must be numeric or logical, but '", var, "' is not.", call. = FALSE)
   }

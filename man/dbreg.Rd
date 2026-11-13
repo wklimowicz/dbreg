@@ -32,7 +32,7 @@ standard R syntax (\code{:} for interactions, \code{*} for main effects plus
 interaction). \code{fixest}-style \code{i()} terms are also supported, e.g.
 \code{i(period, treat, ref = 5)} for event studies; see
 \code{\link[=sql_model_matrix]{sql_model_matrix()}} for details. Transformations and literals are not yet
-supported.}
+supported. An intercept-only model (\code{y ~ 1}) is supported without fixed effects.}
 
 \item{conn}{Database connection, e.g. created with
 \code{\link[DBI]{dbConnect}}. Can be either persistent (disk-backed) or
@@ -117,7 +117,11 @@ SQL query should be returned (i.e., no computation will be performed).
 Default is \code{FALSE}.}
 
 \item{data_only}{Logical indicating whether only the compressed dataset
-should be returned (i.e., no regression is run). Default is \code{FALSE}.}
+should be returned (i.e., no regression is run). Default is \code{FALSE}.
+Compressed cells use source coordinates. Moment rows use centered, weight-
+normalized coordinates and include \code{dbreg_moment_center_*} and
+\code{dbreg_moment_weight_scale} metadata. Raw compressed sums returned here
+remain subject to the numeric range of R doubles.}
 
 \item{drop_missings}{Logical indicating whether incomplete cases (i.e., rows
 where any of the dependent, independent or FE variables are

@@ -11,7 +11,8 @@ expand_term(
   sep = "_x_",
   all_terms = character(),
   fe_vars = character(),
-  keep_all_levels = FALSE
+  keep_all_levels = FALSE,
+  conn
 )
 }
 \description{

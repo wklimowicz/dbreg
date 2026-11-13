@@ -1,3 +1,13 @@
+#' Number of observations used in a dbreg fit
+#'
+#' @param object A `dbreg` or `dbivreg` object.
+#' @param ... Unused.
+#' @return Number of source rows in the estimation sample, not the number of
+#'   compressed cells or aggregated moment rows. Weights do not change this count.
+#' @importFrom stats nobs
+#' @export
+nobs.dbreg = function(object, ...) as.numeric(object[["nobs_orig"]])
+
 ##
 ## Stats methods for dbreg objects
 ##

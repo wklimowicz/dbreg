@@ -10,7 +10,9 @@ compute_meat_cluster_compress(
   group_cols,
   compressed_dat,
   X,
-  yhat
+  yhat,
+  y_center = 0,
+  weight_scale = 1
 )
 }
 \description{

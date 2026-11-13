@@ -4,7 +4,7 @@
 \alias{expand_i_term}
 \title{Expand an `i()` term into SQL expressions}
 \usage{
-expand_i_term(spec, col_info, k, keep_all_levels = FALSE)
+expand_i_term(spec, col_info, k, keep_all_levels = FALSE, conn)
 }
 \arguments{
 \item{spec}{Result of [parse_i_term()].}

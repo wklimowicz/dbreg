@@ -47,7 +47,9 @@
 #' @param sql_only Logical indicating whether to return only the underlying SQL
 #'   query.
 #' @param data_only Logical indicating whether to return only the aggregated
-#'   sufficient statistics.
+#'   sufficient statistics. Compressed cells use source coordinates; moment
+#'   rows use centered, weight-normalized coordinates with location/scale
+#'   metadata as described in [dbreg()].
 #' @param drop_missings Logical indicating whether incomplete cases should be
 #'   dropped.
 #' @param verbose Logical indicating whether progress messages are printed.
@@ -389,7 +391,7 @@ dbivreg_run_frame = function(inputs, frame, label) {
   dbivreg_finalize_fit(
     inputs = inputs,
     S = cross_moments(moments_df, union_names, yvar, intercept = frame[["intercept"]]),
-    n_total = moments_df[["n_total"]],
+    n_total = as.numeric(moments_df[["n_total"]]),
     n_fe_levels = setNames(
       vapply(seq_along(fe), function(k) as.numeric(moments_df[[sprintf("n_fe%d", k)]]), numeric(1)),
       fe
@@ -414,31 +416,19 @@ execute_iv_compress_strategy = function(inputs) {
 
   frame = build_base_frame(inputs, union_sql, union_names)
 
-  # Compress on all of X and Z: each cell is constant in both
-  group_cols_sql = paste(union_names, collapse = ", ")
-  moment_terms = build_weighted_moment_terms(
-    y_sql = yvar,
-    weights_expr = frame[["weights_expr"]],
-    prefix_terms = "COUNT(*) AS n",
-    include_w_sq = TRUE
-  )
-  compress_sql = paste0(
-    frame[["cte_sql"]],
-    "\nSELECT ", group_cols_sql, ",\n  ", paste(moment_terms, collapse = ",\n  "), ",\n",
-    # Cell ids, reproducible in later queries (see compute_meat_cluster_compress_sql())
-    "  ROW_NUMBER() OVER (ORDER BY ", group_cols_sql, ") AS dbreg_cell",
-    "\nFROM base\nGROUP BY ", group_cols_sql
-  )
+  packet = compressed_moment_query(conn, paste0("FROM (", frame[["base_sql"]], ") dbreg_iv_cells"),
+    union_names, yvar, weights, intercept, fit_columns = FALSE)
+  compress_sql = packet[["sql"]]
   if (sql_only) {
     return(compress_sql)
   }
   if (verbose) {
     message(if (!is.null(weights)) "[dbivreg] Executing weighted compressed IV SQL\n" else "[dbivreg] Executing compressed IV SQL\n")
   }
-  dat = dbGetQuery(conn, compress_sql)
+  dat = read_compressed_moments(conn, packet)
   if (data_only) {
     dat[["dbreg_cell"]] = NULL
-    return(dat)
+    return(restore_compressed_data(dat))
   }
 
   n_total = sum(dat[["n"]])
@@ -456,11 +446,9 @@ execute_iv_compress_strategy = function(inputs) {
   if (intercept) {
     U = cbind("(Intercept)" = 1, U)
   }
-  S = rbind(
-    cbind(crossprod(U, dat[["sum_w"]] * U), crossprod(U, dat[["sum_wy"]])),
-    c(crossprod(dat[["sum_wy"]], U), sum(dat[["sum_wy_sq"]]))
-  )
-  dimnames(S) = list(c(colnames(U), yvar), c(colnames(U), yvar))
+  S = compressed_cross_moments(U, dat, yvar)
+  weight_scale = attr(S, "weight_scale")
+  y_center = attr(dat, "moment_center")
 
   # Meat from the cells: HC1 from within-cell residual sums of squares;
   # clustered from cluster-by-cell residual sums (one query, shared by the
@@ -470,7 +458,7 @@ execute_iv_compress_strategy = function(inputs) {
   # Many clusters but few cells: sum the scores by cluster in the database
   cluster_sql = vcov_type == "cluster" && use_cluster_sql(nrow(dat), ncol(U), inputs)
   cells = if (vcov_type == "cluster" && !cluster_sql) {
-    query_cluster_cells(inputs, cells_from, union_names)
+    query_cluster_cells(inputs, cells_from, union_names, y_center, weight_scale)
   }
   meats_fn = function(fits, ys) {
     if (!vcov_type %in% c("hc1", "cluster")) {
@@ -479,21 +467,28 @@ execute_iv_compress_strategy = function(inputs) {
     scores = unique(lapply(fits, `[[`, "scores"))
     if (cluster_sql && length(scores) == 1) {
       # One query for the 2SLS fit and its first stages (shared instruments)
-      yhats = lapply(fits, function(fit) as.numeric(U[, fit[["x"]], drop = FALSE] %*% fit[["coef"]]))
-      y_cells = lapply(ys, function(y) if (y != yvar) dat[[y]])
-      return(compute_meat_cluster_compress_sql(inputs, cells_from, union_names, dat[["dbreg_cell"]], U[, scores[[1]], drop = FALSE], yhats, y_cells))
+      yhats = lapply(fits, function(fit) as.numeric(sweep(U[, fit[["x"]], drop = FALSE], 2L, c("(Intercept)" = 0, fit[["centers"]])[fit[["x"]]], "-") %*% fit[["moment_coef"]]))
+      y_cells = Map(function(y, fit) if (y != yvar) dat[[y]]-fit[["centers"]][[y]], ys, fits)
+      Z = sweep(U[, scores[[1]], drop = FALSE], 2L, c("(Intercept)" = 0, fits[[1]][["centers"]])[scores[[1]]], "-")
+      out = compute_meat_cluster_compress_sql(inputs, cells_from, union_names, dat[["dbreg_cell"]], Z, yhats, y_cells, y_center, weight_scale)
+      return(lapply(out, function(meat) {
+        attr(meat, "weight_scale") = weight_scale
+        meat
+      }))
     }
     if (vcov_type == "cluster" && is.null(cells)) {
-      cells = query_cluster_cells(inputs, cells_from, union_names)
+      cells = query_cluster_cells(inputs, cells_from, union_names, y_center, weight_scale)
     }
     Map(function(fit, y) {
-      Z = U[, fit[["scores"]], drop = FALSE]
-      yhat = as.numeric(U[, fit[["x"]], drop = FALSE] %*% fit[["coef"]])
+      Z = sweep(U[, fit[["scores"]], drop = FALSE], 2L, c("(Intercept)" = 0, fit[["centers"]])[fit[["scores"]]], "-")
+      yhat = as.numeric(sweep(U[, fit[["x"]], drop = FALSE], 2L, c("(Intercept)" = 0, fit[["centers"]])[fit[["x"]]], "-") %*% fit[["moment_coef"]])
       if (vcov_type == "cluster") {
-        return(cluster_meat_from_cells(
+        meat = cluster_meat_from_cells(
           cells, dat, union_names, cluster_var, Z, yhat,
-          y_cell = if (y != yvar) dat[[y]]
-        ))
+          y_cell = if (y != yvar) dat[[y]]-fit[["centers"]][[y]]
+        )
+        attr(meat, "weight_scale") = weight_scale
+        return(meat)
       }
       # Sum of (squared) weights times y and y^2 per cell; a first-stage
       # outcome is itself a cell column
@@ -502,10 +497,12 @@ execute_iv_compress_strategy = function(inputs) {
         wy = if (is.null(weights)) dat[["sum_wy"]] else dat[["sum_w2y"]]
         wy_sq = if (is.null(weights)) dat[["sum_wy_sq"]] else dat[["sum_w2y_sq"]]
       } else {
-        wy = w * dat[[y]]
-        wy_sq = w * dat[[y]]^2
+        wy = w * (dat[[y]]-fit[["centers"]][[y]])
+        wy_sq = w * (dat[[y]]-fit[["centers"]][[y]])^2
       }
-      crossprod(Z, (wy_sq - 2 * yhat * wy + w * yhat^2) * Z)
+      meat = crossprod(Z, (wy_sq - 2 * yhat * wy + w * yhat^2) * Z)
+      attr(meat, "weight_scale") = weight_scale
+      meat
     }, fits, ys)
   }
 
@@ -546,7 +543,7 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
   }
   n_params = length(x_names_full) + df_fe - nested_levels
 
-  tss = moment_tss(S, yvar)
+  tss = if (n_fe > 0L) source_tss(inputs) else moment_tss(S, yvar)
 
   # First stages: each endogenous regressor on the instruments
   endog = if (length(instr_names)) endog_names else character(0)
@@ -561,6 +558,7 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
     vcov_type = vcov_type_req,
     strategy = if (has_intercept) "moments" else "demean",
     XtX_inv = fit[["bread"]],
+    sandwich_bread = fit[["sandwich_bread"]],
     rss = rss,
     df_res = df_res,
     nobs_orig = n_total,
@@ -804,7 +802,10 @@ compute_dbivreg_first_stage_f = function(inputs, S, n_total, df_fe, has_intercep
   df2 = max(n_total - length(unrestricted) - df_fe, 1)
   out = lapply(endogenous, function(y_name) {
     rss_u = fit_ols(S, y_name, unrestricted)[["rss"]]
-    rss_r = if (length(restricted)) fit_ols(S, y_name, restricted)[["rss"]] else S[y_name, y_name]
+    rss_r = if (length(restricted)) fit_ols(S, y_name, restricted)[["rss"]] else {
+      weight_scale = attr(S, "weight_scale")
+      S[y_name, y_name] * if (is.null(weight_scale)) 1 else weight_scale
+    }
     stat = max(((rss_r - rss_u) / q) / (rss_u / df2), 0)
     list(stat = stat, p = stats::pf(stat, q, df2, lower.tail = FALSE), df1 = q, df2 = df2)
   })
@@ -840,6 +841,7 @@ compute_dbivreg_first_stage_wald = function(
       vcov_type = vcov_type,
       strategy = if (has_intercept) "moments" else "demean",
       XtX_inv = fit_u[["bread"]],
+      sandwich_bread = fit_u[["sandwich_bread"]],
       rss = fit_u[["rss"]],
       df_res = df2,
       nobs_orig = n_total,
@@ -884,8 +886,8 @@ compute_dbivreg_overid = function(inputs, S, fit, z, n_total, meat = NULL) {
   stat = tryCatch({
     if (iid) {
       # Sargan: Z'e (Z'Z)^-1 Z'e / sigma^2 at the 2SLS estimate
-      m = moments(fit[["coef"]])
-      as.numeric(Matrix::t(m) %*% solve_with_fallback(S[z, z, drop = FALSE], m)$betahat) / (fit[["rss"]] / n_total)
+      m = moments(fit[["moment_coef"]])
+      as.numeric(Matrix::t(m) %*% solve_with_fallback(S[z, z, drop = FALSE], m)$betahat) / (fit[["rss"]] / (if (is.null(attr(S, "weight_scale"))) 1 else attr(S, "weight_scale")) / n_total)
     } else {
       # Hansen J: minimised efficient-GMM criterion. Two-step GMM with the
       # moment covariance (meat) estimated from the 2SLS residuals.
@@ -893,7 +895,7 @@ compute_dbivreg_overid = function(inputs, S, fit, z, n_total, meat = NULL) {
         stop("moment covariance is singular (e.g. fewer clusters than instruments)")
       }
       W = solve_with_fallback(meat, diag(ncol(meat)))[["XtX_inv"]]
-      m = moments(fit_gmm(S, y, x, z, W)[["coef"]])
+      m = moments(fit_gmm(S, y, x, z, W)[["moment_coef"]])
       as.numeric(Matrix::t(m) %*% W %*% m)
     }
   }, error = function(e) dbivreg_diag_unavailable(paste(test_name, "test"), e))

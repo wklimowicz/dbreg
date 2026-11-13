@@ -39,8 +39,9 @@ build_base_frame = function(inputs, x_sql, x_names) {
   y = yvar
   sel = frame_select(y, x_sql, x_names, extra = c(weights, cluster_var))
   base_sql = paste0("SELECT ", paste(sel, collapse = ", "), " ", from_statement)
+  cte_qual = if (identical(detect_backend(conn)[["name"]], "duckdb")) "NOT MATERIALIZED " else ""
   list(
-    cte_sql = paste0("WITH base AS (\n  ", base_sql, "\n)"),
+    cte_sql = paste0("WITH base AS ", cte_qual, "(\n  ", base_sql, "\n)"),
     cte_name = "base",
     base_sql = base_sql,
     cols = setNames(c(y, x_names), c(y, x_names)),
@@ -78,11 +79,15 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
 
   use_ap = length(fe) > 2
   if (length(fe) == 2) {
-    is_balanced = inputs[["is_balanced"]]
-    if (is.null(is_balanced)) {
-      is_balanced = dbreg_is_balanced_panel(inputs)
+    if (!is.null(weights)) {
+      use_ap = TRUE
+    } else {
+      is_balanced = inputs[["is_balanced"]]
+      if (is.null(is_balanced)) {
+        is_balanced = dbreg_is_balanced_panel(inputs)
+      }
+      use_ap = !isTRUE(is_balanced)
     }
-    use_ap = !is.null(weights) || !isTRUE(is_balanced)
   }
   if (use_ap && verbose) {
     message(sprintf("[%s] Using alternating projections for FE demeaning", tag))
@@ -146,6 +151,15 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     weights_expr = if (is.null(weights)) NULL else sql_weight_expr("weights")
   }
 
+  fe_count_terms = if (use_ap) {
+    vapply(seq_along(fe), function(k) sql_count(conn, sprintf("n_fe%d", k), fe[k], distinct = TRUE), character(1))
+  } else {
+    count_ctes = if (length(fe) == 1) "group_means" else c("unit_means", "time_means")
+    vapply(seq_along(count_ctes), function(k) {
+      sprintf("(SELECT %s FROM %s) AS n_fe%d", sql_count_expr(detect_backend(conn)[["name"]]), count_ctes[k], k)
+    }, character(1))
+  }
+
   list(
     cte_sql = cte_sql,
     cte_name = "demeaned",
@@ -155,7 +169,7 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     cast = TRUE,
     prefix_terms = c(
       sql_count(conn, "n_total"),
-      vapply(seq_along(fe), function(k) sql_count(conn, sprintf("n_fe%d", k), fe[k], distinct = TRUE), character(1))
+      fe_count_terms
     ),
     cleanup = cleanup
   )
@@ -171,20 +185,33 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
 #' @param conn Database connection (for the cast type).
 #' @keywords internal
 frame_moments_sql = function(frame, y, x, conn) {
-  col = function(v) {
-    sql = unname(frame[["cols"]][v])
-    if (frame[["cast"]]) sql_cast_double(sql, conn) else sql
+  col = function(v) sql_cast_double(unname(frame[["cols"]][v]), conn)
+  variables = c(x, y)
+  fields = paste0("dbreg_moment_center_", seq_along(variables))
+  w = frame[["weights_expr"]]
+  private = moment_sql_names(c("dbreg_moment_location", fields, "dbreg_moment_weight_scale"),
+    frame[["cte_sql"]], conn)
+  location_name = private[[1L]]
+  centers = private[seq_along(variables) + 1L]
+  weight_field = private[[length(variables) + 2L]]
+  center_terms = if (isTRUE(frame[["intercept"]])) paste0("MIN(", vapply(variables, col, character(1)), ")/2+MAX(", vapply(variables, col, character(1)), ")/2") else rep("MAX(0.0)", length(variables))
+  scale = if (is.null(w)) "MAX(1.0)" else paste0("MAX(", sql_cast_double(w, conn), ")")
+  stats = paste0(",\n", location_name, " AS (SELECT ", paste(c(paste(center_terms, "AS", centers),
+    paste(scale, "AS", weight_field)), collapse = ","), " FROM ", frame[["cte_name"]], ")")
+  centered = setNames(paste0("(", vapply(variables, col, character(1)), "-", centers, ")"), variables)
+  location_join = paste(" CROSS JOIN", location_name)
+  location_terms = paste0("MAX(", c(centers, weight_field), ") AS ", c(fields, "dbreg_moment_weight_scale"))
+  if (!isTRUE(frame[["intercept"]]) && is.null(w)) {
+    stats = ""
+    location_join = ""
+    centered = setNames(vapply(variables, col, character(1)), variables)
+    location_terms = c(paste0("MAX(0.0) AS ", fields), "MAX(1.0) AS dbreg_moment_weight_scale")
   }
-  terms = build_weighted_moment_terms(
-    y_sql = col(y),
-    x_sql = col(x),
-    weights_expr = frame[["weights_expr"]],
-    intercept = frame[["intercept"]],
-    prefix_terms = frame[["prefix_terms"]]
-  )
-  paste0(
-    frame[["cte_sql"]], ",\nmoments AS (\n  SELECT\n    ",
-    paste(terms, collapse = ",\n    "),
-    "\n  FROM ", frame[["cte_name"]], "\n)\nSELECT * FROM moments"
-  )
+  terms = build_weighted_moment_terms(conn = conn, y_sql = centered[[y]], x_sql = unname(centered[x]),
+    weights_expr = if (!is.null(w)) paste0("(", sql_cast_double(w, conn), ")/", weight_field),
+    intercept = frame[["intercept"]], prefix_terms = frame[["prefix_terms"]])
+  paste0(frame[["cte_sql"]], stats, ",\nmoments AS (SELECT ",
+    paste(c(terms, location_terms), collapse = ",\n"), " FROM ", frame[["cte_name"]],
+    location_join, ") SELECT * FROM moments")
 }
+

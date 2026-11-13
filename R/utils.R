@@ -45,7 +45,7 @@ gen_coeftable = function(betahat, vcov_mat, df_residual) {
 
 #' Detect and handle collinearity in design matrix
 #' 
-#' Uses QR decomposition with pivoting to identify rank deficiency.
+#' Uses unit-normalized QR decomposition with pivoting to identify rank deficiency.
 #' Returns reduced XtX/Xty matrices and lists of kept/dropped variables.
 #' 
 #' @keywords internal
@@ -53,7 +53,8 @@ detect_collinearity = function(XtX, Xty, tol = 1e-10, verbose = FALSE) {
   p = ncol(XtX)
   var_names = colnames(XtX)
   
-  qr_decomp = qr(XtX, tol = tol)
+  scales = sqrt(pmax(as.numeric(Matrix::diag(XtX)), .Machine[["double.xmin"]]))
+  qr_decomp = qr(XtX / outer(scales, scales), tol = tol)
   rank = qr_decomp[["rank"]]
   
   if (rank < p) {
@@ -91,6 +92,9 @@ detect_collinearity = function(XtX, Xty, tol = 1e-10, verbose = FALSE) {
 #' Solve linear system using Cholesky with QR fallback
 #' @keywords internal
 solve_with_fallback = function(XtX, Xty) {
+  scales = sqrt(pmax(as.numeric(Matrix::diag(XtX)), .Machine[["double.xmin"]]))
+  XtX = XtX / outer(scales, scales)
+  Xty = Xty / scales
   Rch = tryCatch(chol(XtX), error = function(e) NULL)
   if (is.null(Rch)) {
     # Cholesky failed, use QR fallback
@@ -103,7 +107,7 @@ solve_with_fallback = function(XtX, Xty) {
     XtX_inv = chol2inv(Rch)
   }
   dimnames(XtX_inv) = dimnames(XtX)
-  list(betahat = betahat, XtX_inv = XtX_inv)
+  list(betahat = betahat / scales, XtX_inv = XtX_inv / outer(scales, scales))
 }
 
 
@@ -268,7 +272,8 @@ model_vars = function(x) {
 #'   \item{fe}{Character vector of fixed effect variable names, or NULL if none}
 #'
 #' @keywords internal
-parse_regression_formula = function(fml) {
+#' @param allow_empty Allow an intercept-only model without fixed effects.
+parse_regression_formula = function(fml, allow_empty = FALSE) {
   fml = Formula(fml)
   # Extract outcome variable (LHS)
   lhs = formula(fml, lhs = 1, rhs = 0)
@@ -289,7 +294,7 @@ parse_regression_formula = function(fml) {
   has_i = vapply(term_labels, function(t) !is.null(parse_i_term(t)), logical(1))
   has_interactions = any(grepl(":", term_labels)) || any(has_i)
   
-  if (!length(xvars)) {
+  if (!length(xvars) && !(isTRUE(allow_empty) && has_intercept && length(fml)[2] == 1L)) {
     stop("No regressors on RHS.")
   }
   
@@ -518,15 +523,21 @@ restore_names = function(x, map) {
   if (!length(map) || is.null(x) || !length(x)) {
     return(x)
   }
-  out = vapply(x, function(s) {
-    if (is.na(s)) return(s)
-    if (s %in% names(map)) return(map[[s]])
-    m = gregexpr(":|_x_", s)
-    tokens = regmatches(s, m, invert = TRUE)[[1]]
-    seps = regmatches(s, m)[[1]]
-    tokens = ifelse(tokens %in% names(map), map[tokens], tokens)
-    paste0(c(rbind(tokens, c(seps, ""))), collapse = "")
-  }, character(1), USE.NAMES = FALSE)
+  out = as.character(x)
+  direct = match(out, names(map))
+  matched = !is.na(direct)
+  out[matched] = unname(as.character(map)[direct[matched]])
+  remaining = which(!matched & !is.na(out))
+  if (length(remaining)) {
+    out[remaining] = vapply(out[remaining], function(s) {
+      m = gregexpr(":|_x_", s)
+      tokens = regmatches(s, m, invert = TRUE)[[1]]
+      seps = regmatches(s, m)[[1]]
+      hit = match(tokens, names(map))
+      tokens[!is.na(hit)] = unname(as.character(map)[hit[!is.na(hit)]])
+      paste0(c(rbind(tokens, c(seps, ""))), collapse = "")
+    }, character(1), USE.NAMES = FALSE)
+  }
   if (!is.null(names(x))) names(out) = names(x)
   out
 }
@@ -761,6 +772,14 @@ sql_cast_double = function(sql, conn) {
   sprintf("CAST(%s AS %s)", sql, type)
 }
 
+#' Format a numeric vector as full-precision SQL numeric literals
+#' @keywords internal
+sql_number = function(x) {
+  out = sprintf("%.17g", as.numeric(x))
+  out[!grepl("[.eE]", out, perl = TRUE)] = paste0(out[!grepl("[.eE]", out, perl = TRUE)], ".0")
+  out
+}
+
 #' Generate SQL COUNT expression with proper casting
 #' 
 #' Returns an aliased COUNT expression that handles:
@@ -875,6 +894,7 @@ sql_random = function(backend) {
 #' @return Complete SQL query for sampling
 #' @keywords internal
 sql_sample = function(select_clause, table_name, where_clause, n, backend) {
+  n = sprintf("%.0f", as.numeric(n))
   where_sql = if (!is.null(where_clause)) paste("WHERE", where_clause) else ""
   
   if (backend == "duckdb") {
@@ -911,9 +931,14 @@ sql_sample = function(select_clause, table_name, where_clause, n, backend) {
 #' @return SQL query with appropriate LIMIT/TOP clause
 #' @keywords internal
 sql_limit = function(query, n, backend) {
+  n = sprintf("%.0f", as.numeric(n))
   if (backend == "sqlserver") {
-    # SQL Server uses TOP n after SELECT
-    sub("^SELECT", paste("SELECT TOP", n), query, ignore.case = TRUE)
+    # SQL Server uses TOP n after SELECT (or after SELECT DISTINCT)
+    if (grepl("^SELECT\\s+DISTINCT\\b", query, ignore.case = TRUE)) {
+      sub("^SELECT\\s+DISTINCT\\b", paste("SELECT DISTINCT TOP", n), query, ignore.case = TRUE)
+    } else {
+      sub("^SELECT", paste("SELECT TOP", n), query, ignore.case = TRUE)
+    }
   } else {
     # Others use LIMIT at the end
     paste(query, "LIMIT", n)

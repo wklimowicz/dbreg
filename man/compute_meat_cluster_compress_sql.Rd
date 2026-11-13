@@ -11,7 +11,9 @@ compute_meat_cluster_compress_sql(
   cell,
   Z,
   yhat,
-  y_cell = vector("list", length(yhat))
+  y_cell = vector("list", length(yhat)),
+  y_center = 0,
+  weight_scale = 1
 )
 }
 \arguments{

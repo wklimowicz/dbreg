@@ -68,6 +68,17 @@ Bug fixes
   non-scalar, missing, non-finite, or out-of-range confidence levels before
   reading prediction data.
 
+- DBI `integer64` and `bigint` aggregates are now decoded to numeric before
+  moment, variance, and degree-of-freedom calculations.
+- `nobs()` now reports the number of source observations in the estimation
+  sample rather than compressed cell counts.
+- Collinearity detection and moment solves are normalized by column scale so
+  results do not depend on predictor units.
+- SQL operands are cast to double precision before moment and design products to
+  prevent 32-bit integer overflow.
+- Linear moments and compressed cell aggregates are centered and weight-scaled
+  to avoid catastrophic cancellation on large-shift or extreme-weight inputs.
+
 - Alternating projections no longer fail with an SQL error when a fixed-effect
   or cluster variable also appears as a regressor. Invalid `dbreg.ap_max_iter`
   and `dbreg.ap_tol` options now produce a clear error.

@@ -69,7 +69,9 @@ excluded from K, matching the default behavior of \code{fixest::feols}. See
 query.}
 
 \item{data_only}{Logical indicating whether to return only the aggregated
-sufficient statistics.}
+sufficient statistics. Compressed cells use source coordinates; moment
+rows use centered, weight-normalized coordinates with location/scale
+metadata as described in \code{\link[=dbreg]{dbreg()}}.}
 
 \item{drop_missings}{Logical indicating whether incomplete cases should be
 dropped.}

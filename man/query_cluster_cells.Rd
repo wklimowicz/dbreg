@@ -4,7 +4,13 @@
 \alias{query_cluster_cells}
 \title{Cluster-by-cell sufficient statistics for compressed cluster meats}
 \usage{
-query_cluster_cells(inputs, from_statement, group_cols)
+query_cluster_cells(
+  inputs,
+  from_statement,
+  group_cols,
+  y_center = 0,
+  weight_scale = 1
+)
 }
 \description{
 Returns one row per (cluster, cell) with the summed weights `sum_w_gc` (the

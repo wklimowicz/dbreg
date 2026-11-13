@@ -7,7 +7,7 @@
 detect_collinearity(XtX, Xty, tol = 1e-10, verbose = FALSE)
 }
 \description{
-Uses QR decomposition with pivoting to identify rank deficiency.
+Uses unit-normalized QR decomposition with pivoting to identify rank deficiency.
 Returns reduced XtX/Xty matrices and lists of kept/dropped variables.
 }
 \keyword{internal}

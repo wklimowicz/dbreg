@@ -4,7 +4,7 @@
 \alias{expand_variable}
 \title{Expand a single variable into SQL expression(s)}
 \usage{
-expand_variable(var, col_info, expand, in_interaction, drop_ref = TRUE)
+expand_variable(var, col_info, expand, in_interaction, drop_ref = TRUE, conn)
 }
 \description{
 Expand a single variable into SQL expression(s)

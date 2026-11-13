@@ -672,11 +672,12 @@ expect_error(dbivreg(y ~ x | d ~ z, conn = con_val, data = dat, compress_ratio =
 expect_equal(DBI::dbListTables(con_val), character(0), info = "no registered table left behind after a late validation error")
 DBI::dbDisconnect(con_val, shutdown = TRUE)
 
-# predict() refuses demean models with more than two FE (would omit the rest)
-expect_error(
+# Joint cohort projection includes every fixed-effect dimension.
+expect_equal(
   predict(db_fe3, newdata = dat_fe3),
-  "more than two fixed effects",
-  info = "IV predict with 3 FE errors"
+  as.numeric(predict(fx_fe3, newdata = dat_fe3)),
+  tolerance = 1e-7,
+  info = "IV prediction with three FE matches independent 2SLS"
 )
 
 # No-intercept IV models (#68)

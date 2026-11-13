@@ -242,9 +242,22 @@ execute_mundlak_strategy = function(inputs) {
   xvars_sql = sql_design[["select_exprs"]]
   xvar_names = sql_design[["aliases"]]
   register_sql_design(inputs, sql_design)
+  if (!length(xvar_names)) stop("Mundlak requires at least one expanded regressor.", call. = FALSE)
   
-  weights_expr_base = sql_weight_expr(weights)
-  weights_expr_aug = if (is.null(weights)) NULL else sql_weight_expr("weights")
+  source_roles = unique(c(fe, yvar, xvars, xvar_names, weights, cluster_var))
+  private = moment_sql_names(c("base", "augmented", "dbreg_mundlak_location", paste0("fe", seq_along(fe), "_means")),
+    paste(from_statement, paste(source_roles, collapse = " ")), conn)
+  base_name = private[[1L]]
+  augmented_name = private[[2L]]
+  location_name = private[[3L]]
+  mean_tables = private[-seq_len(3L)]
+  reserved = c(source_roles, private)
+  weight_alias = safe_identifiers("dbreg_mundlak_weight__", taken = reserved, fold_case = folds_identifier_case(conn))
+  scale_alias = safe_identifiers("dbreg_mundlak_scale__", taken = c(reserved, weight_alias), fold_case = folds_identifier_case(conn))
+  weights_expr_base = if (!is.null(weights)) paste0("(", sql_cast_double(weights, conn), ")/", scale_alias)
+  weights_expr_aug = if (!is.null(weights)) sql_cast_double(weight_alias, conn)
+  mean_aliases = safe_identifiers(unlist(lapply(seq_along(fe), function(k) sprintf("dbreg_bar%d_%d", k, seq_along(xvar_names)))),
+    taken = c(reserved, weight_alias, scale_alias), fold_case = folds_identifier_case(conn))
 
 
   # Build base CTE with expanded columns AND original xvars (for group means)
@@ -271,19 +284,19 @@ execute_mundlak_strategy = function(inputs) {
   xbar_all = character(0)
   for (k in seq_along(fe)) {
     fe_k = fe[k]
-    xbar_k = if (length(xvar_names)) sprintf("dbreg_bar%d_%d", k, seq_along(xvar_names)) else character(0)
+    xbar_k = mean_aliases[(k - 1L) * length(xvar_names) + seq_along(xvar_names)]
     xbar_all = c(xbar_all, xbar_k)
     means_cols = vapply(
       seq_along(xvar_names),
-      function(i) sql_weighted_mean(xvar_names[i], weights_expr_base, xbar_k[i]),
+      function(i) sql_weighted_mean(sql_cast_double(xvar_names[i], conn), weights_expr_base, xbar_k[i]),
       character(1)
     )
     cte_parts = c(cte_parts, if (length(means_cols)) {
-      sprintf("fe%d_means AS (SELECT %s, %s FROM base GROUP BY %s)", k, fe_k, paste(means_cols, collapse = ", "), fe_k)
+      sprintf("%s AS (SELECT %s, %s FROM %s%s GROUP BY %s)", mean_tables[k], fe_k, paste(means_cols, collapse = ", "), base_name, if (is.null(weights)) "" else paste(" CROSS JOIN", location_name), fe_k)
     } else {
-      sprintf("fe%d_means AS (SELECT DISTINCT %s FROM base)", k, fe_k)
+      sprintf("%s AS (SELECT DISTINCT %s FROM %s)", mean_tables[k], fe_k, base_name)
     })
-    join_parts = c(join_parts, sprintf("JOIN fe%d_means m%d ON b.%s = m%d.%s", k, k, fe_k, k, fe_k))
+    join_parts = c(join_parts, sprintf("JOIN %s m%d ON b.%s = m%d.%s", mean_tables[k], k, fe_k, k, fe_k))
     aug_bar_parts = c(aug_bar_parts, paste0("m", k, ".", xbar_k))
   }
 
@@ -293,7 +306,7 @@ execute_mundlak_strategy = function(inputs) {
     aug_select_parts = c(aug_select_parts, sprintf("b.%s AS %s", cluster_var, cluster_var))
   }
   if (!is.null(weights)) {
-    aug_select_parts = c(aug_select_parts, sprintf("b.%s AS weights", weights))
+    aug_select_parts = c(aug_select_parts, sprintf("b.%s AS %s", weights, weight_alias))
   }
   aug_select = paste(c(aug_select_parts, aug_bar_parts), collapse = ", ")
 
@@ -325,11 +338,12 @@ execute_mundlak_strategy = function(inputs) {
 
   frame = list(
     cte_sql = paste0(
-      "WITH base AS (SELECT ", paste(base_select, collapse = ", "), " ", from_statement, "),\n",
+      "WITH ", base_name, " AS (SELECT ", paste(unique(base_select), collapse = ", "), " ", from_statement, "),\n",
+      if (!is.null(weights)) paste0(location_name, " AS (SELECT MAX(", sql_cast_double(weights, conn), ") AS ", scale_alias, " FROM ", base_name, "),\n"),
       paste(cte_parts, collapse = ",\n"), ",\n",
-      "augmented AS (SELECT ", aug_select, " FROM base b ", paste(join_parts, collapse = " "), ")"
+      augmented_name, " AS (SELECT ", aug_select, " FROM ", base_name, " b ", paste(join_parts, collapse = " "), ")"
     ),
-    cte_name = "augmented",
+    cte_name = augmented_name,
     cols = setNames(c(yvar, all_regressors), c(yvar, all_regressors)),
     weights_expr = weights_expr_aug,
     intercept = TRUE,

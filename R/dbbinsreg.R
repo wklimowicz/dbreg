@@ -269,6 +269,11 @@ dbbinsreg = function(
   ...
 ) {
   
+  source = normalize_data_source(table, data, path)
+  table = source[["table"]]
+  data = source[["data"]]
+  path = source[["path"]]
+
   # Handle dots as alias for points (binsreg compatibility)
   if (!is.null(dots)) {
     points = dots

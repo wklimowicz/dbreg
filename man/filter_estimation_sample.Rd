@@ -8,11 +8,13 @@ filter_estimation_sample(
   from_statement,
   vars,
   weights = NULL,
-  drop_missings = TRUE
+  drop_missings = TRUE,
+  conn = NULL
 )
 }
 \description{
 Appends a WHERE clause dropping rows with missing `vars` (if
-`drop_missings`) and non-positive weights.
+`drop_missings`) and non-positive weights. Native DuckDB/Spark numeric NaNs
+are treated as missing, independently of DBI upload conversion.
 }
 \keyword{internal}

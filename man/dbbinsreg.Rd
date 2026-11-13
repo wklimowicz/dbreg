@@ -53,14 +53,13 @@ Caller connection settings are preserved. On DuckDB, large numeric BIGINT
 category/cell keys are re-read exactly using bit64; numeric regression
 arithmetic still uses double precision.}
 
-\item{table, data, path}{Mutually exclusive arguments for specifying the data
+\item{table, data, path}{Arguments for specifying the data
 table (object) to be queried. In order of precedence:
 \itemize{
 \item \code{table}: Character string giving the name of the data table in an
 existing (open) database connection.
-\item \code{data}: R dataframe that can be copied over to \code{conn} as a temporary
-table for querying via the DuckDB query engine. Ignored if \code{table} is
-provided.
+\item \code{data}: R dataframe registered with DuckDB, or a lazy table with a
+connection that can be inferred. Ignored if \code{table} is provided.
 \item \code{path}: Character string giving a path to the data file(s) on disk, which
 will be read into \code{conn}. Internally, this string is passed to the \code{FROM}
 query statement, so could (should) include file globbing for
@@ -69,7 +68,10 @@ however, it is recommended to pass the desired database reader function as
 part of this string, e.g. \code{"read_parquet('mydata/**/*.parquet')"} for DuckDB;
 note the use of single quotes.
 Ignored if either \code{table} or \code{data} is provided.
-}}
+}
+
+Lazy tables supplied as \code{data} are treated as \code{table}, including connection inference.
+Unused lower-priority sources are ignored before validation and heuristics.}
 
 \item{points}{A vector \code{c(p, s)} specifying the polynomial degree \eqn{p} and
 smoothness \eqn{s} for the points (point estimates at bin means). Default is

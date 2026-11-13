@@ -10,7 +10,8 @@ detect_backend(conn)
 \item{conn}{A DBI database connection object.}
 }
 \value{
-List with `name` (character) and `supports_count_big` (logical).
+List with `name`, `supports_count_big` and `is_databricks`.
+  Platform identity uses explicit DBMS, driver or host markers.
 }
 \description{
 Returns backend name and capabilities for SQL dialect handling.

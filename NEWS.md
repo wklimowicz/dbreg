@@ -89,6 +89,12 @@ Bug fixes
   interactions now compile with stable prediction recipes, while arbitrary R
   expressions are rejected.
 
+- `dbreg()` and `dbivreg()` now support `subset` predicates, coefficient-one
+  `offset` columns/formulas, `diagnostics = TRUE` source sample audits, and
+  consistent `table > data > path` source precedence.
+- `dbreg()` now supports recursive OLS singleton fixed-effect removal via
+  `fixef_rm = "singletons"`.
+
 - Alternating projections no longer fail with an SQL error when a fixed-effect
   or cluster variable also appears as a regressor. Invalid `dbreg.ap_max_iter`
   and `dbreg.ap_tol` options now produce a clear error.

@@ -130,6 +130,9 @@ predict.dbreg = function(
   }
 
   stored_cells = is.null(newdata)
+  if (stored_cells && !is.null(object[["offset"]])) {
+    stop("Offset models require newdata for prediction.", call. = FALSE)
+  }
   if (is.null(newdata)) {
     if (strategy == "compress" && !is.null(object[["prediction_cells"]])) {
       newdata = object[["prediction_cells"]]
@@ -140,13 +143,17 @@ predict.dbreg = function(
     }
   }
 
-  # Demean predictions recover the FE contribution via (double) demeaning,
-  # which only covers one or two FE
-  if (strategy == "demean" && length(object[["fe"]]) > 2) {
-    stop(
-      "predict() is not yet supported for demean models with more than two fixed effects.",
-      call. = FALSE
-    )
+  prediction_offset = linear_prediction_offset(object, newdata)
+  cohort = NULL
+  if (strategy %in% c("demean", "mundlak")) {
+    newdata = as.data.frame(newdata)
+    cohort = prepare_prediction_cohort(object, newdata)
+    newdata = cohort[["data"]]
+    prediction_offset = prediction_offset[cohort[["valid"]]]
+    if (!nrow(newdata)) {
+      blank = rep(NA_real_, length(cohort[["valid"]]))
+      return(if (interval == "none") blank else data.frame(fit = blank, lwr = blank, upr = blank))
+    }
   }
 
   # Extract common components from object
@@ -157,7 +164,7 @@ predict.dbreg = function(
   intercept = "(Intercept)" %in% names(betas)
 
   # Ensure FE columns are factors
-  for (f in fe) {
+  if (is.null(object[["linear_design"]]) && strategy == "compress") for (f in fe) {
     newdata[[f]] = factor(newdata[[f]])
   }
 
@@ -212,7 +219,7 @@ predict.dbreg = function(
   if (strategy == "mundlak") {
     # Group means of each design column, one set per FE
     mm_means = mapply(
-      function(term, f) ave(as.numeric(mm[, term]), newdata[[f]], FUN = function(y) mean(y, na.rm = TRUE)),
+      function(term, f) weighted_group_mean(as.numeric(mm[, term]), newdata[[f]], prediction_weights(newdata, object[["weights"]])),
       object[["mundlak_means"]][["term"]],
       object[["mundlak_means"]][["fe"]]
     )
@@ -233,31 +240,17 @@ predict.dbreg = function(
 
   invalid_rows = attr(mm, "dbreg_invalid_rows", exact = TRUE)
   if (strategy == "demean") {
-    # demean: sweep the FE out of the regressors (and recover the outcome's
-    # group means, if available, to return level predictions)
     has_y = yvar %in% names(newdata)
-    mean_fn = function(y) mean(y, na.rm = TRUE)
-    sweep_fe = function(v) {
-      if (length(fe) == 1) {
-        v - ave(v, newdata[[fe[1]]], FUN = mean_fn)
-      } else {
-        v - ave(v, newdata[[fe[1]]], FUN = mean_fn) - ave(v, newdata[[fe[2]]], FUN = mean_fn) + mean_fn(v)
-      }
-    }
     working = as.matrix(mm)
-    if (!is.null(invalid_rows)) working[invalid_rows, ] = NA_real_
-    mm = apply(working, 2, sweep_fe)
-    if (is.null(dim(mm))) {
-      mm = matrix(mm, nrow = 1)
-    }
+    if (has_y) working = cbind(working, as.numeric(newdata[[yvar]]) - prediction_offset)
+    projected = demean_prediction_data(working, lapply(fe, function(name) newdata[[name]]),
+      prediction_weights(newdata, object[["weights"]]))
+    mm = projected[, seq_len(ncol(mm)), drop = FALSE]
     if (has_y) {
-      y_group_mean = newdata[[yvar]] - sweep_fe(newdata[[yvar]])
+      y_group_mean = as.numeric(newdata[[yvar]]) - prediction_offset - projected[, ncol(projected)]
     } else {
       y_group_mean = 0
-      message(sprintf(
-        "Outcome '%s' not found in newdata. Returning within-group predictions (demean strategy only).",
-        yvar
-      ))
+      message(sprintf("Outcome '%s' not found in newdata. Returning within-group predictions (demean strategy only).", yvar))
     }
   }
 
@@ -267,6 +260,7 @@ predict.dbreg = function(
     fit = fit + y_group_mean
   }
  
+  fit = fit + prediction_offset
   if (!is.null(invalid_rows)) fit[invalid_rows] = NA_real_
   if (interval != "none") {
     vcovm = vcov(object, fe = TRUE)
@@ -289,6 +283,15 @@ predict.dbreg = function(
     fit = data.frame(fit = fit, lwr = lwr, upr = upr)
   }
 
+  if (!is.null(cohort)) {
+    if (is.data.frame(fit)) {
+      restored = as.data.frame(matrix(NA_real_, length(cohort[["valid"]]), ncol(fit)))
+      names(restored) = names(fit); restored[cohort[["valid"]], ] = fit
+    } else {
+      restored = rep(NA_real_, length(cohort[["valid"]])); restored[cohort[["valid"]]] = fit
+    }
+    fit = restored
+  }
   return(fit)
 }
 

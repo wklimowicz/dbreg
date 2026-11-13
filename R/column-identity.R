@@ -40,6 +40,7 @@ sql_design_reserved = function(inputs) {
     inputs[["xvars"]],
     inputs[["fe"]],
     inputs[["weights"]],
+    inputs[["offset_safe"]],
     inputs[["cluster_var"]]
   ))
 }
@@ -328,7 +329,7 @@ visible_linear_positions = function(object, fe = FALSE) {
   positions
 }
 
-linear_recipe_value = function(recipe, data, dictionaries = list()) {
+linear_recipe_value = function(recipe, data, dictionaries = list(), weights = NULL) {
   levels = recipe[["levels"]]
   if (!is.null(recipe[["dictionary"]])) {
     levels = dictionaries[[recipe[["dictionary"]]]]
@@ -408,15 +409,14 @@ linear_recipe_value = function(recipe, data, dictionaries = list()) {
   }
   if (kind == "product") {
     return(
-      linear_recipe_value(recipe[["left"]], data, dictionaries) *
-        linear_recipe_value(recipe[["right"]], data, dictionaries)
+      linear_recipe_value(recipe[["left"]], data, dictionaries, weights) *
+        linear_recipe_value(recipe[["right"]], data, dictionaries, weights)
     )
   }
   if (kind == "mean") {
-    return(ave(
-      linear_recipe_value(recipe[["source"]], data, dictionaries),
-      column(variable),
-      FUN = function(x) mean(x, na.rm = TRUE)
+    return(weighted_group_mean(
+      linear_recipe_value(recipe[["source"]], data, dictionaries, weights),
+      column(variable), weights
     ))
   }
   stop("Unknown fitted column recipe.", call. = FALSE)
@@ -470,10 +470,11 @@ linear_prediction_matrix = function(object, data) {
   layout = object[["linear_design"]]
   columns = layout[["columns"]]
   recipes = columns[["recipe"]][match(layout[["fitted_ids"]], columns[["id"]])]
+  weights = if (identical(object[["strategy"]], "mundlak")) prediction_weights(data, object[["weights"]]) else NULL
   rows = positions = values = vector("list", length(recipes))
   invalid = linear_category_invalid(layout, data)
   for (k in seq_along(recipes)) {
-    value = linear_recipe_value(recipes[[k]], data, layout[["dictionaries"]])
+    value = linear_recipe_value(recipes[[k]], data, layout[["dictionaries"]], weights)
     if (length(value) != nrow(data)) {
       stop("Prediction column does not match its source rows.", call. = FALSE)
     }

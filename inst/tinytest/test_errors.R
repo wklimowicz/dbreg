@@ -31,12 +31,13 @@ expect_error(dbreg(Temp ~ log(Wind), data = airquality), "Transformed or functio
 expect_equal(coef(dbreg(Temp ~ Wind + I(Wind^2), data = airquality)), coef(lm(Temp ~ Wind + I(Wind^2), data = airquality)), tolerance = 1e-8)
 expect_error(dbreg(Temp ~ Wind | factor(Month), data = airquality), "fixed effects")
 
-# Test 6: predict() refuses demean models with more than two FE
+# Test 6: multi-way prediction follows the joint FE projection
 aq = na.omit(airquality)
 aq$wk = rep(1:5, length.out = nrow(aq))
-expect_error(
+expect_equal(
   predict(dbreg(Temp ~ Wind | Month + Day + wk, data = aq, strategy = "demean"), newdata = aq),
-  "more than two fixed effects"
+  as.numeric(fitted(fixest::feols(Temp ~ Wind | Month + Day + wk, data = aq, fixef.rm = "none"))),
+  tolerance = 1e-7, info = "multi-way cohort projection matches independent FE fit"
 )
 
 # Test 7: Misspelled weight column on a database table gives an informative error

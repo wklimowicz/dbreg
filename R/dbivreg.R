@@ -20,9 +20,11 @@
 #'   and `fixest`-style `i()` terms (see [sql_model_matrix()]).
 #' @param conn Database connection, or `NULL` to create an ephemeral DuckDB
 #'   connection.
-#' @param table,data,path Mutually exclusive data source arguments with
-#'   precedence `table > data > path`.
-#' @param weights Optional character string naming an observation-weight column.
+#' @param table,data,path Data source arguments with precedence `table > data > path`.
+#'   Unused lower-priority sources are ignored before validation and heuristics.
+#'   A lazy table supplied as `data` is treated as `table`, including connection inference.
+#' @param weights Optional column name or one-sided formula such as `~w` naming
+#'   an observation-weight column. Expressions must be calculated in the source.
 #' @param vcov Character string or one-sided clustering formula. Character
 #'   options are `"iid"` and `"hc1"`.
 #' @param strategy Character string selecting the IV backend. Supported values
@@ -74,8 +76,19 @@ dbivreg = function(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  subset = NULL,
+  offset = NULL,
+  diagnostics = FALSE,
   ...
 ) {
+  source = normalize_data_source(table, data, path)
+  table = source[["table"]]
+  data = source[["data"]]
+  path = source[["path"]]
+  weights = formula_column(weights, "weights")
+  validate_diagnostics(diagnostics)
+  offset = linear_offset_column(offset)
+  subset_variables(subset)
   verbose = isTRUE(verbose)
   strategy = match.arg(strategy)
   ssc = match.arg(ssc)
@@ -117,6 +130,9 @@ dbivreg = function(
       "sql_only", "data_only", "drop_missings", "verbose"
     )
   )
+  inputs[["subset"]] = subset
+  inputs[["offset"]] = offset
+  inputs[["diagnostics"]] = diagnostics
   # Release any connection/registration we create, including on errors during
   # input processing (process_dbivreg_inputs() records them in `inputs` first)
   on.exit(release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]]), add = TRUE)
@@ -172,7 +188,7 @@ process_dbivreg_inputs = function(inputs) {
 
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
   # results are mapped back to display names at the end
-  src = safe_source(conn, from_statement, c(model_vars(fml), weights, cluster_var))
+  src = safe_source(conn, from_statement, c(model_vars(fml), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]])))
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
   parsed_fml = dbivreg_parse_formula(src[["to_safe"]](fml))
@@ -187,6 +203,17 @@ process_dbivreg_inputs = function(inputs) {
   # In-memory data are checked by (display) column name; otherwise the database
   # is probed using the (safe) source names
   validate_weights(if (is.null(data)) weights else weights_display, data, conn, from_statement)
+  audit_from_statement = from_statement
+  from_statement = apply_source_subset(conn, from_statement, inputs[["subset"]], src[["to_safe"]])
+  adjusted = prepare_linear_offset(inputs, from_statement, yvar, src)
+  from_statement = adjusted[["from_statement"]]
+  yvar = adjusted[["yvar"]]
+  inputs[["sample_diagnostics"]] = sample_diagnostics(
+    inputs, audit_from_statement, list(outcome = parsed_fml[["yvar"]], regressors = parsed_fml[["exog_vars"]],
+      endogenous = parsed_fml[["endog_vars"]], instruments = parsed_fml[["instr_vars"]],
+      fe = fe, weights = weights, cluster = cluster_var, offset = src[["to_safe"]](inputs[["offset"]])), src
+  )
+
   from_statement = filter_estimation_sample(
     from_statement,
     vars = c(
@@ -198,7 +225,8 @@ process_dbivreg_inputs = function(inputs) {
       cluster_var
     ),
     weights = weights,
-    drop_missings = drop_missings
+    drop_missings = drop_missings,
+    conn = conn
   )
 
   design_source = sub("^FROM\\s+", "", from_statement, ignore.case = TRUE)
@@ -667,7 +695,7 @@ dbivreg_parse_formula = function(fml) {
     stop("dbivreg() requires a fixest-style IV formula with the IV block last: ", usage, ".")
   }
 
-  text = function(e) paste(deparse(e, width.cutoff = 500L), collapse = " ")
+  text = function(e) paste(deparse(e, width.cutoff = 500L, backtick = TRUE), collapse = " ")
   rhs = function(e) stats::as.formula(call("~", e), env = env)
 
   yvar = all.vars(inner[[2]])
@@ -690,10 +718,11 @@ dbivreg_parse_formula = function(fml) {
     if (!length(fe_terms)) {
       stop("Fixed-effects block cannot be empty.")
     }
-    if (length(fe_terms) != length(fe_vars) || !all(fe_terms %in% fe_vars)) {
+    plain = vapply(fe_terms, function(term) is.name(str2lang(term)), logical(1))
+    if (length(fe_terms) != length(fe_vars) || !all(plain)) {
       stop("Fixed effects must be specified as simple additive variable names.")
     }
-    fe = unique(fe_terms)
+    fe = unique(fe_vars)
     fe_rhs_text = text(blocks[[2]])
   }
   # With FE the intercept is absorbed, so `- 1` / `0 +` only matters without FE

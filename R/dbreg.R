@@ -31,13 +31,12 @@
 #' Caller connection settings are preserved. On DuckDB, large numeric BIGINT
 #' category/cell keys are re-read exactly using bit64; numeric regression
 #' arithmetic still uses double precision.
-#' @param table,data,path Mutually exclusive arguments for specifying the data
+#' @param table,data,path Arguments for specifying the data
 #' table (object) to be queried. In order of precedence:
 #' - `table`: Character string giving the name of the data table in an
 #' existing (open) database connection.
-#' - `data`: R dataframe that can be copied over to `conn` as a temporary
-#' table for querying via the DuckDB query engine. Ignored if `table` is
-#' provided.
+#' - `data`: R dataframe registered with DuckDB, or a lazy table with a
+#' connection that can be inferred. Ignored if `table` is provided.
 #' - `path`: Character string giving a path to the data file(s) on disk, which
 #' will be read into `conn`. Internally, this string is passed to the `FROM`
 #' query statement, so could (should) include file globbing for
@@ -46,7 +45,10 @@
 #' part of this string, e.g. `"read_parquet('mydata/**/*.parquet')"` for DuckDB;
 #' note the use of single quotes.
 #' Ignored if either `table` or `data` is provided.
-#' @param weights Character string specifying the column name to use as weights,
+#'
+#' Lazy tables supplied as `data` are treated as `table`, including connection inference.
+#' Unused lower-priority sources are ignored before validation and heuristics.
+#' @param weights Column name or one-sided formula such as `~w` naming weights,
 #' or NULL (default) for unweighted regression. Weights must be non-negative;
 #' rows with zero weight are dropped. Weighted regressions support `"iid"`,
 #' `"hc1"`, and clustered SEs, and are compatible with all strategies.
@@ -110,6 +112,20 @@
 #'   regression software. It is *strongly* recommended not to change this value
 #'   unless you are absolutely sure that your data have no missings and you wish
 #'   to skip some internal checks. (Even then, it probably isn't worth it.)
+#' @param diagnostics Logical. Run an additional source aggregate for input,
+#'   subset-selected, missing-by-role, nonpositive-weight and invalid-offset
+#'   counts? Default is `FALSE`. Counts may overlap. Fitted objects return
+#'   `sample_diagnostics` and `nobs_input`; inspection modes skip the audit.
+#' @param offset Optional numeric column name or one-sided formula such as `~o`,
+#'   added to the predictor with coefficient one. Estimation uses outcome minus
+#'   offset. Rows with nonfinite outcome, offset or adjusted difference are
+#'   excluded. Supports DuckDB/native Databricks. Prediction requires newdata
+#'   containing the offset; intervals condition on its known value.
+#' @param subset Optional logical column name or restricted one-sided predicate
+#'   formula, evaluated before missing-value/weight filtering. Supports column
+#'   comparisons, arithmetic, boolean operators, `is.na()` and literal `%in%`.
+#'   Supports DuckDB and native Databricks; positional vectors are rejected.
+#'   Weights are validated on the source before subsetting.
 #' @param verbose Logical. Print auto strategy and progress messages to the
 #'   console? Defaults to `FALSE`. This can be overridden for a single call
 #'   by supplying `verbose = TRUE`, or set globally via
@@ -120,6 +136,18 @@
 #'   Exact fitted coding is retained for prediction across strategies.
 #' @param ... Additional arguments. Currently ignored, except to handle
 #'   superseded arguments for backwards compatibility.
+#'
+#' @section Sample audits:
+#' With `diagnostics = TRUE`, `sample_diagnostics` reports original source rows
+#' (`n_input`), subset-selected rows (`n_selected`), final original observations
+#' (`n_fitted`) and their difference (`n_dropped`). `detail` gives missing counts
+#' by public source role before filtering; DuckDB/Spark numeric NaNs are missing.
+#' Nonpositive-weight and invalid-offset counts also refer to the original
+#' source. An invalid offset has a nonfinite operand or adjusted difference.
+#' These counts overlap and cannot be added to reconstruct the fitted count.
+#' `query_string` reproduces the source aggregate, with columns mapped by
+#' `count_aliases`. Only metadata and counts are collected. Without an audit,
+#' `nobs_input` is `NA`; `sql_only` and `data_only` skip auditing.
 #'
 #' @return A list of class "dbreg" containing various slots, including a table
 #' of coefficients (which the associated `print` method will display).
@@ -358,17 +386,14 @@ dbreg = function(
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
   factor_refs = NULL,
+  subset = NULL,
+  offset = NULL,
+  diagnostics = FALSE,
+  fixef_rm = c("none", "singletons"),
   ...
 ) {
 
-  verbose = isTRUE(verbose)
-  ssc = match.arg(ssc)
-  vcov_parsed = parse_vcov_args(vcov, cluster)
-  vcov_type_req = vcov_parsed[["vcov_type"]]
-  cluster_var = vcov_parsed[["cluster_var"]]
-  strategy = match.arg(strategy)
-  if (strategy == "within") strategy = "demean"  # alias
-
+  fixef_rm = match.arg(fixef_rm)
   # superseded args handled through ...
   dots = list(...)
   if (length(dots)) {
@@ -377,6 +402,25 @@ dbreg = function(
       warning("The `query_only` argument has been superseded by `sql_only` and will be deprecated in a future `dbreg` release.\n")
     }
   }
+  if (fixef_rm == "singletons" && (isTRUE(sql_only) || !isTRUE(drop_missings))) {
+    stop("Singleton removal requires execution and missing-row filtering.", call. = FALSE)
+  }
+  source = normalize_data_source(table, data, path)
+  table = source[["table"]]
+  data = source[["data"]]
+  path = source[["path"]]
+  weights = formula_column(weights, "weights")
+  validate_diagnostics(diagnostics)
+  offset = linear_offset_column(offset)
+  subset_variables(subset)
+  verbose = isTRUE(verbose)
+  ssc = match.arg(ssc)
+  vcov_parsed = parse_vcov_args(vcov, cluster)
+  vcov_type_req = vcov_parsed[["vcov_type"]]
+  cluster_var = vcov_parsed[["cluster_var"]]
+  strategy = match.arg(strategy)
+  if (strategy == "within") strategy = "demean"  # alias
+
 
   # Collect the (normalised) arguments into the `inputs` environment, which
   # the rest of the pipeline reads from and writes to (reference semantics)
@@ -391,9 +435,20 @@ dbreg = function(
     )
   )
   inputs[["factor_refs"]] = factor_refs
-  # Release any connection/registration we create, including on errors during
+  inputs[["subset"]] = subset
+  inputs[["offset"]] = offset
+  inputs[["diagnostics"]] = diagnostics
+  inputs[["fixef_rm"]] = fixef_rm
+  # Release any connection/registration/temp tables we create, including on errors during
   # input processing (process_dbreg_inputs() records them in `inputs` first)
-  on.exit(release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]]), add = TRUE)
+  on.exit({
+    if (length(inputs[["temp_tables"]]) && !is.null(inputs[["conn"]])) {
+      for (tbl in rev(inputs[["temp_tables"]])) {
+        try(DBI::dbExecute(inputs[["conn"]], paste("DROP TABLE IF EXISTS", tbl)), silent = TRUE)
+      }
+    }
+    release_db_setup(inputs[["conn"]], inputs[["own_conn"]], inputs[["registered_table"]])
+  }, add = TRUE)
 
   # Process and validate inputs (writes parsed/derived fields into `inputs`)
   process_dbreg_inputs(inputs)
@@ -453,7 +508,7 @@ process_dbreg_inputs = function(inputs) {
 
   # Give model variables SQL-safe names (see safe_source()) and re-parse;
   # results are mapped back to display names at the end
-  src = safe_source(conn, from_statement, c(model_vars(fml_parsed[["fml"]]), weights, cluster_var))
+  src = safe_source(conn, from_statement, c(model_vars(fml_parsed[["fml"]]), weights, cluster_var, inputs[["offset"]], subset_variables(inputs[["subset"]])))
   from_statement = src[["from_statement"]]
   name_map = src[["map"]]
   source_map = name_map
@@ -474,6 +529,15 @@ process_dbreg_inputs = function(inputs) {
   # In-memory data are checked by (display) column name; otherwise the database
   # is probed using the (safe) source names
   validate_weights(if (is.null(data)) weights else weights_display, data, conn, from_statement)
+  audit_from_statement = from_statement
+  from_statement = apply_source_subset(conn, from_statement, inputs[["subset"]], src[["to_safe"]])
+  adjusted = prepare_linear_offset(inputs, from_statement, yvar, src)
+  from_statement = adjusted[["from_statement"]]
+  yvar = adjusted[["yvar"]]
+  inputs[["sample_diagnostics"]] = sample_diagnostics(
+    inputs, audit_from_statement, list(outcome = fml_parsed[["yvar"]], regressors = xvars,
+      fe = fe, weights = weights, cluster = cluster_var, offset = src[["to_safe"]](inputs[["offset"]])), src
+  )
 
   compress_ratio = resolve_compress_ratio(compress_ratio, fe)
 
@@ -481,8 +545,14 @@ process_dbreg_inputs = function(inputs) {
     from_statement,
     vars = c(yvar, xvars, fe, cluster_var),
     weights = weights,
-    drop_missings = drop_missings
+    drop_missings = drop_missings,
+    conn = conn
   )
+  if (identical(inputs[["fixef_rm"]], "singletons") && length(fe)) {
+    pruned = linear_prune_singletons(inputs, from_statement, fe, yvar)
+    from_statement = paste("FROM", pruned[["table"]])
+    inputs[["pruning"]] = pruned
+  }
   is_balanced = NULL
 
   env2env(
@@ -580,14 +650,28 @@ validate_weights = function(weights, data, conn, from_statement) {
 #' Restrict the estimation sample
 #'
 #' Appends a WHERE clause dropping rows with missing `vars` (if
-#' `drop_missings`) and non-positive weights.
+#' `drop_missings`) and non-positive weights. Native DuckDB/Spark numeric NaNs
+#' are treated as missing, independently of DBI upload conversion.
 #' @keywords internal
-filter_estimation_sample = function(from_statement, vars, weights = NULL, drop_missings = TRUE) {
+filter_estimation_sample = function(from_statement, vars, weights = NULL, drop_missings = TRUE, conn = NULL) {
   vars = unique(vars[!is.na(vars) & nzchar(vars)])
   where_clauses = c(
     if (isTRUE(drop_missings)) paste0(vars, " IS NOT NULL"),
     if (!is.null(weights)) paste0(weights, " > 0")
   )
+  backend = if (!is.null(conn)) detect_backend(conn)[["name"]] else NULL
+  missing = unique(c(if (isTRUE(drop_missings)) vars, weights))
+  if (identical(backend, "duckdb") && length(missing)) {
+    # Constant typeof() branches preserve text categories such as "NaN".
+    where_clauses = c(where_clauses, paste0(
+      "(CASE WHEN typeof(", missing,
+      ") IN ('DOUBLE','FLOAT') THEN NOT isnan(TRY_CAST(", missing, " AS DOUBLE)) ELSE TRUE END)"
+    ))
+  } else if (identical(backend, "spark") && length(missing)) {
+    schema = DBI::dbGetQuery(conn, sql_limit(paste("SELECT *", from_statement), 0, backend))
+    numeric = missing[vapply(missing, function(name) is.double(schema[[name]]) && !inherits(schema[[name]], "integer64"), logical(1))]
+    if (length(numeric)) where_clauses = c(where_clauses, paste0("NOT isnan(CAST(", numeric, " AS DOUBLE))"))
+  }
   if (!length(where_clauses)) {
     return(from_statement)
   }
@@ -927,16 +1011,19 @@ choose_strategy = function(inputs) {
     if (!length(key_cols)) return(structure(1/max(total_n, 1), comp_size = 1))
 
     # Helper to count distinct tuples (works for single or multi-column)
-    count_distinct_tuples = function(cols) {
+    backend = detect_backend(conn)[["name"]]
+    count_distinct_tuples = function(cols, limit = NULL) {
       cols_expr = paste(cols, collapse = ", ")
       # Use subquery counting distinct tuples (portable and works in DuckDB/SQL Server/etc)
-      sql = glue(
-        "SELECT CAST(COUNT(*) AS BIGINT) AS g FROM (SELECT DISTINCT {cols_expr} {from_statement}) t"
-      )
+      inner_sql = glue("SELECT DISTINCT {cols_expr} {from_statement}")
+      if (!is.null(limit) && is.finite(limit) && limit >= 1) {
+        inner_sql = sql_limit(inner_sql, limit, backend)
+      }
+      sql = glue("SELECT CAST(COUNT(*) AS BIGINT) AS g FROM ({inner_sql}) t")
       dbGetQuery(conn, sql)[["g"]]
     }
 
-    if (length(fe)) {
+    if (verbose && length(fe)) {
       # count unique FE groups (may be single or multi-column)
       n_groups_fe = tryCatch(count_distinct_tuples(fe), error = function(e) {
         NA_integer_
@@ -945,9 +1032,15 @@ choose_strategy = function(inputs) {
       n_groups_fe = NA_integer_
     }
 
-    # count unique keys over regressors + FEs (may be multi-column)
+    # count unique keys over regressors + FEs (may be multi-column);
+    # when not verbose, cap at the compression threshold + 1 so large
+    # continuous tables do not hash every distinct row.
+    key_limit = if (!verbose && is.finite(total_n)) {
+      cap = floor(min(total_n * compress_ratio, compress_nmax))
+      if (is.finite(cap) && cap >= 0) cap + 1 else NULL
+    } else NULL
     n_groups_total = tryCatch(
-      count_distinct_tuples(key_cols),
+      count_distinct_tuples(key_cols, limit = key_limit),
       error = function(e) NA_integer_
     )
 
@@ -1025,7 +1118,7 @@ choose_strategy = function(inputs) {
     } else if (length(fe) >= 1) {
       if (fail_compress_ratio || fail_compress_nmax) {
         chosen_strategy = "demean"
-        if (length(fe) == 2) {
+        if (length(fe) == 2 && is.null(weights)) {
           is_balanced = dbreg_is_balanced_panel(inputs)
           if (verbose) {
             if (isTRUE(is_balanced)) {
@@ -1083,6 +1176,17 @@ finalize_dbreg_result = function(result, inputs, chosen_strategy, class = "dbreg
     return(result)
   }
   result = finalize_linear_layout(result, inputs)
+  result = finalize_sample_diagnostics(result, inputs)
+  if (!is.null(inputs[["offset"]])) {
+    result[["offset"]] = inputs[["offset"]]
+    result[["yvar"]] = inputs[["offset_outcome"]]
+    public_formula = stats::formula(result[["fml"]])
+    public_formula[[2L]] = as.name(result[["yvar"]])
+    result[["fml"]] = Formula(public_formula)
+  }
+  result[["fixef_rm"]] = if (is.null(inputs[["fixef_rm"]])) "none" else inputs[["fixef_rm"]]
+  result[["pruning_rounds"]] = if (is.null(inputs[["pruning"]])) 0L else inputs[["pruning"]][["rounds"]]
+  result[["nobs_pruned"]] = if (is.null(inputs[["pruning"]])) 0 else inputs[["pruning"]][["counts"]][["singleton"]]
   result[["strategy"]] = chosen_strategy
   # i() columns (display names), for predict()
   result[["i_columns"]] = inputs[["i_columns"]]

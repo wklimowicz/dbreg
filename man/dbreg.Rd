@@ -22,6 +22,10 @@ dbreg(
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
   factor_refs = NULL,
+  subset = NULL,
+  offset = NULL,
+  diagnostics = FALSE,
+  fixef_rm = c("none", "singletons"),
   ...
 )
 }
@@ -52,14 +56,13 @@ Caller connection settings are preserved. On DuckDB, large numeric BIGINT
 category/cell keys are re-read exactly using bit64; numeric regression
 arithmetic still uses double precision.}
 
-\item{table, data, path}{Mutually exclusive arguments for specifying the data
+\item{table, data, path}{Arguments for specifying the data
 table (object) to be queried. In order of precedence:
 \itemize{
 \item \code{table}: Character string giving the name of the data table in an
 existing (open) database connection.
-\item \code{data}: R dataframe that can be copied over to \code{conn} as a temporary
-table for querying via the DuckDB query engine. Ignored if \code{table} is
-provided.
+\item \code{data}: R dataframe registered with DuckDB, or a lazy table with a
+connection that can be inferred. Ignored if \code{table} is provided.
 \item \code{path}: Character string giving a path to the data file(s) on disk, which
 will be read into \code{conn}. Internally, this string is passed to the \code{FROM}
 query statement, so could (should) include file globbing for
@@ -68,9 +71,12 @@ however, it is recommended to pass the desired database reader function as
 part of this string, e.g. \code{"read_parquet('mydata/**/*.parquet')"} for DuckDB;
 note the use of single quotes.
 Ignored if either \code{table} or \code{data} is provided.
-}}
+}
 
-\item{weights}{Character string specifying the column name to use as weights,
+Lazy tables supplied as \code{data} are treated as \code{table}, including connection inference.
+Unused lower-priority sources are ignored before validation and heuristics.}
+
+\item{weights}{Column name or one-sided formula such as \code{~w} naming weights,
 or NULL (default) for unweighted regression. Weights must be non-negative;
 rows with zero weight are dropped. Weighted regressions support \code{"iid"},
 \code{"hc1"}, and clustered SEs, and are compatible with all strategies.}
@@ -150,6 +156,29 @@ regressors. Naming a numeric-coded column treats it as categorical. Each
 entry must identify one observed level; i() terms use their own selectors.
 Exact fitted coding is retained for prediction across strategies.}
 
+\item{fixef_rm}{Keep all eligible observations (\code{"none"}, default) or
+recursively remove singleton fixed-effect groups (\code{"singletons"}).
+Removal uses the original eligible sample before compression and supports
+DuckDB and native Databricks. Requires missing-row filtering and execution;
+\code{sql_only=TRUE} cannot express this data-dependent pruning.}
+
+\item{subset}{Optional logical column name or restricted one-sided predicate
+formula, evaluated before missing-value/weight filtering. Supports column
+comparisons, arithmetic, boolean operators, \code{is.na()} and literal \code{\%in\%}.
+Supports DuckDB and native Databricks; positional vectors are rejected.
+Weights are validated on the source before subsetting.}
+
+\item{offset}{Optional numeric column name or one-sided formula such as \code{~o},
+added to the predictor with coefficient one. Estimation uses outcome minus
+offset. Rows with nonfinite outcome, offset or adjusted difference are
+excluded. Supports DuckDB/native Databricks. Prediction requires newdata
+containing the offset; intervals condition on its known value.}
+
+\item{diagnostics}{Logical. Run an additional source aggregate for input,
+subset-selected, missing-by-role, nonpositive-weight and invalid-offset
+counts? Default is \code{FALSE}. Counts may overlap. Fitted objects return
+\code{sample_diagnostics} and \code{nobs_input}; inspection modes skip the audit.}
+
 \item{...}{Additional arguments. Currently ignored, except to handle
 superseded arguments for backwards compatibility.}
 }
@@ -163,6 +192,20 @@ which may not fit into R's memory. Various acceleration strategies allow for
 highly efficient computation, while robust standard errors are computed from
 sufficient statistics.
 }
+\section{Sample audits}{
+
+With \code{diagnostics = TRUE}, \code{sample_diagnostics} reports original source rows
+(\code{n_input}), subset-selected rows (\code{n_selected}), final original observations
+(\code{n_fitted}) and their difference (\code{n_dropped}). \code{detail} gives missing counts
+by public source role before filtering; DuckDB/Spark numeric NaNs are missing.
+Nonpositive-weight and invalid-offset counts also refer to the original
+source. An invalid offset has a nonfinite operand or adjusted difference.
+These counts overlap and cannot be added to reconstruct the fitted count.
+\code{query_string} reproduces the source aggregate, with columns mapped by
+\code{count_aliases}. Only metadata and counts are collected. Without an audit,
+\code{nobs_input} is \code{NA}; \code{sql_only} and \code{data_only} skip auditing.
+}
+
 \section{Acceleration Strategies}{
 
 

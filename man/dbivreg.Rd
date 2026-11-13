@@ -21,6 +21,9 @@ dbivreg(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  subset = NULL,
+  offset = NULL,
+  diagnostics = FALSE,
   ...
 )
 }
@@ -34,10 +37,12 @@ and \code{fixest}-style \code{i()} terms (see \code{\link[=sql_model_matrix]{sql
 \item{conn}{Database connection, or \code{NULL} to create an ephemeral DuckDB
 connection.}
 
-\item{table, data, path}{Mutually exclusive data source arguments with
-precedence \verb{table > data > path}.}
+\item{table, data, path}{Data source arguments with precedence \verb{table > data > path}.
+Unused lower-priority sources are ignored before validation and heuristics.
+A lazy table supplied as \code{data} is treated as \code{table}, including connection inference.}
 
-\item{weights}{Optional character string naming an observation-weight column.}
+\item{weights}{Optional column name or one-sided formula such as \code{~w} naming
+an observation-weight column. Expressions must be calculated in the source.}
 
 \item{vcov}{Character string or one-sided clustering formula. Character
 options are \code{"iid"} and \code{"hc1"}.}
@@ -78,6 +83,23 @@ dropped.}
 
 \item{verbose}{Logical indicating whether progress messages are printed.}
 
+\item{subset}{Optional logical column name or restricted one-sided predicate
+formula, evaluated before missing-value/weight filtering. Supports column
+comparisons, arithmetic, boolean operators, \code{is.na()} and literal \code{\%in\%}.
+Supports DuckDB and native Databricks; positional vectors are rejected.
+Weights are validated on the source before subsetting.}
+
+\item{offset}{Optional numeric column name or one-sided formula such as \code{~o},
+added to the predictor with coefficient one. Estimation uses outcome minus
+offset. Rows with nonfinite outcome, offset or adjusted difference are
+excluded. Supports DuckDB/native Databricks. Prediction requires newdata
+containing the offset; intervals condition on its known value.}
+
+\item{diagnostics}{Logical. Run an additional source aggregate for input,
+subset-selected, missing-by-role, nonpositive-weight and invalid-offset
+counts? Default is \code{FALSE}. Counts may overlap. Fitted objects return
+\code{sample_diagnostics} and \code{nobs_input}; inspection modes skip the audit.}
+
 \item{...}{Additional unused arguments.}
 }
 \value{
@@ -95,4 +117,17 @@ backend. The current implementation supports three exact strategies:
 Multi-way fixed effects use exact alternating projections when there are
 more than two fixed effects, or when two-way fixed effects are unbalanced or
 weights are supplied.
+}
+\section{Sample audits}{
+
+With \code{diagnostics = TRUE}, \code{sample_diagnostics} reports original source rows
+(\code{n_input}), subset-selected rows (\code{n_selected}), final original observations
+(\code{n_fitted}) and their difference (\code{n_dropped}). \code{detail} gives missing counts
+by public source role before filtering; DuckDB/Spark numeric NaNs are missing.
+Nonpositive-weight and invalid-offset counts also refer to the original
+source. An invalid offset has a nonfinite operand or adjusted difference.
+These counts overlap and cannot be added to reconstruct the fitted count.
+\code{query_string} reproduces the source aggregate, with columns mapped by
+\code{count_aliases}. Only metadata and counts are collected. Without an audit,
+\code{nobs_input} is \code{NA}; \code{sql_only} and \code{data_only} skip auditing.
 }

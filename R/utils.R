@@ -302,7 +302,7 @@ parse_regression_formula = function(fml, allow_empty = FALSE) {
   if (length(yvar) != 1) {
     stop("Exactly one outcome variable required.")
   }
-  check_simple_terms(paste(deparse(lhs[[2]]), collapse = " "), "outcome", allow_interactions = FALSE)
+  check_simple_terms(paste(deparse(lhs[[2]], backtick = TRUE), collapse = " "), "outcome", allow_interactions = FALSE)
   
   # Extract RHS part 1: variables and term structure
   rhs1 = formula(fml, lhs = 0, rhs = 1)
@@ -732,28 +732,40 @@ backend_supports_count_big = function(conn) {
   grepl("sql server|azure sql|microsoft sql server", dbms)
 }
 
+# Identify explicit platform markers without inspecting credentials or
+# assuming every Spark connection is Databricks.
+databricks_metadata = function(info = list(), connection_string = NULL, connection_class = character()) {
+  fields = c("dbms.name", "driver.name")
+  connection_fields = tolower(names(connection_string)) %in% c("host", "driver")
+  metadata = unlist(c(info[intersect(names(info), fields)],
+    connection_string[connection_fields], connection_class), use.names = FALSE)
+  any(grepl("databricks", metadata, ignore.case = TRUE))
+}
+
 #' Detect SQL backend from connection
-#' 
+#'
 #' Returns backend name and capabilities for SQL dialect handling.
-#' 
+#'
 #' @param conn A DBI database connection object.
-#' @return List with `name` (character) and `supports_count_big` (logical).
+#' @return List with `name`, `supports_count_big` and `is_databricks`.
+#'   Platform identity uses explicit DBMS, driver or host markers.
 #' @keywords internal
 detect_backend = function(conn) {
   # First check connection class for DuckDB (dbms.name may be empty)
   if (inherits(conn, "duckdb_connection")) {
-    return(list(name = "duckdb", supports_count_big = FALSE))
+    return(list(name = "duckdb", supports_count_big = FALSE, is_databricks = FALSE))
   }
   if (inherits(conn, "BigQueryConnection")) {
-    return(list(name = "bigquery", supports_count_big = FALSE))
+    return(list(name = "bigquery", supports_count_big = FALSE, is_databricks = FALSE))
   }
 
   
   info = try(dbGetInfo(conn), silent = TRUE)
   if (inherits(info, "try-error")) {
-    return(list(name = "unknown", supports_count_big = FALSE))
+    return(list(name = "unknown", supports_count_big = FALSE, is_databricks = FALSE))
   }
   dbms = tolower(paste(info[["dbms.name"]], collapse = " "))
+  is_databricks = databricks_metadata(info, attr(conn, "connectionString"), class(conn))
   list(
     name = if (grepl("duckdb", dbms)) {
       "duckdb"
@@ -765,7 +777,7 @@ detect_backend = function(conn) {
       "sqlite"
     } else if (grepl("mysql|mariadb", dbms)) {
       "mysql"
-    } else if (grepl("spark", dbms)) {
+    } else if (is_databricks || grepl("spark", dbms)) {
       "spark"
     } else if (grepl("athena|presto|trino", dbms)) {
       "athena"
@@ -775,7 +787,8 @@ detect_backend = function(conn) {
     supports_count_big = grepl(
       "sql server|azure sql|microsoft sql server",
       dbms
-    )
+    ),
+    is_databricks = is_databricks
   )
 }
 

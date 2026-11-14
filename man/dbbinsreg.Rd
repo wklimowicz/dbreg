@@ -158,7 +158,10 @@ if \code{cb=TRUE}, then includes the columns: \code{cb_lwr} and \code{cb_upr}.}
 \item{bins}{Data frame with bin boundaries: \code{id} (bin number), \code{left}
 (left endpoint), \code{right} (right endpoint).}
 \item{model}{The fitted \code{dbreg} model object (for points).}
-\item{opt}{List of options used: \code{points}, \code{line}, \code{nbins}, \code{binspos}, etc.}
+  \item{opt}{List of options used: \code{points}, \code{line}, \code{nbins}, \code{binspos}, etc.
+    When the running variable is centered for numerical stability,
+    \code{x_origin} records the basis origin used by the returned model.
+    Reported point, bin and knot coordinates retain the original units.}
 }
 If \code{plot = TRUE} (the default), a binscatter plot is also produced as a
 side effect. See \code{\link{plot.dbbinsreg}} for plot customization.

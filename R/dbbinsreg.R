@@ -81,7 +81,10 @@
 #'   \item{bins}{Data frame with bin boundaries: `id` (bin number), `left`
 #'     (left endpoint), `right` (right endpoint).}
 #'   \item{model}{The fitted `dbreg` model object (for points).}
-#'   \item{opt}{List of options used: `points`, `line`, `nbins`, `binspos`, etc.}
+#'   \item{opt}{List of options used: `points`, `line`, `nbins`, `binspos`, etc.
+#'     When the running variable is centered for numerical stability,
+#'     `x_origin` records the basis origin used by the returned model.
+#'     Reported point, bin and knot coordinates retain the original units.}
 #' }
 #' If `plot = TRUE` (the default), a binscatter plot is also produced as a
 #' side effect. See \code{\link{plot.dbbinsreg}} for plot customization.
@@ -439,6 +442,37 @@ dbbinsreg = function(
   # Detect backend for SQL compatibility
   backend_info = detect_backend(conn)
   backend = backend_info[["name"]]
+
+  # Geometry, spline powers and plotted contrasts must use the same local x
+  # coordinates. At a large location even AVG(x), or evaluating a raw spline
+  # covariance, can lose all of the variation within a bin. Keep a separate
+  # running column so a source x reused as a cluster or FE retains its keys.
+  bounds = dbGetQuery(conn, paste0("SELECT MIN(", sql_cast_double(x_name, conn),
+    ") AS lo, MAX(", sql_cast_double(x_name, conn), ") AS hi FROM ", table_name,
+    " WHERE ", x_name, " IS NOT NULL AND ", y_name, " IS NOT NULL"))
+  lo = as.numeric(bounds[["lo"]])
+  hi = as.numeric(bounds[["hi"]])
+  x_origin = 0
+  if (length(lo) && length(hi) && all(is.finite(c(lo, hi)))) {
+    origin = lo/2 + hi/2
+    radius = hi/2 - lo/2
+    # Leave ordinary basis coefficients on their established source scale.
+    if (abs(origin) > 8 * max(radius, .Machine[["double.xmin"]])) x_origin = origin
+  }
+  if (x_origin != 0) {
+    source_columns = names(dbGetQuery(conn, sql_limit(paste("SELECT * FROM", table_name), 0L, backend)))
+    local_x = safe_identifiers("dbbinsreg_running_x", taken = c(source_columns, source_vars, names(name_map)),
+      fold_case = folds_identifier_case(conn))
+    local_table = temp_table_name(basename(tempfile("__dbbinsreg_centered_")), backend)
+    on.exit(try(drop_table_if_exists(conn, local_table, backend), silent = TRUE), add = TRUE, after = FALSE)
+    create_temp_table_as(conn, local_table, paste0("SELECT *, (", sql_cast_double(x_name, conn),
+      "-(", sprintf("%.17e", x_origin), ")) AS ", local_x, " FROM ", table_name), backend)
+    display_x = restore_names(x_name, name_map)
+    name_map = c(name_map, stats::setNames(display_x, local_x))
+    table_name = local_table
+    x_name = local_x
+    if (!is.null(breaks)) breaks = breaks - x_origin
+  }
   
   # Construct formula for display
   formula_str = if (!is.null(controls) && !is.null(fe)) {
@@ -622,6 +656,18 @@ dbbinsreg = function(
     } else {
       result = execute_constrained_binsreg(inputs)
     }
+  }
+
+  # Restore the axis only after all polynomial, covariance and band evaluation;
+  # the rounded public coordinates must never feed back into those contrasts.
+  if (x_origin != 0) {
+    result[["opt"]][["x_origin"]] = x_origin
+    for (part in c("points", "line")) {
+      if (!is.null(result[[part]])) result[[part]][["x"]] = result[[part]][["x"]] + x_origin
+    }
+    for (edge in c("left", "right")) result[["bins"]][[edge]] = result[["bins"]][[edge]] + x_origin
+    if (is.list(result[["knots"]])) result[["knots"]] = lapply(result[["knots"]], `+`, x_origin)
+    else if (!is.null(result[["knots"]])) result[["knots"]] = result[["knots"]] + x_origin
   }
   
   # Map internal (safe) names back to display names
@@ -904,7 +950,7 @@ query_bin_geometry = function(conn, binned_sql, x_name, backend) {
     SELECT bin,
            MIN({x_name}) AS x_left,
            MAX({x_name}) AS x_right,
-           (MIN({x_name}) + MAX({x_name})) / 2.0 AS x_mid,
+           MIN({x_name}) / 2.0 + MAX({x_name}) / 2.0 AS x_mid,
            AVG({x_name}) AS x_mean,
            {count_expr} AS n
     FROM ({binned_sql}) __dbbinsreg_binned
@@ -938,7 +984,7 @@ query_bin_geometry = function(conn, binned_sql, x_name, backend) {
 #' @keywords internal
 basis_column_sql = function(geo, x_name, degree, aliases = NULL) {
   if (degree == 0) return(character())
-  num = function(v) sprintf("%.17g", v)
+  num = function(v) sprintf("%.17e", v)
   exprs = character()
   for (i in seq_len(nrow(geo))) {
     b = geo[["bin"]][i]
@@ -1162,7 +1208,7 @@ execute_constrained_binsreg = function(inputs) {
     SELECT bin,
            MIN({x_name}) AS x_left,
            MAX({x_name}) AS x_right,
-           (MIN({x_name}) + MAX({x_name})) / 2.0 AS x_mid,
+           MIN({x_name}) / 2.0 + MAX({x_name}) / 2.0 AS x_mid,
            AVG({x_name}) AS x_mean,
            {count_expr} AS n
     FROM {binned_table}

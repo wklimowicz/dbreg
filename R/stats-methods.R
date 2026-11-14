@@ -255,6 +255,7 @@ predict.dbreg = function(
     if (stored_cells && !is.null(cells)) {
       names(newdata) = cells[["data_names"]]
       newdata = linear_matrix_data(newdata)
+      for (name in cells[["constants"]]) newdata[[name]] = rep(1, nrow(newdata))
       if (!is.null(cells[["columns"]])) {
         mm = as.matrix(newdata[, setdiff(cells[["columns"]], "(Intercept)"), drop = FALSE])
         if ("(Intercept)" %in% cells[["columns"]]) mm = cbind("(Intercept)" = 1, mm)

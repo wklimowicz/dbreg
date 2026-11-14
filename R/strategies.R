@@ -599,15 +599,34 @@ execute_compress_strategy = function(inputs) {
   matrix_formula = if (length(c(design_vars, fe))) reformulate(c(design_vars, fe), intercept = intercept) else ~1
   categorical = unique(c(design_vars, fe))[vapply(compressed_dat[unique(c(design_vars, fe))], function(value)
     is.factor(value) || is.character(value) || is.logical(value), logical(1))]
+  one_level_design = setdiff(categorical, fe)[vapply(compressed_dat[setdiff(categorical, fe)], function(value)
+    length(if (is.factor(value)) levels(value) else unique(value)) == 1L, logical(1))]
+  one_level = c(fe[vapply(compressed_dat[fe], nlevels, integer(1)) == 1L], one_level_design)
+  categorical = setdiff(categorical, one_level)
   contrasts = lapply(compressed_dat[categorical], function(value) {
     levels = if (is.logical(value)) c("FALSE", "TRUE") else if (is.factor(value)) levels(value) else levels(factor(value))
     stats::contr.treatment(levels)
   })
   if (!length(contrasts)) contrasts = NULL
   matrix_data = linear_matrix_data(compressed_dat)
+  # A one-level FE spans a constant, with no treatment contrasts. Keep its
+  # original domain in the recipe so unseen prediction keys still return NA.
+  for (name in one_level) matrix_data[[name]] = rep(1, nrow(matrix_data))
   X = sparse.model.matrix(matrix_formula, matrix_data, contrasts.arg = contrasts)
   columns = matrix_column_layout(X, matrix_formula, matrix_data,
     inputs[["design_columns"]], slope_terms = seq_along(design_vars))
+  for (i in seq_len(nrow(columns))) {
+    recipe = columns[["recipe"]][[i]]
+    if (recipe[["kind"]] == "numeric" && recipe[["variable"]] %in% one_level) {
+      name = recipe[["variable"]]
+      keys = exact_fe_levels[[name]]
+      col_val = compressed_dat[[name]]
+      columns[["recipe"]][[i]] = list(kind = "constant", variable = name,
+        key_type = if (is.logical(col_val)) "logical" else "character",
+        levels = if (length(keys)) unname(keys) else if (is.factor(col_val)) levels(col_val) else unique(col_val))
+      if (name %in% fe) columns[["role"]][i] = "fixed_effect"
+    }
+  }
   for (i in which(columns[["role"]] == "fixed_effect")) {
     recipe = columns[["recipe"]][[i]]
     keys = exact_fe_levels[[recipe[["variable"]]]]
@@ -643,7 +662,7 @@ execute_compress_strategy = function(inputs) {
   fit[["dropped"]] = setdiff(colnames(X), kept)
   layout = list(version = 1L, columns = columns, fitted_ids = columns[["id"]][match(fit[["x"]], columns[["alias"]])])
   compressed_design = list(formula = matrix_formula, data_names = names(compressed_dat), contrasts = contrasts,
-    positions = match(fit[["x"]], columns[["alias"]]))
+    positions = match(fit[["x"]], columns[["alias"]]), constants = one_level)
   collin_vars = unique(c(absorbed_cat_fe, fit[["dropped"]]))
   X = X[, fit[["x"]], drop = FALSE]
   betahat = fit[["coef"]]

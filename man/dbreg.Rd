@@ -21,16 +21,16 @@ dbreg(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   factor_refs = NULL,
   subset = NULL,
   offset = NULL,
   diagnostics = FALSE,
-  fixef_rm = c("none", "singletons"),
   row_id = NULL,
   sample_table = NULL,
-  fe_tol = getOption("dbreg.ap_tol", 1e-10),
-  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   retain = c("none", "prediction", "inference", "all"),
+  fixef_rm = c("none", "singletons"),
   ...
 )
 }
@@ -173,9 +173,17 @@ console? Defaults to \code{FALSE}. This can be overridden for a single call
 by supplying \code{verbose = TRUE}, or set globally via
 \code{options(dbreg.verbose = TRUE)}.}
 
+\item{fe_tol}{Positive per-fit tolerance for fixed-effect projection. Defaults
+to \code{getOption("dbreg.ap_tol", 1e-10)} without changing that option.}
+
+\item{fe_max_iter}{Positive maximum AP cycles or bounded solve/refinement
+steps for this fit. Defaults to \code{getOption("dbreg.ap_max_iter", 100L)}
+without changing it. Bounded refinement uses at most eight steps; inner
+PCG has a separate cap. See \link{dbreg-options}.}
+
 \item{factor_refs}{Optional named reference levels for ordinary categorical
 regressors. Naming a numeric-coded column treats it as categorical. Each
-entry must identify one observed level; \code{i()} terms use their own selectors.
+entry must identify one observed level; i() terms use their own selectors.
 Exact fitted coding is retained for prediction across strategies.}
 
 \item{subset}{Optional logical column name or restricted one-sided predicate
@@ -195,10 +203,6 @@ subset-selected, missing-by-role, nonpositive-weight and invalid-offset
 counts? Default is \code{FALSE}. Counts may overlap. Fitted objects return
 \code{sample_diagnostics} and \code{nobs_input}; inspection modes skip the audit.}
 
-\item{fixef_rm}{Character string controlling singleton fixed-effect removal:
-\code{"none"} (default) keeps all observations; \code{"singletons"} iteratively
-prunes observations belonging to singleton fixed-effect groups.}
-
 \item{row_id}{Optional character vector of unique, nonmissing source key
 columns. Keys are validated before subset/missing/weight filtering, using
 native SQL tuples; no key values are collected for validation.}
@@ -211,14 +215,6 @@ The caller owns the export; private intermediates are cleaned on errors
 and success. Unacknowledged cleanup remains queued for synchronous retry.
 Cannot be combined with \code{sql_only} or \code{data_only}.}
 
-\item{fe_tol}{Positive per-fit tolerance for fixed-effect projection. Defaults
-to \code{getOption("dbreg.ap_tol", 1e-10)} without changing that option.}
-
-\item{fe_max_iter}{Positive maximum AP cycles or bounded solve/refinement
-steps for this fit. Defaults to \code{getOption("dbreg.ap_max_iter", 100L)}
-without changing it. Bounded refinement uses at most eight steps; inner
-PCG has a separate cap. See \link{dbreg-options}.}
-
 \item{retain}{Choose \code{"prediction"} for learned fixed effects,
 \code{"inference"} for original fitted rows and post-fit score inference,
 or \code{"all"} for both. Use \code{close()} to release owned tables.
@@ -226,6 +222,12 @@ Prediction alone keeps portable dictionaries or database dictionaries;
 temporary fitted rows are released before returning the fit.
 When one or two additive families exceed the portable budget, their
 dictionaries stay in the owning database session.}
+
+\item{fixef_rm}{Keep all eligible observations (\code{"none"}, default) or
+recursively remove singleton fixed-effect groups (\code{"singletons"}).
+Removal uses the original eligible sample before compression and supports
+DuckDB and native Databricks. Requires missing-row filtering and execution;
+\code{sql_only=TRUE} cannot express this data-dependent pruning.}
 
 \item{...}{Only the superseded \code{query_only} alias is accepted. Other unused
 requests raise an error before accessing a source.}

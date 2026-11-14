@@ -170,6 +170,11 @@
 #'   The caller owns the export; private intermediates are cleaned on errors
 #'   and success. Unacknowledged cleanup remains queued for synchronous retry.
 #'   Cannot be combined with `sql_only` or `data_only`.
+#' @param fixef_rm Keep all eligible observations (\code{"none"}, default) or
+#'   recursively remove singleton fixed-effect groups (\code{"singletons"}).
+#'   Removal uses the original eligible sample before compression and supports
+#'   DuckDB and native Databricks. Requires missing-row filtering and execution;
+#'   \code{sql_only=TRUE} cannot express this data-dependent pruning.
 #' @param retain Choose \code{"prediction"} for learned fixed effects,
 #'   \code{"inference"} for original fitted rows and post-fit score inference,
 #'   or \code{"all"} for both. Use \code{close()} to release owned tables.
@@ -195,13 +200,6 @@
 #'   console? Defaults to `FALSE`. This can be overridden for a single call
 #'   by supplying `verbose = TRUE`, or set globally via
 #'   `options(dbreg.verbose = TRUE)`.
-#' @param factor_refs Optional named reference levels for ordinary categorical
-#'   regressors. Naming a numeric-coded column treats it as categorical. Each
-#'   entry must identify one observed level; `i()` terms use their own selectors.
-#'   Exact fitted coding is retained for prediction across strategies.
-#' @param fixef_rm Character string controlling singleton fixed-effect removal:
-#'   `"none"` (default) keeps all observations; `"singletons"` iteratively
-#'   prunes observations belonging to singleton fixed-effect groups.
 #' @param fe_tol Positive per-fit tolerance for fixed-effect projection. Defaults
 #'   to `getOption("dbreg.ap_tol", 1e-10)` without changing that option.
 #' @param fe_max_iter Positive maximum AP cycles or bounded solve/refinement
@@ -465,16 +463,16 @@ dbreg = function(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   factor_refs = NULL,
   subset = NULL,
   offset = NULL,
   diagnostics = FALSE,
-  fixef_rm = c("none", "singletons"),
   row_id = NULL,
   sample_table = NULL,
-  fe_tol = getOption("dbreg.ap_tol", 1e-10),
-  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   retain = c("none", "prediction", "inference", "all"),
+  fixef_rm = c("none", "singletons"),
   ...
 ) {
   check_unused_args(list(...), "query_only")
@@ -531,6 +529,7 @@ dbreg = function(
       "compress_nmax", "drop_missings", "verbose"
     )
   )
+  inputs[["fixef_rm"]] = fixef_rm
   inputs[["factor_refs"]] = factor_refs
   validate_sample_args(row_id, sample_table, conn, table, sql_only, data_only)
   if (retain != "none" && (sql_only || data_only || !drop_missings)) {
@@ -545,21 +544,13 @@ dbreg = function(
   inputs[["subset"]] = subset
   inputs[["offset"]] = offset
   inputs[["diagnostics"]] = diagnostics
-  inputs[["fixef_rm"]] = fixef_rm
   inputs[["fe_tol"]] = fe_tol
   inputs[["fe_max_iter"]] = fe_max_iter
   inputs[["fe_max_iter_explicit"]] = !missing(fe_max_iter) || !is.null(getOption("dbreg.ap_max_iter"))
   validate_fe_controls(inputs)
-  # Release any connection/registration/temp tables we create, including on errors during
+  # Release any connection/registration we create, including on errors during
   # input processing (process_dbreg_inputs() records them in `inputs` first)
-  on.exit({
-    if (length(inputs[["temp_tables"]]) && !is.null(inputs[["conn"]])) {
-      for (tbl in rev(inputs[["temp_tables"]])) {
-        try(DBI::dbExecute(inputs[["conn"]], paste("DROP TABLE IF EXISTS", tbl)), silent = TRUE)
-      }
-    }
-    release_fit_resources(inputs[["resources"]])
-  }, add = TRUE)
+  on.exit(release_fit_resources(inputs[["resources"]]), add = TRUE)
 
   # Process and validate inputs (writes parsed/derived fields into `inputs`)
   process_dbreg_inputs(inputs)

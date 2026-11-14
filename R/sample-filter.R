@@ -132,7 +132,7 @@ apply_source_subset = function(conn, from_statement, subset, to_safe = identity)
 }
 
 # Singleton removal precedes strategy selection and compression. Keep the
-# native tuples and outcome/offset together in one owned temp table.
+# native tuples, outcome/offset and source keys together in one owned snapshot.
 linear_prune_singletons = function(inputs, from, fe, y) {
   conn = inputs[["conn"]]
   backend = detect_backend(conn)
@@ -140,55 +140,14 @@ linear_prune_singletons = function(inputs, from, fe, y) {
     stop("OLS singleton removal requires DuckDB or native Databricks.", call. = FALSE)
   }
   fields = names(DBI::dbGetQuery(conn, paste("SELECT *", from, "LIMIT 0")))
-  q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
-  cols_sql = paste(q(fields), collapse = ", ")
-  flags = safe_identifiers(c("__dbreg_single"), taken = fields,
+  flags = safe_identifiers(c("__dbglm_single", "__dbglm_infinite"), taken = fields,
     fold_case = folds_identifier_case(conn))
-  flag = flags[[1L]]
-  make_temp = function(sql) {
-    tbl = sprintf("dbreg_prune_%s_%06d", format(Sys.time(), "%H%M%S"), sample.int(999999L, 1L))
-    q_tbl = as.character(DBI::dbQuoteIdentifier(conn, tbl))
-    DBI::dbExecute(conn, paste("CREATE TEMP TABLE", q_tbl, "AS", sql))
-    inputs[["temp_tables"]] = unique(c(inputs[["temp_tables"]], q_tbl))
-    q_tbl
-  }
-  drop_temp = function(q_tbl) {
-    drop_kw = if (isTRUE(backend[["is_databricks"]])) "DROP TEMP TABLE IF EXISTS" else "DROP TABLE IF EXISTS"
-    try(DBI::dbExecute(conn, paste(drop_kw, q_tbl)), silent = TRUE)
-    inputs[["temp_tables"]] = setdiff(inputs[["temp_tables"]], q_tbl)
-    invisible(NULL)
-  }
-  table = make_temp(paste("SELECT *", from))
-  rounds = 0L
-  removed_total = 0
-  if (length(fe)) {
-    repeat {
-      singleton = joins = character()
-      for (k in seq_along(fe)) {
-        f = fe[k]
-        s = paste0("__dbreg_p", k)
-        joins = c(joins, paste0(
-          " JOIN (SELECT ", f, " AS __dbreg_g, COUNT(*) AS n FROM ", table,
-          " GROUP BY ", f, ") ", s, " ON __dbreg_t.", f, " = ", s, ".__dbreg_g"
-        ))
-        singleton = c(singleton, paste0(s, ".n = 1"))
-      }
-      flagged = paste0(
-        "(SELECT __dbreg_t.*, (", paste(singleton, collapse = " OR "), ") AS ", flag,
-        " FROM ", table, " __dbreg_t", paste(joins, collapse = ""), ") __dbreg_f"
-      )
-      n_rem = as.numeric(DBI::dbGetQuery(conn, paste0(
-        "SELECT COUNT(*) FILTER (WHERE ", flag, ") AS removed FROM ", flagged
-      ))[["removed"]])
-      if (n_rem == 0) break
-      removed_total = removed_total + n_rem
-      next_table = make_temp(paste0("SELECT ", cols_sql, " FROM ", flagged, " WHERE NOT ", flag))
-      drop_temp(table)
-      table = next_table
-      rounds = rounds + 1L
-    }
-  }
-  n = as.numeric(DBI::dbGetQuery(conn, paste("SELECT COUNT(*) AS n FROM", table))[["n"]])
+  manager = fe_cg_manager(conn, inputs[["resources"]])
+  source = manager[["create"]](paste("SELECT *", from))
+  pruned = dbglm_prune(conn, source, fe, y, "singletons",
+    function(sql, materialize) manager[["create"]](sql), manager[["drop"]],
+    family = "gaussian", flags = flags)
+  n = as.numeric(DBI::dbGetQuery(conn, paste("SELECT COUNT(*) AS n FROM", pruned[["table"]]))[["n"]])
   if (!n) stop("No observations remain after singleton removal.", call. = FALSE)
-  list(table = table, rounds = rounds, counts = c(singleton = removed_total, infinite_coef = 0))
+  pruned
 }

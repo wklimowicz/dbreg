@@ -21,13 +21,13 @@ dbivreg(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   subset = NULL,
   offset = NULL,
   diagnostics = FALSE,
   row_id = NULL,
   sample_table = NULL,
-  fe_tol = getOption("dbreg.ap_tol", 1e-10),
-  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   ...
 )
 }
@@ -102,21 +102,6 @@ dropped.}
 
 \item{verbose}{Logical indicating whether progress messages are printed.}
 
-\item{subset}{Optional logical column name or restricted one-sided predicate
-formula, evaluated before missing-value/weight filtering. See \code{\link[=dbreg]{dbreg()}}.}
-
-\item{offset}{Optional numeric column name or one-sided formula, added to
-the predictor with coefficient one. See \code{\link[=dbreg]{dbreg()}}.}
-
-\item{diagnostics}{Logical indicating whether to run an additional source
-audit aggregate. See \code{\link[=dbreg]{dbreg()}}.}
-
-\item{row_id}{Optional character vector of unique, nonmissing source key
-columns. See \code{\link[=dbreg]{dbreg()}}.}
-
-\item{sample_table}{Optional new temporary table receiving the fitted source
-keys. See \code{\link[=dbreg]{dbreg()}}.}
-
 \item{fe_tol}{Positive per-fit tolerance for fixed-effect projection. Defaults
 to \code{getOption("dbreg.ap_tol", 1e-10)} without changing that option.}
 
@@ -125,8 +110,37 @@ steps for this fit. Defaults to \code{getOption("dbreg.ap_max_iter", 100L)}
 without changing it. Bounded refinement uses at most eight steps; inner
 PCG has a separate cap. See \link{dbreg-options}.}
 
-\item{...}{Only the superseded \code{query_only} alias is accepted. Other unused
-requests raise an error before accessing a source.}
+\item{subset}{Optional logical column name or restricted one-sided predicate
+formula, evaluated before missing-value/weight filtering. Supports column
+comparisons, arithmetic, boolean operators, \code{is.na()} and literal \code{\%in\%}.
+Supports DuckDB and native Databricks; positional vectors are rejected.
+Weights are validated on the source before subsetting.}
+
+\item{offset}{Optional numeric column name or one-sided formula such as \code{~o},
+added to the predictor with coefficient one. Estimation uses outcome minus
+offset. Rows with nonfinite outcome, offset or adjusted difference are
+excluded. Supports DuckDB/native Databricks. Prediction requires newdata
+containing the offset; intervals condition on its known value.}
+
+\item{diagnostics}{Logical. Run an additional source aggregate for input,
+subset-selected, missing-by-role, nonpositive-weight and invalid-offset
+counts? Default is \code{FALSE}. Counts may overlap. Fitted objects return
+\code{sample_diagnostics} and \code{nobs_input}; inspection modes skip the audit.}
+
+\item{row_id}{Optional character vector of unique, nonmissing source key
+columns. Keys are validated before subset/missing/weight filtering, using
+native SQL tuples; no key values are collected for validation.}
+
+\item{sample_table}{Optional new temporary table receiving the fitted source
+keys. Requires \code{row_id} and a caller-owned connection (including inference
+from a lazy table). DuckDB/native Databricks exports use an owned snapshot
+for consistent fitting and keys. Existing relations are never replaced.
+The caller owns the export; private intermediates are cleaned on errors
+and success. Unacknowledged cleanup remains queued for synchronous retry.
+Cannot be combined with \code{sql_only} or \code{data_only}.}
+
+\item{...}{Backward-compatible aliases (\code{endog}, \code{instruments}). Other unused
+arguments raise an error before accessing a source.}
 }
 \value{
 A list of class \code{"dbivreg"} and \code{"dbreg"}.
@@ -144,3 +158,17 @@ Multi-way fixed effects use exact alternating projections when there are
 more than two fixed effects, or when two-way fixed effects are unbalanced or
 weights are supplied.
 }
+\section{Sample audits}{
+
+With \code{diagnostics = TRUE}, \code{sample_diagnostics} reports original source rows
+(\code{n_input}), subset-selected rows (\code{n_selected}), final original observations
+(\code{n_fitted}) and their difference (\code{n_dropped}). \code{detail} gives missing counts
+by public source role before filtering; DuckDB/Spark numeric NaNs are missing.
+Nonpositive-weight and invalid-offset counts also refer to the original
+source. An invalid offset has a nonfinite operand or adjusted difference.
+These counts overlap and cannot be added to reconstruct the fitted count.
+\code{query_string} reproduces the source aggregate, with columns mapped by
+\code{count_aliases}. Only metadata and counts are collected. Without an audit,
+\code{nobs_input} is \code{NA}; \code{sql_only} and \code{data_only} skip auditing.
+}
+

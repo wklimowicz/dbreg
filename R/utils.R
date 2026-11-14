@@ -830,14 +830,6 @@ sql_cast_double = function(sql, conn) {
   sprintf("CAST(%s AS %s)", sql, type)
 }
 
-#' Format a numeric vector as full-precision SQL numeric literals
-#' @keywords internal
-sql_number = function(x) {
-  out = sprintf("%.17g", as.numeric(x))
-  out[!grepl("[.eE]", out, perl = TRUE)] = paste0(out[!grepl("[.eE]", out, perl = TRUE)], ".0")
-  out
-}
-
 #' Generate SQL COUNT expression with proper casting
 #' 
 #' Returns an aliased COUNT expression that handles:

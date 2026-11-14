@@ -218,33 +218,13 @@ frame_moments_sql = function(frame, y, x, conn) {
   variables = c(x, y)
   fields = paste0("dbreg_moment_center_", seq_along(variables))
   w = frame[["weights_expr"]]
-  rank_sql = rank_join = ""
-  rank_terms = character()
-  if (length(x) && !is.null(frame[["rank_values"]])) {
-    original = sql_cast_double(sprintf("%.17e", unname(frame[["rank_values"]][x])), conn)
-    rank_terms = sprintf("MAX(%s) AS dbreg_moment_original_%d", original, seq_along(x))
-  } else if (length(x) && !is.null(frame[["rank_columns"]])) {
-    if (!is.null(frame[["rank_cte"]])) {
-      rank_terms = sprintf("(SELECT MAX(%s) FROM %s) AS dbreg_moment_original_%d",
-        sql_cast_double(unname(frame[["rank_columns"]][x]), conn), frame[["rank_cte"]], seq_along(x))
-    } else {
-      rank_terms = sprintf("MAX(%s) AS dbreg_moment_original_%d",
-        sql_cast_double(unname(frame[["rank_columns"]][x]), conn), seq_along(x))
-    }
-  } else if (length(x) && !is.null(frame[["rank_source"]])) {
-    rank_fields = paste0("dbreg_moment_original_", seq_along(x))
-    rank_cte = moment_sql_names("dbreg_original", frame[["cte_sql"]], conn)[[1L]]
-    rank_sql = paste0(",\n", rank_cte, " AS (SELECT ",
-      paste(sprintf("(MAX(%s)/2-MIN(%s)/2) AS %s", sql_cast_double(x, conn), sql_cast_double(x, conn), rank_fields), collapse = ","),
-      " FROM ", frame[["rank_source"]], ")")
-    rank_terms = paste0("MAX(", rank_fields, ") AS ", rank_fields)
-    rank_join = paste0(" CROSS JOIN ", rank_cte)
-  }
-  private = moment_sql_names(c("dbreg_moment_location", fields, "dbreg_moment_weight_scale"),
-    frame[["cte_sql"]], conn)
+  private = moment_sql_names(c("dbreg_moment_location", fields, "dbreg_moment_weight_scale",
+    "dbreg_moment_original", paste0("dbreg_moment_original_", seq_along(x))), frame[["cte_sql"]], conn)
   location_name = private[[1L]]
-  centers = private[seq_along(variables) + 1L]
-  weight_field = private[[length(variables) + 2L]]
+  centers = private[seq_along(variables)+1L]
+  weight_field = private[[length(variables)+2L]]
+  original_name = private[[length(variables)+3L]]
+  original_fields = utils::tail(private, length(x))
   center_terms = if (isTRUE(frame[["intercept"]])) paste0("MIN(", vapply(variables, col, character(1)), ")/2+MAX(", vapply(variables, col, character(1)), ")/2") else rep("MAX(0.0)", length(variables))
   scale = if (is.null(w)) "MAX(1.0)" else paste0("MAX(", sql_cast_double(w, conn), ")")
   stats = paste0(",\n", location_name, " AS (SELECT ", paste(c(paste(center_terms, "AS", centers),
@@ -260,7 +240,26 @@ frame_moments_sql = function(frame, y, x, conn) {
     centered = setNames(vapply(variables, col, character(1)), variables)
     location_terms = c(paste0("MAX(0.0) AS ", fields), "MAX(1.0) AS dbreg_moment_weight_scale")
   }
-
+  rank_terms = character()
+  rank_join = ""
+  rank_labels = paste0("dbreg_moment_original_", seq_along(x))
+  if (length(x) && !is.null(frame[["rank_values"]])) {
+    original = sql_cast_double(sprintf("%.17e", unname(frame[["rank_values"]][x])), conn)
+    rank_terms = paste0("MAX(", original, ") AS ", rank_labels)
+  } else if (length(x) && !is.null(frame[["rank_columns"]])) {
+    if (!is.null(frame[["rank_cte"]])) {
+      rank_terms = paste0("(SELECT MAX(", sql_cast_double(unname(frame[["rank_columns"]][x]), conn),
+        ") FROM ", frame[["rank_cte"]], ") AS ", rank_labels)
+    } else {
+      rank_terms = paste0("MAX(", sql_cast_double(unname(frame[["rank_columns"]][x]), conn), ") AS ", rank_labels)
+    }
+  } else if (length(x) && !is.null(frame[["rank_source"]])) {
+    values = sql_cast_double(x, conn)
+    stats = paste0(stats, ",\n", original_name, " AS (SELECT ", paste(paste0("(MAX(",
+      values, ")/2-MIN(", values, ")/2) AS ", original_fields), collapse = ","), " FROM ", frame[["rank_source"]], ")")
+    rank_terms = paste0("MAX(", original_fields, ") AS ", rank_labels)
+    rank_join = paste(" CROSS JOIN", original_name)
+  }
   terms = build_weighted_moment_terms(conn = conn, y_sql = centered[[y]], x_sql = unname(centered[x]),
     weights_expr = if (!is.null(w)) paste0("(", sql_cast_double(w, conn), ")",
       if (!fe_frame || isTRUE(frame[["intercept"]])) paste0("/", weight_field)),
@@ -271,8 +270,7 @@ frame_moments_sql = function(frame, y, x, conn) {
     location_terms = c(location_terms, paste0("MAX(", sql_cast_double(origins, conn),
       ") AS dbreg_moment_origin_", seq_along(variables)))
   }
-  paste0(frame[["cte_sql"]], rank_sql, stats, ",\nmoments AS (SELECT ",
-    paste(c(terms, location_terms, rank_terms), collapse = ",\n"), " FROM ", frame[["cte_name"]],
-    rank_join, location_join, ") SELECT * FROM moments")
+  paste0(frame[["cte_sql"]], stats, ",\nmoments AS (SELECT ",
+    paste(c(terms, rank_terms, location_terms), collapse = ",\n"), " FROM ", frame[["cte_name"]],
+    location_join, rank_join, ") SELECT * FROM moments")
 }
-

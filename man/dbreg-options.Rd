@@ -12,114 +12,62 @@ e.g. \code{options(dbreg.verbose = TRUE)}.
 \itemize{
 \item \code{dbreg.verbose}: Default for the \code{verbose} argument of \code{\link[=dbreg]{dbreg()}},
 \code{\link[=dbivreg]{dbivreg()}} and \code{\link[=dbbinsreg]{dbbinsreg()}}. Default \code{FALSE}.
+\item \code{dbreg.i_max_columns}: Positive whole-number cap on expanded \code{i()}
+columns; default \code{1000}.
+\item \code{dbreg.prediction_max_entries}: Positive entry budget for portable
+learned-effect dictionaries kept in R (\code{retain = "prediction"} or
+\code{"all"}); default \code{2e6}. Oversized one- or two-family additive
+dictionaries may remain in the active database session.
 }
 }
 
 \section{Alternating projections}{
 
 Alternating projections (AP) recover exact fixed effects when the
-\code{"demean"} strategy can't demean analytically, e.g. for unbalanced or
+\code{"demean"} strategy cannot demean analytically, e.g. for unbalanced or
 weighted two-way FE, or three or more FE. Used by \code{\link[=dbreg]{dbreg()}} and \code{\link[=dbivreg]{dbivreg()}}.
-
-DuckDB and native Databricks first try bounded FE marginal/pair summaries
-with a shared Schur solve. Original typed keys stay in SQL. Reconstructed
-rows must satisfy the same absolute/relative group equations, finite-value
-and row-count checks as the iterative path. Capacity/numerical declines are
-reported in \code{projection_diagnostics}; unexpected database failures propagate.
 \itemize{
-\item \code{dbreg.ap_solver}: \code{"auto"} (default), \code{"moments"} or \code{"iterative"}.
-Eligible additive FE OLS/IV fits use sufficient-statistic FWL over one
-owned source snapshot, keeping transformed observations inline. Global
-cross-products share the transfer/memory caps; near-absorption cancellation
-triggers an actual projected-product aggregate. Numerical/capacity declines
-retain ordinary AP fallback and the unchanged row certificates.
-Auto tries bounded moments unless \code{dbreg.ap_method} or the DuckDB method
-below is explicitly set.
-For DuckDB with three or more FE families, auto next tries coefficient-space
-SQL CG after a bounded-moment decline. FE vectors stay in SQL and R reads
-only bounded scalar diagnostics. Databricks additive fits retain ordinary
-window AP fallback. Explicit moments/iterative/method choices keep their
-existing policy. SQL CG also covers more than 30 FE families.
-Moments also tries them with an explicit method; an expected decline uses
-iterative AP. Iterative bypasses the bounded solver. SQL-only output shows
-the equivalent ordinary AP plan.
-\item \code{dbreg.duckdb_ap_method}: DuckDB-specific \code{"join"} (default) or
-\code{"cg"}. Explicit join selects ordinary AP. Explicit cg for two additive
-FE families tries the shared bounded sparse Schur PCG solver before AP,
-including with ap_solver="iterative"; ap_solver="moments" takes precedence.
-Auto also tries this representation after a two-family moment decline.
-It honors all canonical cross-block/transfer/design/memory/upload caps,
-keeps typed keys in SQL, and retains the same independent row certificate.
-Each PCG solve uses the per-fit fe_max_iter budget; reported inner work
-includes refinement solves. Expected declines retain ordinary AP fallback.
-Other backends ignore this DuckDB-specific option.
-\item \code{dbreg.cg_max_iter}: Maximum inner SQL CG iterations; default 10000.
-\item \code{dbreg.cg_restart}: Recompute and restart the coefficient-space direction
-every this many inner iterations; default 500. Both CG options must be
-positive whole numbers. These inner controls are separate from per-fit
-\code{fe_max_iter}/ordinary AP cycles. Reported solver iterations are actual CG
-work, including retries; restarts and peak live owned tables are recorded.
-CG rows must pass the unchanged absolute/RMS, finite and count certificate.
-\item \code{dbreg.projection_max_bytes}: Planned matrix/buffer budget; default 1 GiB.
-This bounds representations and allocations, not process peak RSS.
-\item \code{dbreg.projection_max_rows}: Cumulative marginal/pair summary rows or CG diagnostic rows;
-default \code{floor(dbreg.projection_max_bytes / 512)}.
-\item \code{dbreg.projection_max_entries}: FE-level by design entries; default 2e6.
-\item \code{dbreg.projection_max_cells}: Cumulative decoded scalar cells, including
-overflow probes or CG scalar diagnostics; default 16e6. SQL LIMIT probes
-enforce summary caps; CG reserves diagnostics before query dispatch.
-\item \code{dbreg.projection_max_upload_bytes}: Coefficient SQL byte budget;
-default 8 MiB, also bounded by one eighth of the matrix/buffer budget.
-\item \code{dbreg.databricks_packet_bytes}: Target uncompressed summary packet bytes;
-default 20000, whole numbers from 1 to 32000. Small-entry packets stay
-below twice the target. Larger entries get individual packets; entries
-at or above 65535 bytes signal a capacity decline before ODBC transfer.
-Server byte/count metadata detects truncation, including a lost final
-numeric digit. Malformed/truncated packets fail instead of fitting.
-\item \code{dbreg.fe_dense_max}: Non-absorbed FE levels permitted in a dense Schur
-system; default 4096. Larger two-family systems try bounded Schur PCG.
-\item \code{dbreg.fe_cross_max}: Cross-block/fill entry limit; default 5e7.
-Dense/cross limits may be zero; other limits must be positive integers.
-Legacy aliases \code{dbreg.duckdb_ap_max_edges}, \code{dbreg.duckdb_ap_max_entries},
-\code{dbreg.ap_moment_max_cells}, \code{dbreg.glm_fe_dense_max} and
-\code{dbreg.glm_fe_cross_max} are accepted, respectively, when their canonical
-options are unset.
+\item \code{dbreg.ap_solver}: \code{"auto"} (default), \code{"moments"}, or \code{"iterative"}.
+\code{"auto"} tries bounded sufficient-statistic FE projection first on DuckDB
+and native Databricks, falling back to iterative AP (or SQL CG on DuckDB)
+when a fit exceeds internal capacity limits.
+\item \code{dbreg.ap_accelerate}: Use Irons-Tuck extrapolation after two AP cycles.
+Default \code{TRUE}. Set to \code{FALSE} for plain alternating projections.
+\item \code{dbreg.ap_max_iter}: Maximum number of AP cycles. Default \code{100}.
+\item \code{dbreg.ap_tol}: Convergence tolerance for the largest absolute and
+relative (weighted) group mean. Default \code{1e-10}. Large datasets may
+benefit from a looser tolerance (e.g. \code{1e-7}).
+\item \code{dbreg.ap_method}: How each iterative AP cycle is computed in SQL:
+\code{"join"} writes group means to a table and joins them back, while
+\code{"window"} chains cycles using window functions. Default \code{"window"} on
+Spark/Databricks and \code{"join"} elsewhere.
+\item \code{dbreg.ap_batch_size}: Number of cycles per table write for
+\code{"window"}. Default \code{3}.
+}
 }
 
-FE marginals and pairs share one summary statement. DuckDB transports
-compact list columns; native Databricks transports bounded uncompressed
-packets and uploads coefficients as numeric JSON rows. Original typed
-source keys stay in SQL. \code{ap_transport}, \code{ap_summary_statements},
-\code{ap_wire_rows} and (for packets) \code{ap_wire_bytes} describe the representation;
-logical transfer limits still apply to decoded values, not just wire rows.
+\section{Fixed-effect projection & SQL CG}{
 
-Successful bounded fits report \code{ap_method="bounded_moments"}, row/cell/
-upload counts, planned bytes and the solver used. \code{ap_iterations} counts
-solve/refinement steps, capped by \code{fe_max_iter} and eight steps. Inner PCG
-has a separate 2,000-iteration cap per solve and reports total iterations
-and its preconditioner. Explicit methods preserve ordinary AP cycle counts.
+Bounded fixed-effect projection and coefficient-space SQL conjugate gradient
+(CG) solvers respect additional tuning and resource-budget options:
 \itemize{
-\item \code{dbreg.ap_accelerate}: Use Irons-Tuck extrapolation after two AP cycles.
-Default \code{TRUE}. The same absolute/relative certificate applies; a step
-that does not reduce the residual is followed by plain AP. \code{FALSE} restores
-ordinary AP. Fitted objects report \code{ap_iterations}, \code{ap_accelerated_steps},
-\code{ap_max_abs}, \code{ap_max_relative} and \code{ap_method} when iterative AP is used.
-Iterations count projection cycles, including two per extrapolation.
-\item \code{dbreg.ap_max_iter}: Maximum number of AP cycles. Default \code{100}.
-\item \code{dbreg.ap_tol}: Convergence tolerance for both the largest absolute
-(weighted) group mean and that mean relative to each projected column's
-weighted RMS. Columns below original-scale floating-point roundoff are
-treated as absorbed. Default \code{1e-10}. The relative check prevents a small
-but unfinished FE-only column from appearing identified after rescaling.
-Large datasets may need a looser tolerance (e.g. \code{1e-7}).
-\item \code{dbreg.ap_method}: How each AP cycle is computed in SQL. \code{"join"} writes
-group means to a table and joins them back, once per fixed effect.
-\code{"window"} uses window functions instead, chaining several cycles into a
-single table write. Default \code{"window"} on Spark/Databricks, where each
-table write is costly, and \code{"join"} elsewhere.
-\item \code{dbreg.ap_batch_size}: Number of cycles per table write for
-\code{"window"}. Convergence is checked after each batch, so up to
-\code{dbreg.ap_batch_size - 1} extra cycles may run. Default \code{3}.
+\item \code{dbreg.cg_max_iter}: Maximum inner SQL CG iterations (also the default for
+\code{dbglm_control(fe_max_iter = ...)}). Default \code{10000L}.
+\item \code{dbreg.cg_restart}: Restart interval for SQL CG iterations. Default \code{500L}.
+\item \code{dbreg.databricks_packet_bytes}: Target byte size for packetized Databricks
+ODBC fixed-effect summary transport (1 to 32000). Default \code{20000L}.
+\item \code{dbreg.projection_max_bytes}: Memory budget in bytes for bounded FE
+projection structures. Default \code{1024^3} (1 GiB).
+\item \code{dbreg.projection_max_rows}: Maximum summary rows transferred from SQL.
+\item \code{dbreg.projection_max_entries}: Maximum dense FE design entries (\code{2e6}).
+\item \code{dbreg.projection_max_cells}: Maximum scalar summary cells transferred
+(\code{16e6}).
+\item \code{dbreg.projection_max_upload_bytes}: Maximum byte size for uploaded FE
+coefficient lookup statements (\code{8 * 1024^2}).
+\item \code{dbreg.fe_dense_max}: Maximum number of levels for dense Schur elimination
+(\code{4096}).
+\item \code{dbreg.fe_cross_max}: Maximum cross-block entries in bounded FE systems
+(\code{5e7}).
 }
 }
 

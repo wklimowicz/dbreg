@@ -69,25 +69,51 @@
 #'   metadata as described in [dbreg()].
 #' @param drop_missings Logical indicating whether incomplete cases should be
 #'   dropped.
-#' @param verbose Logical indicating whether progress messages are printed.
-#' @param subset Optional logical column name or restricted one-sided predicate
-#'   formula, evaluated before missing-value/weight filtering. See [dbreg()].
-#' @param offset Optional numeric column name or one-sided formula, added to
-#'   the predictor with coefficient one. See [dbreg()].
-#' @param diagnostics Logical indicating whether to run an additional source
-#'   audit aggregate. See [dbreg()].
 #' @param row_id Optional character vector of unique, nonmissing source key
-#'   columns. See [dbreg()].
+#'   columns. Keys are validated before subset/missing/weight filtering, using
+#'   native SQL tuples; no key values are collected for validation.
 #' @param sample_table Optional new temporary table receiving the fitted source
-#'   keys. See [dbreg()].
+#'   keys. Requires `row_id` and a caller-owned connection (including inference
+#'   from a lazy table). DuckDB/native Databricks exports use an owned snapshot
+#'   for consistent fitting and keys. Existing relations are never replaced.
+#'   The caller owns the export; private intermediates are cleaned on errors
+#'   and success. Unacknowledged cleanup remains queued for synchronous retry.
+#'   Cannot be combined with `sql_only` or `data_only`.
+#' @param diagnostics Logical. Run an additional source aggregate for input,
+#'   subset-selected, missing-by-role, nonpositive-weight and invalid-offset
+#'   counts? Default is `FALSE`. Counts may overlap. Fitted objects return
+#'   `sample_diagnostics` and `nobs_input`; inspection modes skip the audit.
+#' @param offset Optional numeric column name or one-sided formula such as `~o`,
+#'   added to the predictor with coefficient one. Estimation uses outcome minus
+#'   offset. Rows with nonfinite outcome, offset or adjusted difference are
+#'   excluded. Supports DuckDB/native Databricks. Prediction requires newdata
+#'   containing the offset; intervals condition on its known value.
+#' @param subset Optional logical column name or restricted one-sided predicate
+#'   formula, evaluated before missing-value/weight filtering. Supports column
+#'   comparisons, arithmetic, boolean operators, `is.na()` and literal `%in%`.
+#'   Supports DuckDB and native Databricks; positional vectors are rejected.
+#'   Weights are validated on the source before subsetting.
+#' @param verbose Logical indicating whether progress messages are printed.
 #' @param fe_tol Positive per-fit tolerance for fixed-effect projection. Defaults
 #'   to `getOption("dbreg.ap_tol", 1e-10)` without changing that option.
 #' @param fe_max_iter Positive maximum AP cycles or bounded solve/refinement
 #'   steps for this fit. Defaults to `getOption("dbreg.ap_max_iter", 100L)`
 #'   without changing it. Bounded refinement uses at most eight steps; inner
 #'   PCG has a separate cap. See [dbreg-options].
-#' @param ... Only the superseded `query_only` alias is accepted. Other unused
-#'   requests raise an error before accessing a source.
+#' @param ... Backward-compatible aliases (`endog`, `instruments`). Other unused
+#'   arguments raise an error before accessing a source.
+#'
+#' @section Sample audits:
+#' With `diagnostics = TRUE`, `sample_diagnostics` reports original source rows
+#' (`n_input`), subset-selected rows (`n_selected`), final original observations
+#' (`n_fitted`) and their difference (`n_dropped`). `detail` gives missing counts
+#' by public source role before filtering; DuckDB/Spark numeric NaNs are missing.
+#' Nonpositive-weight and invalid-offset counts also refer to the original
+#' source. An invalid offset has a nonfinite operand or adjusted difference.
+#' These counts overlap and cannot be added to reconstruct the fitted count.
+#' `query_string` reproduces the source aggregate, with columns mapped by
+#' `count_aliases`. Only metadata and counts are collected. Without an audit,
+#' `nobs_input` is `NA`; `sql_only` and `data_only` skip auditing.
 #'
 #' @return A list of class `"dbivreg"` and `"dbreg"`.
 #' @export
@@ -108,15 +134,17 @@ dbivreg = function(
   data_only = FALSE,
   drop_missings = TRUE,
   verbose = getOption("dbreg.verbose", FALSE),
+  fe_tol = getOption("dbreg.ap_tol", 1e-10),
+  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   subset = NULL,
   offset = NULL,
   diagnostics = FALSE,
   row_id = NULL,
   sample_table = NULL,
-  fe_tol = getOption("dbreg.ap_tol", 1e-10),
-  fe_max_iter = getOption("dbreg.ap_max_iter", 100L),
   ...
 ) {
+  # Retired IV names keep the dedicated rejection below.
+  check_unused_args(list(...), c("endog", "instruments"))
   source = normalize_data_source(table, data, path)
   table = source[["table"]]
   data = source[["data"]]
@@ -802,7 +830,7 @@ dbivreg_parse_formula = function(fml) {
 }
 
 #' Expands the right-hand side of the structural formula into SQL expressions for the design matrix, including fixed effects if specified.
-#' @keywords internal
+#' @noRd
 dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(), intercept = TRUE, reserved_names = character()) {
   if (is.null(fe_vars)) {
     fe_vars = character()
@@ -841,10 +869,10 @@ dbivreg_expand_block = function(rhs_formula, conn, table, fe_vars = character(),
 #' Identical requested targets and constructed SQL share a target. `i()`
 #' expressions retain their common cross-block identity. Other distinct declared
 #' targets stay distinct even when their SQL agrees, preserving rank checks.
-#' @param designs List of [dbivreg_expand_block()] results.
+#' @param designs List of `dbivreg_expand_block()` results.
 #' @param reserved_names Source-role names projected beside the designs.
 #' @param fold_case Whether target names fold identifier case.
-#' @keywords internal
+#' @noRd
 dbivreg_shared_aliases = function(designs, reserved_names = character(), fold_case = FALSE) {
   is_i = lapply(designs, function(d) which(vapply(d[["columns"]][["recipe"]], function(recipe) identical(recipe[["kind"]], "i"), logical(1))))
   generated = lapply(designs, function(d) which(vapply(d[["columns"]][["recipe"]], function(recipe) !recipe[["kind"]] %in% c("raw", "numeric"), logical(1))))
@@ -1039,8 +1067,7 @@ dbivreg_diag_unavailable = function(what, e) {
 #'
 #' @md
 #' @param x A `dbivreg` object.
-#' @param ... Only the superseded `query_only` alias is accepted. Other unused
-#'   requests raise an error before accessing a source.
+#' @param ... Additional unused arguments.
 #' @export
 print.dbivreg = function(x, ...) {
   ct = x[["coeftable"]]

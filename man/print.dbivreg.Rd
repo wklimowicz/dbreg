@@ -9,8 +9,7 @@
 \arguments{
 \item{x}{A \code{dbivreg} object.}
 
-\item{...}{Only the superseded \code{query_only} alias is accepted. Other unused
-requests raise an error before accessing a source.}
+\item{...}{Additional unused arguments.}
 }
 \description{
 Print method for \code{dbivreg} objects

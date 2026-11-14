@@ -75,7 +75,6 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
   )
   y = yvar
   vars = c(y, x_names)
-  w_base = sql_weight_expr(weights)
 
   use_ap = length(fe) > 2
   if (length(fe) == 2) {
@@ -111,43 +110,60 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
     weights_expr = "__w"
   } else {
     # Analytic demeaning: subtract group means for each FE (and add back the
-    # overall mean for two-way panels)
-    means = function(alias, suffix, group = NULL) {
-      cols = vapply(vars, function(v) sql_weighted_mean(v, w_base, paste0(v, suffix)), character(1))
+    # overall mean for two-way panels).
+    keys = if (!is.null(inputs[["retained_original"]])) inputs[["row_id_safe"]]
+    sel = frame_select(y, x_sql, x_names, id_cols = fe, extra = c(weights, cluster_var, keys))
+    base_sql = paste0("SELECT ", paste(sel, collapse = ", "), " ", from_statement)
+    centered = function(v, prefix = "b.") sql_cast_double(paste0(prefix, v), conn)
+    local_from = "base b"
+    # Demeaning roundoff scales with the raw magnitudes, so collinearity is
+    # judged against the largest absolute value, read off the same GROUP BY
+    # as the means and carried through the existing join (no extra scan).
+    first = if (length(fe) == 1) "gm" else "um"
+    rank_names = if (length(x_names)) setNames(safe_identifiers(paste0(x_names, "_half"),
+      taken = c(fe, keys, cluster_var, weights, paste0(vars, "_tilde"))), x_names) else NULL
+    analytic_weights = if (is.null(weights)) NULL else sql_weight_expr(paste0("b.", weights))
+    means = function(alias, suffix, group = NULL, ranges = FALSE) {
+      cols = vapply(vars, function(v) sql_weighted_mean(centered(v), analytic_weights, paste0(v, suffix)), character(1))
+      if (ranges && length(x_names)) cols = c(cols, paste0("MAX(ABS(", centered(x_names), ")) AS ", rank_names))
       sprintf(
-        "%s AS (SELECT %s FROM base%s)",
+        "%s AS (SELECT %s FROM %s%s)",
         alias,
-        paste(c(group, cols), collapse = ", "),
-        if (is.null(group)) "" else paste0(" GROUP BY ", group)
+        paste(c(if (length(group)) paste0("b.", group), cols), collapse = ", "),
+        local_from,
+        if (is.null(group)) "" else paste0(" GROUP BY b.", group)
       )
     }
     if (length(fe) == 1) {
-      mean_ctes = means("group_means", "_mean", fe[1])
-      tilde = sprintf("(b.%s - gm.%s_mean) AS %s_tilde", vars, vars, vars)
+      mean_ctes = means("group_means", "_mean", fe[1], ranges = TRUE)
+      tilde = sprintf("(%s - gm.%s_mean) AS %s_tilde", centered(vars, "b."), vars, vars)
       joins = sprintf("JOIN group_means gm ON b.%s = gm.%s", fe[1], fe[1])
     } else {
       mean_ctes = c(
-        means("unit_means", "_u", fe[1]),
+        means("unit_means", "_u", fe[1], ranges = TRUE),
         means("time_means", "_t", fe[2]),
         means("overall", "_o")
       )
-      tilde = sprintf("(b.%s - um.%s_u - tm.%s_t + o.%s_o) AS %s_tilde", vars, vars, vars, vars, vars)
+      tilde = sprintf("(%s - um.%s_u - tm.%s_t + o.%s_o) AS %s_tilde", centered(vars, "b."), vars, vars, vars, vars)
       joins = c(
         sprintf("JOIN unit_means um ON b.%s = um.%s", fe[1], fe[1]),
         sprintf("JOIN time_means tm ON b.%s = tm.%s", fe[2], fe[2]),
         "CROSS JOIN overall o"
       )
     }
+    weight_alias = safe_identifiers("weights", taken = c(fe, keys, cluster_var))
     passthrough = c(
       if (!is.null(weights)) sprintf("b.%s AS weights", weights),
       if (!is.null(cluster_var) && !cluster_var %in% fe) sprintf("b.%s AS %s", cluster_var, cluster_var)
     )
-    sel = frame_select(y, x_sql, x_names, id_cols = fe, extra = c(weights, cluster_var))
+    if (length(x_names)) passthrough = c(passthrough, paste0(first, ".", rank_names))
+    key_columns = setdiff(keys, c(fe, cluster_var))
+    if (length(key_columns)) passthrough = c(passthrough, paste0("b.", key_columns))
     cte_sql = paste0(
-      "WITH base AS (\n  SELECT ", paste(sel, collapse = ", "), " ", from_statement, "\n),\n",
+      "WITH base AS (\n  ", base_sql, "\n),\n",
       paste(mean_ctes, collapse = ",\n"), ",\n",
       "demeaned AS (\n  SELECT ", paste(c(paste0("b.", fe), tilde, passthrough), collapse = ",\n    "),
-      "\n  FROM base b\n  ", paste(joins, collapse = "\n  "), "\n)"
+      "\n  FROM ", local_from, "\n  ", paste(joins, collapse = "\n  "), "\n)"
     )
     weights_expr = if (is.null(weights)) NULL else sql_weight_expr("weights")
   }
@@ -173,7 +189,8 @@ build_demean_frame = function(inputs, x_sql, x_names, tag = "dbreg") {
       fe_count_terms
     ),
     cleanup = cleanup,
-    rank_values = if (use_ap) ap_res[["original_scale"]] else NULL
+    rank_values = if (use_ap) ap_res[["original_scale"]] else NULL,
+    rank_columns = if (!use_ap && length(x_names)) rank_names else NULL
   )
 }
 
@@ -196,6 +213,9 @@ frame_moments_sql = function(frame, y, x, conn) {
   if (length(x) && !is.null(frame[["rank_values"]])) {
     original = sql_cast_double(sprintf("%.17g", unname(frame[["rank_values"]][x])), conn)
     rank_terms = sprintf("MAX(%s) AS dbreg_moment_original_%d", original, seq_along(x))
+  } else if (length(x) && !is.null(frame[["rank_columns"]])) {
+    rank_terms = sprintf("MAX(%s) AS dbreg_moment_original_%d",
+      sql_cast_double(unname(frame[["rank_columns"]][x]), conn), seq_along(x))
   } else if (length(x) && !is.null(frame[["rank_source"]])) {
     rank_fields = paste0("dbreg_moment_original_", seq_along(x))
     rank_cte = moment_sql_names("dbreg_original", frame[["cte_sql"]], conn)[[1L]]
@@ -217,7 +237,9 @@ frame_moments_sql = function(frame, y, x, conn) {
   centered = setNames(paste0("(", vapply(variables, col, character(1)), "-", centers, ")"), variables)
   location_join = paste(" CROSS JOIN", location_name)
   location_terms = paste0("MAX(", c(centers, weight_field), ") AS ", c(fields, "dbreg_moment_weight_scale"))
-  if (!isTRUE(frame[["intercept"]]) && is.null(w)) {
+  # Weight rescaling only guards overflow; demeaned FE frames use the stored weights.
+  fe_frame = identical(frame[["cte_name"]], "demeaned")
+  if (!isTRUE(frame[["intercept"]]) && (is.null(w) || fe_frame)) {
     stats = ""
     location_join = ""
     centered = setNames(vapply(variables, col, character(1)), variables)
@@ -225,8 +247,15 @@ frame_moments_sql = function(frame, y, x, conn) {
   }
 
   terms = build_weighted_moment_terms(conn = conn, y_sql = centered[[y]], x_sql = unname(centered[x]),
-    weights_expr = if (!is.null(w)) paste0("(", sql_cast_double(w, conn), ")/", weight_field),
+    weights_expr = if (!is.null(w)) paste0("(", sql_cast_double(w, conn), ")",
+      if (!fe_frame || isTRUE(frame[["intercept"]])) paste0("/", weight_field)),
     intercept = frame[["intercept"]], prefix_terms = frame[["prefix_terms"]])
+  if (length(frame[["origins"]])) {
+    origins = setNames(rep("0.0", length(variables)), variables)
+    origins[names(frame[["origins"]])] = frame[["origins"]]
+    location_terms = c(location_terms, paste0("MAX(", sql_cast_double(origins, conn),
+      ") AS dbreg_moment_origin_", seq_along(variables)))
+  }
   paste0(frame[["cte_sql"]], rank_sql, stats, ",\nmoments AS (SELECT ",
     paste(c(terms, location_terms, rank_terms), collapse = ",\n"), " FROM ", frame[["cte_name"]],
     rank_join, location_join, ") SELECT * FROM moments")

@@ -415,8 +415,10 @@ linear_recipe_value = function(recipe, data, dictionaries = list(), weights = NU
     )
   }
   if (kind == "mean") {
+    value = linear_recipe_value(recipe[["source"]], data, dictionaries, weights)
+    if (!is.null(recipe[["center"]])) value = value - recipe[["center"]]
     return(weighted_group_mean(
-      linear_recipe_value(recipe[["source"]], data, dictionaries, weights),
+      value,
       column(variable), weights
     ))
   }

@@ -254,8 +254,16 @@ predict.dbreg = function(
     }
   }
 
+  # Predict in the fitted moment coordinates, avoiding large
+  # intercept/slope cancellation when the raw origins are large.
+  prediction_coordinates = object[["prediction_coordinates"]]
+  if (!is.null(prediction_coordinates)) {
+    mm = center_compressed_design(mm, prediction_coordinates[["centers"]])
+    betas = prediction_coordinates[["beta"]]
+  }
   # Generate predictions
   fit = as.vector(mm %*% betas)
+  if (!is.null(prediction_coordinates)) fit = fit + prediction_coordinates[["y_center"]]
   if (strategy == "demean") {
     fit = fit + y_group_mean
   }
@@ -264,6 +272,7 @@ predict.dbreg = function(
   if (!is.null(invalid_rows)) fit[invalid_rows] = NA_real_
   if (interval != "none") {
     vcovm = vcov(object, fe = TRUE)
+    if (!is.null(prediction_coordinates)) vcovm = prediction_coordinates[["covariance"]]
     dof = object[["df_residual"]]
     if (interval == "confidence") {
       ses = sqrt(Matrix::rowSums((mm %*% vcovm) * mm))

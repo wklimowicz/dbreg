@@ -54,6 +54,10 @@ cross_moments = function(moment_df, vars, y, intercept = TRUE) {
     S[absorbed, ] = 0
     S[, absorbed] = 0
   }
+  origins = paste0("dbreg_moment_origin_", seq_along(c(vars, y)))
+  if (all(origins %in% names(moment_df))) {
+    attr(S, "origins") = setNames(vapply(origins, function(name) moment_df[[name]], numeric(1)), c(vars, y))
+  }
   S
 }
 
@@ -261,6 +265,8 @@ moment_coordinates = function(S, names) {
   A = diag(length(names))
   dimnames(A) = list(names, names)
   centers = attr(S, "centers")
+  origins = attr(S, "origins")
+  if (!is.null(centers) && !is.null(origins)) centers = centers + origins[names(centers)]
   if ("(Intercept)" %in% names && !is.null(centers)) {
     slopes = setdiff(names, "(Intercept)")
     A["(Intercept)", slopes] = -centers[slopes]
@@ -273,6 +279,8 @@ restore_moment_fit = function(fit, S, y) {
   scale = attr(S, "weight_scale")
   if (is.null(scale)) scale = 1
   fit[["moment_coef"]] = fit[["coef"]]
+  fit[["moment_transform"]] = A
+  fit[["moment_bread"]] = fit[["bread"]] / scale
   fit[["centers"]] = attr(S, "centers")
   fit[["sandwich_bread"]] = (A %*% fit[["bread"]]) / scale
   fit[["coef"]] = A %*% fit[["coef"]]
@@ -282,6 +290,20 @@ restore_moment_fit = function(fit, S, y) {
   fit[["rss"]] = fit[["rss"]] * scale
   fit[["weight_scale"]] = scale
   fit
+}
+
+# Keep prediction arithmetic in the well-scaled fitting coordinates. Public
+# coefficients/covariance can have large origins even when fitted values do not.
+fit_prediction_state = function(fit, y, covariance, rss, df_res, nobs, meat = NULL) {
+  V = compute_vcov(vcov_type = attr(covariance, "type"), strategy = "moments",
+    XtX_inv = fit[["moment_bread"]], rss = rss, df_res = df_res,
+    nobs_orig = nobs, n_params = attr(covariance, "n_params"), meat = meat,
+    ssc = attr(covariance, "ssc"))
+  list(beta = as.numeric(fit[["moment_coef"]]),
+    bread = fit[["moment_bread"]], transform = fit[["moment_transform"]],
+    scales = rep(1, length(fit[["x"]])),
+    centers = unname(c("(Intercept)" = 0, fit[["centers"]])[fit[["x"]]]),
+    covariance = V, y_center = unname(fit[["centers"]][[y]]))
 }
 
 center_compressed_design = function(X, center) {

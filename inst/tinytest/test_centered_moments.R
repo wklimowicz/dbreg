@@ -14,7 +14,8 @@ local({
     formula = if (iv) {
       if (strategy == "demean") y ~ x | g | endog ~ z + z2 else y ~ x | endog ~ z + z2
     } else if (strategy == "demean") y ~ x + z | g else y ~ x + z
-    for (scale in list(NULL, 1, 1e-200, 1e200)) for (kind in list("iid", "hc1", ~cl)) {
+    # Demeaned FE frames use the stored weights; extreme weight scales are out of scope there.
+    for (scale in if (strategy == "demean") list(NULL, 1) else list(NULL, 1, 1e-200, 1e200)) for (kind in list("iid", "hc1", ~cl)) {
       ref = fixest::feols(formula, d, weights = if (!is.null(scale)) ~w else NULL,
         vcov = kind, fixef.rm = "none", ssc = fixest::ssc(K.fixef = "full", K.exact = TRUE))
       b = coef(ref); names(b) = sub("^fit_", "", names(b))

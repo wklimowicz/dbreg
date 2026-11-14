@@ -634,6 +634,7 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
   # the structural meat into coefficient space
   meats = meats_fn(c(list(fit), fs_fits), c(yvar, endog))
   meat = meats[[1]]
+  structural_meat = fit[["project_meat"]](meat)
   vcov_mat = compute_vcov(
     ssc = inputs[["ssc"]],
     vcov_type = vcov_type_req,
@@ -644,7 +645,7 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
     df_res = df_res,
     nobs_orig = n_total,
     n_params = n_params,
-    meat = fit[["project_meat"]](meat)
+    meat = structural_meat
   )
   attr(vcov_mat, "rss") = rss
   attr(vcov_mat, "tss") = tss
@@ -681,6 +682,8 @@ dbivreg_finalize_fit = function(inputs, S, n_total, n_fe_levels, meats_fn, query
     endogenous = endog_vars,
     instruments = instr_vars,
     diagnostics = iv_diagnostics,
+    prediction_coordinates = if (!n_fe) fit_prediction_state(
+      fit, yvar, vcov_mat, rss, df_res, n_total, structural_meat) else NULL,
     df_residual = df_res,
     n_fe_levels = if (n_fe > 0) n_fe_levels else NULL
   )

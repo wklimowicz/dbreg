@@ -91,6 +91,7 @@ execute_moments_strategy = function(inputs) {
     nobs = 1L,
     nobs_orig = n_total,
     strategy = "moments",
+    prediction_coordinates = fit_prediction_state(fit, yvar, vcov_mat, rss, df_res, n_total, meat),
     compression_ratio_est = compression_ratio_est,
     df_residual = df_res
   )
@@ -255,6 +256,9 @@ execute_mundlak_strategy = function(inputs) {
   weights_expr_aug = if (!is.null(weights)) sql_cast_double(weight_alias, conn)
   mean_aliases = safe_identifiers(unlist(lapply(seq_along(fe), function(k) sprintf("dbreg_bar%d_%d", k, seq_along(xvar_names)))),
     taken = c(reserved, weight_alias, scale_alias), fold_case = folds_identifier_case(conn))
+  anchors = safe_identifiers(paste0("dbreg_mundlak_center_", seq_along(xvar_names)),
+    taken = c(reserved, weight_alias, scale_alias, mean_aliases), fold_case = folds_identifier_case(conn))
+  names(anchors) = xvar_names
 
 
   # Build base CTE with expanded columns AND original xvars (for group means)
@@ -285,11 +289,11 @@ execute_mundlak_strategy = function(inputs) {
     xbar_all = c(xbar_all, xbar_k)
     means_cols = vapply(
       seq_along(xvar_names),
-      function(i) sql_weighted_mean(sql_cast_double(xvar_names[i], conn), weights_expr_base, xbar_k[i]),
+      function(i) sql_weighted_mean(paste0("(", sql_cast_double(xvar_names[i], conn), "-l.", anchors[i], ")"), weights_expr_base, xbar_k[i]),
       character(1)
     )
     cte_parts = c(cte_parts, if (length(means_cols)) {
-      sprintf("%s AS (SELECT %s, %s FROM %s%s GROUP BY %s)", mean_tables[k], fe_k, paste(means_cols, collapse = ", "), base_name, if (is.null(weights)) "" else paste(" CROSS JOIN", location_name), fe_k)
+      sprintf("%s AS (SELECT %s, %s FROM %s CROSS JOIN %s l GROUP BY %s)", mean_tables[k], fe_k, paste(means_cols, collapse = ", "), base_name, location_name, fe_k)
     } else {
       sprintf("%s AS (SELECT DISTINCT %s FROM %s)", mean_tables[k], fe_k, base_name)
     })
@@ -305,7 +309,7 @@ execute_mundlak_strategy = function(inputs) {
   if (!is.null(weights)) {
     aug_select_parts = c(aug_select_parts, sprintf("b.%s AS %s", weights, weight_alias))
   }
-  aug_select = paste(c(aug_select_parts, aug_bar_parts), collapse = ", ")
+  aug_select = paste(c(aug_select_parts, aug_bar_parts, paste0("l.", anchors)), collapse = ", ")
 
   # Display names for the means: "<coef name>_bar_<fe>"
   map = inputs[["name_map"]]
@@ -336,12 +340,15 @@ execute_mundlak_strategy = function(inputs) {
   frame = list(
     cte_sql = paste0(
       "WITH ", base_name, " AS (SELECT ", paste(unique(base_select), collapse = ", "), " ", from_statement, "),\n",
-      if (!is.null(weights)) paste0(location_name, " AS (SELECT MAX(", sql_cast_double(weights, conn), ") AS ", scale_alias, " FROM ", base_name, "),\n"),
+      location_name, " AS (SELECT ", paste(c(
+        if (!is.null(weights)) paste0("MAX(", sql_cast_double(weights, conn), ") AS ", scale_alias),
+        paste0("MIN(", sql_cast_double(xvar_names, conn), ")/2+MAX(", sql_cast_double(xvar_names, conn), ")/2 AS ", anchors)), collapse = ","), " FROM ", base_name, "),\n",
       paste(cte_parts, collapse = ",\n"), ",\n",
-      augmented_name, " AS (SELECT ", aug_select, " FROM ", base_name, " b ", paste(join_parts, collapse = " "), ")"
+      augmented_name, " AS (SELECT ", aug_select, " FROM ", base_name, " b CROSS JOIN ", location_name, " l ", paste(join_parts, collapse = " "), ")"
     ),
     cte_name = augmented_name,
     cols = setNames(c(yvar, all_regressors), c(yvar, all_regressors)),
+    origins = setNames(rep(unname(anchors), length(fe)), xbar_all),
     weights_expr = weights_expr_aug,
     intercept = TRUE,
     cast = TRUE,
@@ -370,6 +377,14 @@ execute_mundlak_strategy = function(inputs) {
   n_fe2 = if (is.null(mundlak_df[["n_fe2"]])) NULL else as.numeric(mundlak_df[["n_fe2"]])
 
   S = cross_moments(mundlak_df, all_regressors, yvar)
+  # Prediction computes the same centered group means, before restoring their
+  # raw coordinate origins for the public coefficients and covariance.
+  mean_origins = attr(S, "origins")[xbar_all]
+  mean_columns[["recipe"]] = Map(function(recipe, origin) {
+    recipe[["center"]] = origin
+    recipe
+  }, mean_columns[["recipe"]], as.list(mean_origins))
+  inputs[["design_columns"]][["recipe"]][match(xbar_all, inputs[["design_columns"]][["alias"]])] = mean_columns[["recipe"]]
   vars_all = c("(Intercept)", all_regressors)
   p = length(vars_all)
   fit = fit_ols(S, yvar, vars_all, drop_collinear = TRUE, verbose = verbose)
@@ -417,6 +432,7 @@ execute_mundlak_strategy = function(inputs) {
     compression_ratio_est = compression_ratio_est,
     df_residual = df_res,
     mundlak_means = mundlak_means,
+    prediction_coordinates = fit_prediction_state(fit, yvar, vcov_mat, rss, df_res, n_total, meat),
     n_fe1 = n_fe1,
     n_fe2 = n_fe2
   )
@@ -646,6 +662,7 @@ execute_compress_strategy = function(inputs) {
       nobs = nobs_comp,
       nobs_orig = nobs_orig,
       strategy = "compress",
+      prediction_coordinates = fit_prediction_state(fit, yvar, vcov_mat, rss_total, df_res, nobs_orig, meat),
       compression_ratio = compression_ratio,
       compression_ratio_est = compression_ratio_est,
       df_residual = df_res

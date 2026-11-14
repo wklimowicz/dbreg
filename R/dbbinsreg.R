@@ -29,7 +29,9 @@
 #' @param nbins Integer number of bins. Default is 20.
 #' @param binspos Bin positioning method. One of either `"qs"` (quantile-spaced,
 #'   equal-count bins, the default), `"es"` (evenly-spaced, equal-width bins),
-#'   or a numeric vector of knot positions for manual specification.
+#'   or a numeric vector of knot positions including both outer endpoints for
+#'   manual specification. Interior manual/equal-width boundaries define spline
+#'   knots even when there are no observations near a boundary.
 #' @param randcut Numeric in the range `(0,1]`. Controls the random sampling
 #'   fraction for bin boundary computation on large datasets. If `NULL` (the
 #'   default), then sampling is automatic: `0.01` (1%) for datasets exceeding 1
@@ -65,8 +67,6 @@
 #'   `"auto"` chooses from the SQL bin design cardinality. Fixed-effect
 #'   models use compression to keep level coefficients and joint covariance.
 #'   Spline models construct the row-level basis before fitting.
-#' @param plot Logical. If `TRUE` (default), a plot is produced as a side effect.
-#'   Set to `FALSE` to suppress plotting.
 #' @param ... Additional arguments passed to \code{\link{plot.dbbinsreg}}, which
 #'   may in turn be passed to \code{\link[tinyplot]{tinyplot}}.
 #'
@@ -123,6 +123,10 @@
 #' specify \code{nbins} manually (with a default of value of 20). For guidance
 #' on bin selection, see \code{\link[binsreg]{binsregselect}} or Cattaneo et al.
 #' (2024).
+#'
+#' Bin selection, geometry and fitting use the same complete-case sample,
+#' including controls, fixed effects and requested clustering variables.
+#' Separate point and line fits share one quantile-bin assignment.
 #'
 #' ## Smoothness constraints
 #'
@@ -298,6 +302,9 @@ dbbinsreg = function(
     points_p = 0L
     points_s = 0L
   } else if (is.numeric(points) && length(points) == 2) {
+    if (any(!is.finite(points)) || any(points < 0) || any(points != floor(points))) {
+      stop("points must be a pair of non-negative integers c(p, s)", call. = FALSE)
+    }
     points_p = as.integer(points[1])
     points_s = as.integer(points[2])
     if (points_s > points_p) {
@@ -320,6 +327,9 @@ dbbinsreg = function(
       line_p = points_p
       line_s = points_s
     } else if (is.numeric(line) && length(line) == 2) {
+      if (any(!is.finite(line)) || any(line < 0) || any(line != floor(line))) {
+        stop("line must be a pair of non-negative integers c(p, s)", call. = FALSE)
+      }
       line_p = as.integer(line[1])
       line_s = as.integer(line[2])
       if (line_s > line_p) {
@@ -340,6 +350,9 @@ dbbinsreg = function(
     breaks = NULL
   } else if (is.numeric(binspos)) {
     # Manual knot positions
+    if (any(!is.finite(binspos))) {
+      stop("binspos manual knots must be finite numeric values", call. = FALSE)
+    }
     partition_method = "manual"
     breaks = sort(binspos)
     nbins = length(breaks) - 1
@@ -443,12 +456,30 @@ dbbinsreg = function(
   backend_info = detect_backend(conn)
   backend = backend_info[["name"]]
 
+  # Select one estimation sample before choosing bins, computing geometry, or
+  # constructing either model. In particular, excluded nuisance/cluster rows
+  # must not determine knots or survive in the reported bin means and counts.
+  sample_vars = unique(c(y_name, x_name, controls, fe,
+    if (isTRUE(ci) || isTRUE(cb)) cluster_var))
+  valid_source = filter_estimation_sample(paste("FROM", table_name), sample_vars, conn = conn)
+  project_vars = paste(unique(c(sample_vars, cluster_var)), collapse = ", ")
+  table_name = paste0("(SELECT ", project_vars, " ", valid_source, ") dbbinsreg_sample")
+
   # Geometry, spline powers and plotted contrasts must use the same local x
   # coordinates. At a large location even AVG(x), or evaluating a raw spline
   # covariance, can lose all of the variation within a bin. Keep a separate
   # running column so a source x reused as a cluster or FE retains its keys.
+  backend_info = detect_backend(conn)
+  backend = backend_info[["name"]]
+  count_fields = if (partition_method != "manual") {
+    distinct_x_sql = paste0("SELECT DISTINCT ", x_name, " FROM ", table_name,
+      " WHERE ", x_name, " IS NOT NULL AND ", y_name, " IS NOT NULL")
+    if (backend != "sqlserver") distinct_x_sql = sql_limit(distinct_x_sql, B + 1L, backend)
+    paste0(", ", sql_count_expr(backend), " AS n, (SELECT COUNT(*) FROM (",
+      distinct_x_sql, ") dbbinsreg_u) AS n_unique")
+  } else ""
   bounds = dbGetQuery(conn, paste0("SELECT MIN(", sql_cast_double(x_name, conn),
-    ") AS lo, MAX(", sql_cast_double(x_name, conn), ") AS hi FROM ", table_name,
+    ") AS lo, MAX(", sql_cast_double(x_name, conn), ") AS hi", count_fields, " FROM ", table_name,
     " WHERE ", x_name, " IS NOT NULL AND ", y_name, " IS NOT NULL"))
   lo = as.numeric(bounds[["lo"]])
   hi = as.numeric(bounds[["hi"]])
@@ -494,22 +525,23 @@ dbbinsreg = function(
   # If user provides explicit randcut, use that regardless of row count.
   # This avoids expensive NTILE() or min/max scans on very large datasets.
   
-  # Get backend for SQL dialect
-  backend_info = detect_backend(conn)
-  backend = backend_info[["name"]]
-  
   sampled = FALSE
   sampled_table_name = NULL
   n_rows_orig = NULL  # Track original dataset size
   if (partition_method != "manual") {
-    # Get row count and unique x count in one query
-    count_expr = sql_count_expr(backend)
-    count_sql = glue("
-      SELECT {count_expr} AS n, COUNT(DISTINCT {x_name}) AS n_unique
-      FROM {table_name} 
-      WHERE {x_name} IS NOT NULL AND {y_name} IS NOT NULL
-    ")
-    counts = dbGetQuery(conn, count_sql)
+    # Reuse the single-pass bounds+counts query when x_origin == 0
+    counts = if (x_origin == 0) bounds else {
+      count_expr = sql_count_expr(backend)
+      distinct_x_sql = paste0("SELECT DISTINCT ", x_name, " FROM ", table_name,
+        " WHERE ", x_name, " IS NOT NULL AND ", y_name, " IS NOT NULL")
+      if (backend != "sqlserver") distinct_x_sql = sql_limit(distinct_x_sql, B + 1L, backend)
+      count_sql = glue("
+        SELECT {count_expr} AS n, (SELECT COUNT(*) FROM ({distinct_x_sql}) dbbinsreg_u) AS n_unique
+        FROM {table_name}
+        WHERE {x_name} IS NOT NULL AND {y_name} IS NOT NULL
+      ")
+      dbGetQuery(conn, count_sql)
+    }
     n_rows = counts[["n"]]
     n_rows_orig = n_rows  # Store original size
     n_unique_x = counts[["n_unique"]]
@@ -542,8 +574,9 @@ dbbinsreg = function(
       sample_size = max(10000L, ceiling(n_rows * effective_randcut))  # at least 10k rows
       where_clause = sprintf("%s IS NOT NULL AND %s IS NOT NULL", x_name, y_name)
       
-      # Auto-enable sample_fit when NULL and s > 0
-      if (is.null(sample_fit) && smooth > 0) {
+      # Auto-enable sample_fit when NULL and any fitted model has s > 0
+      any_smooth = (isTRUE(points_on) && points_s > 0L) || (isTRUE(line_on) && line_s > 0L)
+      if (is.null(sample_fit) && any_smooth) {
         sample_fit = TRUE
         message(
           "Note: Using sampled data for spline regression (s > 0).",
@@ -551,9 +584,16 @@ dbbinsreg = function(
           "\n  Or, use the full dataset by setting `sample_fit = FALSE`.")
       }
       
-      # If sample_fit and smooth > 0, sample all columns into temp table
-      # Otherwise just sample x for break computation
-      if (isTRUE(sample_fit) && smooth > 0) {
+      # Compute breaks based on partition method
+      lo_local = lo - x_origin
+      hi_local = hi - x_origin
+      has_full_bounds = length(lo_local) == 1L && length(hi_local) == 1L &&
+        all(is.finite(c(lo_local, hi_local)))
+
+      # If sample_fit and any_smooth, sample all columns into temp table
+      # Otherwise just sample x for break computation (skipped for equal-width
+      # when full-sample bounds are already known).
+      if (isTRUE(sample_fit) && any_smooth) {
         # Create temp table with sampled data (all columns needed for regression)
         sample_table_base = sprintf("__dbbinsreg_%s_sample", 
                                     gsub("[^0-9]", "", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3")))
@@ -562,7 +602,7 @@ dbbinsreg = function(
         # Pass to sample helper query generator (to handle different SQL dialects)
         sample_sql = sql_sample("*", table_name, where_clause, sample_size, backend)
         create_temp_table_as(conn, sample_table, sample_sql, backend)
-        on.exit(try(drop_table_if_exists(conn, sample_table, backend), silent = TRUE), add = TRUE)
+        on.exit(try(drop_table_if_exists(conn, sample_table, backend), silent = TRUE), add = TRUE, after = FALSE)
         
         # Get x values from sample table for break computation
         x_sample = dbGetQuery(conn, glue("SELECT {x_name} FROM {sample_table}"))[[x_name]]
@@ -573,23 +613,28 @@ dbbinsreg = function(
         if (verbose) {
           message(sprintf("Created sample table with %d rows for regression fitting.", sample_size))
         }
-      } else {
+      } else if (!(partition_method == "equal" && has_full_bounds)) {
         # Just sample x values for break computation
         sample_sql = sql_sample(x_name, table_name, where_clause, sample_size, backend)
         sampled_data = dbGetQuery(conn, sample_sql)
         x_sample = sampled_data[[x_name]]
         sampled_table_name = NULL
+      } else {
+        x_sample = c(lo_local, hi_local)
+        sampled_table_name = NULL
       }
-      
-      # Compute breaks based on partition method
       if (partition_method == "quantile") {
         # Quantile breaks for equal-count bins
         probs = seq(0, 1, length.out = B + 1)
         breaks = quantile(x_sample, probs = probs, na.rm = TRUE, names = FALSE)
+        if (has_full_bounds) {
+          breaks[1L] = min(breaks[1L], lo_local)
+          breaks[length(breaks)] = max(breaks[length(breaks)], hi_local)
+        }
       } else if (partition_method == "equal") {
         # Equal-width breaks
-        x_min = min(x_sample, na.rm = TRUE)
-        x_max = max(x_sample, na.rm = TRUE)
+        x_min = if (has_full_bounds) min(min(x_sample, na.rm = TRUE), lo_local) else min(x_sample, na.rm = TRUE)
+        x_max = if (has_full_bounds) max(max(x_sample, na.rm = TRUE), hi_local) else max(x_sample, na.rm = TRUE)
         breaks = seq(x_min, x_max, length.out = B + 1)
       } else if (partition_method == "log_equal") {
         # Equal-width breaks in log space
@@ -631,6 +676,15 @@ dbbinsreg = function(
   # binsreg-style (p, s) specs
   inputs[["points"]] = if (points_on) c(points_p, points_s) else NULL
   inputs[["line"]] = if (line_on) c(line_p, line_s) else NULL
+
+  # NTILE may split tied x values. Share its assignment across geometry and
+  # separate point/line fits rather than ranking the same rows independently.
+  if (partition_method == "quantile") {
+    binned_table = temp_table_name(basename(tempfile("__dbbinsreg_qbins_")), backend)
+    create_temp_table_as(conn, binned_table, binned_data_sql(inputs), backend)
+    on.exit(try(drop_table_if_exists(conn, binned_table, backend), silent = TRUE), add = TRUE, after = FALSE)
+    inputs[["binned_table"]] = binned_table
+  }
 
   # -------------------------------------------------------------------------
   # DISPATCH: Execute estimation based on points/line parameters
@@ -827,6 +881,8 @@ binned_data_sql = function(inputs) {
   # Others: native LEAST()
   least_fn = if (is_sql_server) {
     function(val, expr) sprintf("(CASE WHEN %s < %d THEN %s ELSE %d END)", expr, val, expr, val)
+  } else if (bd[["name"]] == "sqlite") {
+    function(val, expr) sprintf("MIN(%d, %s)", val, expr)
   } else {
     function(val, expr) sprintf("LEAST(%d, %s)", val, expr)
   }
@@ -843,11 +899,12 @@ binned_data_sql = function(inputs) {
   } else if (partition_method == "equal") {
     # Equal-width bins: manually compute bin number
     # bin = 1 + floor((x - min) / width) but need to handle edge case where x = max
+    value = sql_cast_double(x_name, conn)
     bin_expr = least_fn(
       B,
       sprintf(
-        "1 + FLOOR((%s - (SELECT MIN(%s) FROM %s)) / (((SELECT MAX(%s) FROM %s) - (SELECT MIN(%s) FROM %s)) / %d))",
-        x_name, x_name, table_name, x_name, table_name, x_name, table_name, B
+        "COALESCE(1 + FLOOR((%s - (SELECT MIN(%s) FROM %s)) / NULLIF(((SELECT MAX(%s) FROM %s) - (SELECT MIN(%s) FROM %s)) / %d, 0)), 1)",
+        value, value, table_name, value, table_name, value, table_name, B
       )
     )
   } else if (partition_method == "log_equal") {
@@ -872,12 +929,12 @@ binned_data_sql = function(inputs) {
       if (i == length(inputs[["breaks"]]) - 1) {
         # Last bin: closed on both ends
         case_whens = c(case_whens, 
-                      sprintf("WHEN %s >= %.15g AND %s <= %.15g THEN %d", 
+                      sprintf("WHEN %s >= %.17e AND %s <= %.17e THEN %d",
                              x_name, lower, x_name, upper, i))
       } else {
         # Other bins: left-closed, right-open
         case_whens = c(case_whens, 
-                      sprintf("WHEN %s >= %.15g AND %s < %.15g THEN %d", 
+                      sprintf("WHEN %s >= %.17e AND %s < %.17e THEN %d",
                              x_name, lower, x_name, upper, i))
       }
     }
@@ -919,7 +976,7 @@ binned_data_sql = function(inputs) {
   if (partition_method == "manual") {
     min_break = min(inputs[["breaks"]])
     max_break = max(inputs[["breaks"]])
-    query = paste0(query, sprintf(" AND %s >= %.15g AND %s <= %.15g", 
+    query = paste0(query, sprintf(" AND %s >= %.17e AND %s <= %.17e",
                                    x_name, min_break, x_name, max_break))
   }
   
@@ -933,6 +990,9 @@ binned_data_sql = function(inputs) {
     for (v in fe) {
       query = paste0(query, sprintf(" AND %s IS NOT NULL", v))
     }
+  }
+  if ((isTRUE(inputs[["ci"]]) || isTRUE(inputs[["cb"]])) && length(cluster_var)) {
+    for (v in cluster_var) query = paste0(query, sprintf(" AND %s IS NOT NULL", v))
   }
   
   return(query)
@@ -1021,8 +1081,9 @@ execute_unconstrained_binsreg = function(inputs) {
   # Assign quantile bins once so geometry and all fitting passes share ties.
   conn = inputs[["conn"]]
   backend = detect_backend(conn)[["name"]]
-  binned_sql = binned_data_sql(inputs)
-  if (inputs[["partition_method"]] == "quantile") {
+  cached = inputs[["binned_table"]]
+  binned_sql = if (is.null(cached)) binned_data_sql(inputs) else paste("SELECT * FROM", cached)
+  if (is.null(cached) && inputs[["partition_method"]] == "quantile") {
     binned_table = temp_table_name(basename(tempfile("__dbbinsreg_qbins_")), backend)
     create_temp_table_as(conn, binned_table, binned_sql, backend)
     on.exit(drop_table_if_exists(conn, binned_table, backend), add = TRUE)
@@ -1080,13 +1141,24 @@ execute_unconstrained_binsreg = function(inputs) {
   
   
   # Fit sufficient statistics without materializing the source in R.
+  backend_name = detect_backend(inputs[["conn"]])[["name"]]
+  has_cluster = (isTRUE(inputs[["ci"]]) || isTRUE(inputs[["cb"]])) && length(inputs[["cluster_var"]]) > 0L
+  fit_strategy = if (length(fe)) {
+    "compress"
+  } else if (identical(inputs[["strategy"]], "auto")) {
+    if (degree > 0L && backend_name %in% c("duckdb", "spark")) "moments"
+    else if (is.null(controls) && !has_cluster && nrow(geo) <= min(sum(geo[["n"]]) * 0.6, 1e6)) "compress"
+    else "auto"
+  } else {
+    inputs[["strategy"]]
+  }
   fit = dbreg(
     fml = fml,
     table = relation,
     conn = inputs[["conn"]],
     # Level plots and intervals require explicit FE coefficients/covariance.
     # The demean strategy only provides within-slope inference.
-    strategy = if (length(fe)) "compress" else inputs[["strategy"]],
+    strategy = fit_strategy,
     vcov = if (isTRUE(inputs[["ci"]]) || isTRUE(inputs[["cb"]])) inputs[["vcov_physical"]] else "iid",
     verbose = inputs[["verbose"]]
   )
@@ -1145,85 +1217,32 @@ execute_constrained_binsreg = function(inputs) {
   )
   binned_table = temp_table_name(base_table_name, backend)
   
-  # Step 1: Create binned data table with bin assignments
-  if (partition_method == "quantile") {
-    # NTILE-based quantile binning
-    ntile_expr = sql_ntile(x_name, B)
-    select_sql = glue("
-      SELECT *, {ntile_expr} AS bin
-      FROM {table_name}
-      WHERE {x_name} IS NOT NULL AND {y_name} IS NOT NULL
-    ")
-    create_temp_table_as(conn, binned_table, select_sql, backend)
-  } else if (partition_method == "equal") {
-    # Equal-width binning using window functions for min/max
-    select_sql = glue("
-      SELECT t2.*,
-             CASE WHEN raw_bin > {B} THEN {B} ELSE CAST(raw_bin AS INTEGER) END AS bin
-      FROM (
-        SELECT *,
-               1 + FLOOR(({x_name} - min_x) / NULLIF((max_x - min_x) / {B}, 0)) AS raw_bin
-        FROM (
-          SELECT *,
-                 MIN({x_name}) OVER () AS min_x,
-                 MAX({x_name}) OVER () AS max_x
-          FROM {table_name}
-          WHERE {x_name} IS NOT NULL AND {y_name} IS NOT NULL
-        ) t1
-      ) t2
-    ")
-    create_temp_table_as(conn, binned_table, select_sql, backend)
-  } else if (partition_method == "manual") {
-    # Manual breaks: assign bin based on user-specified breakpoints
-    breaks = inputs[["breaks"]]
-    n_bins = length(breaks) - 1
-    
-    # Build CASE WHEN expression for bin assignment
-    case_parts = character()
-    for (i in 1:(n_bins - 1)) {
-      case_parts = c(case_parts, glue("WHEN {x_name} < {breaks[i + 1]} THEN {i}"))
-    }
-    case_parts = c(case_parts, glue("ELSE {n_bins}"))
-    case_expr = paste("CASE", paste(case_parts, collapse = " "), "END")
-    
-    select_sql = glue("
-      SELECT *, {case_expr} AS bin
-      FROM {table_name}
-      WHERE {x_name} IS NOT NULL AND {y_name} IS NOT NULL
-        AND {x_name} >= {breaks[1]} AND {x_name} <= {breaks[length(breaks)]}
-    ")
-    create_temp_table_as(conn, binned_table, select_sql, backend)
-    
-    # Update B to match number of bins from breaks
-    B = n_bins
+  # Use the same assignment and filtering logic as the unconstrained fit.
+  # A cached quantile table is owned by the outer call and shared by both fits.
+  cached = inputs[["binned_table"]]
+  if (is.null(cached)) {
+    context = list2env(as.list(inputs), parent = emptyenv())
+    context[["table_name"]] = table_name
+    create_temp_table_as(conn, binned_table, binned_data_sql(context), backend)
+    on.exit(drop_table_if_exists(conn, binned_table, backend), add = TRUE)
   } else {
-    stop("partition_method = '", partition_method, "' not supported")
+    binned_table = cached
   }
-  
-  # Ensure cleanup of temp table
-  on.exit(drop_table_if_exists(conn, binned_table, backend), add = TRUE)
-  
-  # Compute bin geometry (boundaries and counts) using direct SQL
-  geo_sql = glue("
-    SELECT bin,
-           MIN({x_name}) AS x_left,
-           MAX({x_name}) AS x_right,
-           MIN({x_name}) / 2.0 + MAX({x_name}) / 2.0 AS x_mid,
-           AVG({x_name}) AS x_mean,
-           {count_expr} AS n
-    FROM {binned_table}
-    GROUP BY bin
-    ORDER BY bin
-  ")
-  geo = dbGetQuery(conn, geo_sql)
-  
-  # Update B to actual number of bins (some may be empty)
+  geo = query_bin_geometry(conn, paste("SELECT * FROM", binned_table), x_name, backend)
+  if (!nrow(geo)) stop("No bins contain usable observations.", call. = FALSE)
+
+  # Requested partition boundaries define manual/equal-width splines, even
+  # when no observation lies near a boundary or an entire bin is empty.
+  knots = if (partition_method == "manual") {
+    inputs[["breaks"]][-c(1L, length(inputs[["breaks"]]))]
+  } else if (partition_method == "equal") {
+    boundaries = seq(min(geo[["x_left"]]), max(geo[["x_right"]]), length.out = B + 1L)
+    boundaries[-c(1L, length(boundaries))]
+  } else {
+    extract_knots(geo)
+  }
   B = nrow(geo)
-  
-  # Step 2: Extract interior knots from bin boundaries
-  # Knots are at x_right[1], x_right[2], ..., x_right[B-1]
-  knots = extract_knots(geo)
-  
+
   # Safety check: remove any NA knots
 
   if (anyNA(knots)) {
@@ -1257,7 +1276,7 @@ execute_constrained_binsreg = function(inputs) {
   # Truncated power terms at each knot: (x - κ_j)₊^r for r = smooth, ..., degree
   # When degree=0 and smooth=0, r=0 creates step functions (bin indicators)
   for (j in seq_along(knots)) {
-    kappa = knots[j]
+    kappa = sprintf("%.17e", knots[j])
     for (r in smooth:degree) {
       col_name = sprintf("knot%d_pow%d", j, r)
       

@@ -8,7 +8,7 @@ local({
   d[["y"]] = 2 + d[["x"]] + 0.7 * d[["bin2"]] + sin(d[["g"]]) + stats::rnorm(240)
   breaks = seq(0, 1, length.out = 5)
   d[["b"]] = cut(d[["x"]], breaks, include.lowest = TRUE, right = FALSE)
-  knots = as.numeric(tapply(d[["x"]], d[["b"]], max))[1:3]
+  knots = breaks[2:4]
   d[["k1"]] = pmax(d[["x"]] - knots[1], 0)
   d[["k2"]] = pmax(d[["x"]] - knots[2], 0)
   d[["k3"]] = pmax(d[["x"]] - knots[3], 0)

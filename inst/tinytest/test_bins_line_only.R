@@ -6,7 +6,7 @@ local({
   bins = as.integer(cut(d[["x"]], breaks, include.lowest = TRUE, right = FALSE))
   left = as.numeric(tapply(d[["x"]], bins, min))
   right = as.numeric(tapply(d[["x"]], bins, max))
-  knots = right[1:3]
+  knots = breaks[2:4]
   design = function(x, bin, degree, smooth) {
     if (!smooth) {
       b = factor(bin, levels = seq_len(4))

@@ -12,7 +12,7 @@ local({
       cluster = rep(seq_len(20L), length.out = n))
     breaks = seq(0, 1, length.out = 5L)
     bin = cut(data[["x"]], breaks, include.lowest = TRUE, right = FALSE)
-    knots = as.numeric(tapply(data[["x"]], bin, max))[-4L]
+    knots = breaks[2:4]
     x_mean = as.numeric(tapply(data[["x"]], bin, mean))
     spline = cbind(x1_spline = data[["x"]], vapply(knots,
       function(knot) pmax(data[["x"]] - knot, 0), numeric(n)))

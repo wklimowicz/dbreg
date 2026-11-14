@@ -90,7 +90,9 @@ must satisfy \code{s <= p}.}
 
 \item{binspos}{Bin positioning method. One of either \code{"qs"} (quantile-spaced,
 equal-count bins, the default), \code{"es"} (evenly-spaced, equal-width bins),
-or a numeric vector of knot positions for manual specification.}
+or a numeric vector of knot positions including both outer endpoints for
+manual specification. Interior manual/equal-width boundaries define spline
+knots even when there are no observations near a boundary.}
 
 \item{randcut}{Numeric in the range \verb{(0,1]}. Controls the random sampling
 fraction for bin boundary computation on large datasets. If \code{NULL} (the
@@ -132,8 +134,9 @@ for confidence bands. Default is 500. Used when \code{cb = TRUE}.}
 models use compression to keep level coefficients and joint covariance.
 Spline models construct the row-level basis before fitting.}
 
-\item{plot}{Logical. If \code{TRUE} (default), a plot is produced as a side effect.
-Set to \code{FALSE} to suppress plotting.}
+\item{plot}{Logical. If \code{TRUE} (the default), then a plot is automatically
+produced alongside the return \code{dbbinsreg} data object; see
+\code{\link{plot.dbbinsreg}}.}
 
 \item{verbose}{Logical. Print auto strategy and progress messages to the
 console? Defaults to \code{FALSE}. This can be overridden for a single call
@@ -206,6 +209,10 @@ not automatically select the IMSE-optimal number of bins. Rather, users must
 specify \code{nbins} manually (with a default of value of 20). For guidance
 on bin selection, see \code{\link[binsreg]{binsregselect}} or Cattaneo et al.
 (2024).
+
+Bin selection, geometry and fitting use the same complete-case sample,
+including controls, fixed effects and requested clustering variables.
+Separate point and line fits share one quantile-bin assignment.
 }
 
 \subsection{Smoothness constraints}{

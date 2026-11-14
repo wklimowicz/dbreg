@@ -777,6 +777,9 @@ detect_backend = function(conn) {
   if (inherits(conn, "duckdb_connection")) {
     return(list(name = "duckdb", supports_count_big = FALSE, is_databricks = FALSE))
   }
+  if (inherits(conn, "SQLiteConnection")) {
+    return(list(name = "sqlite", supports_count_big = FALSE, is_databricks = FALSE))
+  }
   if (inherits(conn, "BigQueryConnection")) {
     return(list(name = "bigquery", supports_count_big = FALSE, is_databricks = FALSE))
   }
@@ -951,8 +954,8 @@ sql_sample = function(select_clause, table_name, where_clause, n, backend) {
     # DuckDB: efficient reservoir sampling
     glue("SELECT {select_clause} FROM {table_name} {where_sql} USING SAMPLE {n} ROWS")
   } else if (backend == "spark") {
-    # Spark SQL: TABLESAMPLE with ROWS
-    glue("SELECT {select_clause} FROM {table_name} TABLESAMPLE ({n} ROWS) {where_sql}")
+    # Spark SQL: TABLESAMPLE with ROWS (wrap table_name so aliased subqueries parse)
+    glue("SELECT {select_clause} FROM (SELECT * FROM {table_name}) TABLESAMPLE ({n} ROWS) {where_sql}")
   } else if (backend %in% c("athena", "presto", "trino")) {
     # Athena/Presto/Trino: TABLESAMPLE BERNOULLI only supports percentages
     # Fall back to ORDER BY RANDOM() for exact row counts

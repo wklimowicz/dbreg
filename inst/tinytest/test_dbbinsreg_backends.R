@@ -119,6 +119,7 @@ if (!requireNamespace("RSQLite", quietly = TRUE)) {
 
 lite = dbConnect(RSQLite::SQLite(), ":memory:")
 duck = dbConnect(duckdb::duckdb())
+expect_identical(dbreg:::detect_backend(lite)[["name"]], "sqlite")
 
 # Integer running variable: no integer division in the basis or geometry
 set.seed(1)
@@ -133,6 +134,16 @@ for (pts in list(c(0, 0), c(1, 0))) {
                 points = pts, plot = FALSE)[["points"]]
   expect_equal(a, b, tolerance = 1e-8,
                info = paste("SQLite matches DuckDB, points =", deparse(pts)))
+}
+
+# Both dispatches use SQLite's scalar MIN for the shared equal-width query.
+for (pts in list(c(0, 0), c(1, 1))) {
+  a = dbbinsreg(y ~ x, conn = lite, table = "int_dat", binspos = "es", nbins = 3,
+    points = pts, plot = FALSE)
+  b = dbbinsreg(y ~ x, conn = duck, table = "int_dat", binspos = "es", nbins = 3,
+    points = pts, plot = FALSE)
+  expect_equal(a[["points"]], b[["points"]], tolerance = 1e-8)
+  expect_equal(a[["knots"]], b[["knots"]], tolerance = 1e-12)
 }
 
 dbDisconnect(lite)

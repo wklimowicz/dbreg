@@ -14,7 +14,7 @@ local({
   left = as.numeric(tapply(dx, bin, min))
   right = as.numeric(tapply(dx, bin, max))
   means = as.numeric(tapply(dx, bin, mean))
-  knots = right[-4L]
+  knots = seq(min(dx), max(dx), length.out = 5)[2:4]
   grid = unlist(Map(function(lo, hi) seq(lo, hi, length.out = 3), left, right))
   grid_bin = rep(1:4, each = 3)
   basis = function(x, bin, spec) {

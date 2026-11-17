@@ -24,3 +24,12 @@ expect_equal(gof(dbreg(m ~ x | g, data = dm, strategy = "demean"))[["r2"]],
 dw = data.frame(y = d$y, x = d$x, g = d$g, m = d$w)
 expect_equal(gof(dbreg(y ~ x | g, data = dw, strategy = "demean", weights = "m"))[["r2"]],
   unname(fixest::r2(fixest::feols(y ~ x | g, dw, weights = ~m, fixef.rm = "none"), "r2")), tolerance = 1e-10)
+
+## vcov() is a base matrix for every covariance type and strategy
+for (s in c("moments", "compress")) for (kind in list("iid", "hc1", ~cl)) {
+  fit = dbreg(y ~ x + z, data = d, strategy = s, vcov = kind, weights = "w")
+  expect_true(is.matrix(vcov(fit)) && !isS4(vcov(fit)), info = paste(s, format(kind)))
+  ref = fixest::feols(y ~ x + z, d, weights = ~w, vcov = kind, ssc = full)
+  expect_equal(as.numeric(vcov(fit)), as.numeric(vcov(ref)), tolerance = 1e-9,
+    info = paste(s, format(kind)))
+}

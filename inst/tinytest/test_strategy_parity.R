@@ -33,3 +33,17 @@ for (s in c("moments", "compress")) for (kind in list("iid", "hc1", ~cl)) {
   expect_equal(as.numeric(vcov(fit)), as.numeric(vcov(ref)), tolerance = 1e-9,
     info = paste(s, format(kind)))
 }
+
+## SQLite: compressed cluster SEs with more than 500 cells
+if (requireNamespace("RSQLite", quietly = TRUE)) {
+  conn = DBI::dbConnect(RSQLite::SQLite())
+  DBI::dbWriteTable(conn, "d", d)
+  ref = fixest::feols(y ~ x + z, d, weights = ~w, vcov = ~cl, ssc = full)
+  fit = dbreg(y ~ x + z, conn = conn, table = "d", strategy = "compress",
+    vcov = ~cl, weights = "w")
+  expect_equal(as.numeric(vcov(fit)), as.numeric(vcov(ref)), tolerance = 1e-9)
+  ref = fixest::feols(y ~ x + z | g, d, fixef.rm = "none")
+  fit = dbreg(y ~ x + z | g, conn = conn, table = "d", strategy = "demean")
+  expect_equal(gof(fit)[["r2"]], unname(fixest::r2(ref, "r2")), tolerance = 1e-10)
+  DBI::dbDisconnect(conn)
+}

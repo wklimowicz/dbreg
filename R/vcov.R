@@ -207,7 +207,9 @@ compute_meat_cluster_compress = function(inputs, from_statement, group_cols, com
 # but not for large designs, where fetching (cluster, cell) rows is cheaper.
 # Missing cell keys can't be matched by the join.
 use_cluster_sql = function(n_cells, n_cols, inputs) {
-  n_cols <= 100 && n_cells * n_cols <= 20000 && isTRUE(inputs[["drop_missings"]])
+  # The lookup uploads one UNION ALL arm per cell; SQLite's default cap is 500.
+  n_cols <= 100 && n_cells * n_cols <= 20000 && isTRUE(inputs[["drop_missings"]]) &&
+    (n_cells <= 500L || !inherits(inputs[["conn"]], "SQLiteConnection"))
 }
 
 #' Compressed cluster meats via a score pass in the database

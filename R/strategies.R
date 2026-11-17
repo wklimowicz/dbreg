@@ -172,7 +172,7 @@ execute_demean_strategy = function(inputs) {
     meat = meat
   )
   attr(vcov_mat, "rss") = rss
-  attr(vcov_mat, "tss") = moment_tss(S, yvar)
+  attr(vcov_mat, "tss") = source_tss(inputs)
 
   coeftable = gen_coeftable(betahat, vcov_mat, df_res)
 

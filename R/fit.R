@@ -52,6 +52,23 @@ moment_tss = function(S, y) {
   }
 }
 
+# Total TSS around the (weighted) outcome mean, read from the source. Demeaned
+# moments only carry the within-group sum of squares, so R2 would otherwise
+# differ from the same model fitted by another strategy.
+source_tss = function(inputs) {
+  conn = inputs[["conn"]]
+  y = sql_cast_double(inputs[["yvar"]], conn)
+  w = if (is.null(inputs[["weights"]])) "1.0" else sql_cast_double(inputs[["weights"]], conn)
+  ys = sql_cast_double(paste0("s.", inputs[["yvar"]]), conn)
+  ws = if (is.null(inputs[["weights"]])) "1.0" else sql_cast_double(paste0("s.", inputs[["weights"]]), conn)
+  sql = paste0(
+    "SELECT SUM(", ws, " * (", ys, " - c.m) * (", ys, " - c.m)) AS tss ",
+    "FROM (SELECT * ", inputs[["from_statement"]], ") s ",
+    "CROSS JOIN (SELECT SUM(", w, " * ", y, ") / SUM(", w, ") AS m ", inputs[["from_statement"]], ") c"
+  )
+  as.numeric(DBI::dbGetQuery(conn, sql)[["tss"]])
+}
+
 #' OLS on sufficient statistics
 #'
 #' @param S Cross-moment matrix from [cross_moments()].

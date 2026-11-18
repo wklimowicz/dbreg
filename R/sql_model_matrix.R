@@ -188,7 +188,9 @@ expand_term = function(term, col_info, expand, sep = "_x_", all_terms = characte
     drop_ref = !keep_all_levels
     if (is_interaction && identical(col_info[["types"]][[v]], "factor")) {
       other_term = paste(sort(setdiff(vars, v)), collapse = ":")
-      drop_ref = v %in% fe_vars || other_term %in% all_terms
+      # A fixed effect absorbs its own intercepts, not slopes on its levels: drop
+      # the reference only when the rest of the interaction enters on its own.
+      drop_ref = other_term %in% all_terms || other_term %in% fe_vars
     }
     expand_variable(v, col_info, expand, is_interaction, drop_ref)
   })

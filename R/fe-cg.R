@@ -14,18 +14,39 @@ fe_cg_fetch = function(conn, sql, width, budget, limits) {
 fe_cg_manager = function(conn, resources) {
   factory = fe_projection_tables(conn, resources)
   resources[["peak_tables"]] = max(resources[["peak_tables"]], length(resources[["tables"]]))
-  list(create = function(sql) {
+  create = function(sql) {
     table = factory(sql, character())
     resources[["peak_tables"]] = max(resources[["peak_tables"]], length(resources[["tables"]]))
     table
-  }, drop = function(table) {
+  }
+  list(create = create, drop = function(table) {
     active = as.character(DBI::dbQuoteIdentifier(conn, resources[["tables"]]))
     at = match(table, active)
     if (is.na(at)) stop("SQL CG tried to drop a borrowed table.", call. = FALSE)
     DBI::dbExecute(conn, paste(if (isTRUE(detect_backend(conn)[["is_databricks"]])) "DROP TEMP TABLE" else "DROP TABLE", table))
     resources[["tables"]] = resources[["tables"]][-at]
     invisible(NULL)
-  })
+  }, replace = fe_cg_replace(conn, resources, create))
+}
+
+# Overwrite an owned working table in place where the backend supports it.
+# Every Databricks DDL statement has a fixed cost; replacement saves the DROP.
+fe_cg_replace = function(conn, resources, create) {
+  backend = detect_backend(conn)
+  native = identical(backend[["name"]], "duckdb") || isTRUE(backend[["is_databricks"]])
+  function(table, sql) {
+    if (is.null(table)) return(create(sql))
+    active = as.character(DBI::dbQuoteIdentifier(conn, resources[["tables"]]))
+    at = match(table, active)
+    if (is.na(at)) stop("SQL CG tried to replace a borrowed table.", call. = FALSE)
+    if (!native) {
+      DBI::dbExecute(conn, paste("DROP TABLE", table))
+      resources[["tables"]] = resources[["tables"]][-at]
+      return(create(sql))
+    }
+    DBI::dbExecute(conn, paste("CREATE OR REPLACE TEMP TABLE", table, "AS", sql))
+    table
+  }
 }
 
 fe_cg_control = function() {
@@ -36,7 +57,13 @@ fe_cg_control = function() {
   values
 }
 
-fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, control, create, drop, budget, limits, allow_zero = FALSE, retain_coefficients = FALSE) {
+fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, control, create, drop, budget, limits, allow_zero = FALSE, retain_coefficients = FALSE, replace = NULL, start = NULL, output_scales = NULL) {
+  # Ping-pong between two owned state tables; without in-place replacement
+  # the older table is dropped before its successor is created.
+  if (is.null(replace)) replace = function(table, sql) {
+    if (!is.null(table)) drop(table)
+    create(sql)
+  }
   backend_info = detect_backend(conn)
   sum_sql = function(expr) sql_sum(conn, expr, backend_info)
   number = function(x) sprintf("%.17e", x)
@@ -48,27 +75,26 @@ fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, con
   a = paste0("__cg_a", index)
   direction_names = paste0("__cg_value", index)
   key = "__cg_op,__cg_group"
-  moments = function(source, inputs, outputs, info = NULL) {
-    pieces = vapply(seq_along(ops), function(i) {
-      op = ops[[i]]
-      terms = c(
-        if (is.null(info)) paste0("SQRT(", sum_sql(sprintf("w*(%1$s)*(%1$s)", op[["v"]])), ") AS __cg_scale"),
-        paste(sum_sql(sprintf("w*(%s)*(%s)", op[["v"]], inputs)), "AS", paste0("u", index))
-      )
-      paste0(
-        "SELECT ", i, " AS __cg_op,", op[["f"]], " AS __cg_group,", paste(terms, collapse = ","),
-        " FROM ", source, " GROUP BY ", op[["f"]]
-      )
-    }, character(1))
-    denominator = if (is.null(info)) "u.__cg_scale" else "i.__cg_scale"
-    fields = sprintf("COALESCE(u.u%d/NULLIF(%s,0),0) AS %s", index, denominator, outputs)
-    create(paste0(
-      "SELECT u.__cg_op,u.__cg_group,", denominator, " AS __cg_scale,", paste(fields, collapse = ","),
-      " FROM (", paste(pieces, collapse = " UNION ALL "), ") u",
-      if (!is.null(info)) paste0(" JOIN ", info, " i USING (", key, ")")
-    ))
-  }
-  rows = function(state, coefficients, outputs, subtract = FALSE) {
+  # Weighted group sums of observation columns, one family per operator.
+  sums = function(source, inputs, scale = FALSE) paste(vapply(seq_along(ops), function(i) {
+    op = ops[[i]]
+    terms = c(
+      if (scale) paste0("SQRT(", sum_sql(sprintf("w*(%1$s)*(%1$s)", op[["v"]])), ") AS __cg_scale"),
+      paste(sum_sql(sprintf("w*(%s)*(%s)", op[["v"]], inputs)), "AS", paste0("u", index))
+    )
+    paste0(
+      "SELECT ", i, " AS __cg_op,", op[["f"]], " AS __cg_group,", paste(terms, collapse = ","),
+      " FROM ", source, " GROUP BY ", op[["f"]]
+    )
+  }, character(1)), collapse = " UNION ALL ")
+  scaled = function(denominator, outputs) sprintf("COALESCE(u.u%d/NULLIF(%s,0),0) AS %s", index, denominator, outputs)
+  # The scale-normalized right-hand side and group scales of the source rows.
+  moments = function(source, inputs, outputs) create(paste0(
+    "SELECT u.__cg_op,u.__cg_group,u.__cg_scale,", paste(scaled("u.__cg_scale", outputs), collapse = ","),
+    " FROM (", sums(source, inputs, scale = TRUE), ") u"
+  ))
+  # Observation rows from a coefficient state, as CTE definitions plus a SELECT.
+  rows_parts = function(state, coefficients, outputs, subtract = FALSE, unscale = NULL) {
     ctes = vapply(seq_along(ops), function(i) paste0(
       "cg", i, " AS (SELECT __cg_group,__cg_scale,",
       paste(coefficients, collapse = ","), " FROM ", state, " WHERE __cg_op=", i, ")"
@@ -80,15 +106,41 @@ fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, con
       }, character(1))
       value = paste(terms, collapse = " + ")
       if (subtract) value = paste0("s.", columns[j], "-(", value, ")")
-      paste0("(", value, ") AS ", outputs[j])
+      paste0("(", value, ")", if (length(unscale)) paste0("*(", number(unscale[j]), ")"), " AS ", outputs[j])
     }, character(1))
     joins = vapply(seq_along(ops), function(i) paste0(" LEFT JOIN cg", i, " ON s.", ops[[i]][["f"]], "=cg", i, ".__cg_group"), character(1))
-    create(paste0(
-      "WITH ", paste(ctes, collapse = ","), " SELECT ",
-      paste(paste0("s.", c(identifiers, "w")), collapse = ","), ",", paste(fields, collapse = ","),
+    list(ctes = ctes, select = paste0(
+      "SELECT ", paste(paste0("s.", c(identifiers, "w")), collapse = ","), ",", paste(fields, collapse = ","),
       " FROM ", table, " s", paste(joins, collapse = "")
     ))
   }
+  rows = function(state, coefficients, outputs, subtract = FALSE, unscale = NULL) {
+    parts = rows_parts(state, coefficients, outputs, subtract, unscale)
+    create(paste0("WITH ", paste(parts[["ctes"]], collapse = ","), " ", parts[["select"]]))
+  }
+  # Scale-normalized moments of the rows of `state`, joined onto the state's
+  # own columns `keep`. One query forms A*d (or the certified residual).
+  applied_parts = function(state, coefficients, row_names, outputs, keep, subtract = FALSE) {
+    parts = rows_parts(state, coefficients, row_names, subtract)
+    list(ctes = c(parts[["ctes"]], paste0("cg_rows AS (", parts[["select"]], ")")), select = paste0(
+      "SELECT ", paste(c("u.__cg_op", "u.__cg_group", if (length(keep)) paste0("__cg_st.", keep),
+        scaled("__cg_st.__cg_scale", outputs)), collapse = ","),
+      " FROM (", sums("cg_rows", row_names), ") u JOIN ", state, " USING (", key, ")"
+    ))
+  }
+  applied = function(..., into = NULL) {
+    parts = applied_parts(...)
+    replace(into, paste0("WITH ", paste(parts[["ctes"]], collapse = ","), " ", parts[["select"]]))
+  }
+  # A coefficient state whose vectors are SQL expressions of `source`; the
+  # pending CG update is applied inline with the same double arithmetic.
+  state_of = function(source, gx, rx = NULL, dx = NULL) paste0(
+    "(SELECT __cg_op,__cg_group,__cg_scale,", paste(c(paste(gx, "AS", g),
+      if (length(rx)) paste(rx, "AS", r), if (length(dx)) paste(dx, "AS", d)), collapse = ","),
+    " FROM ", source, ") __cg_st"
+  )
+  # Materialize the next state together with its operator product A*d.
+  advance = function(state, into = NULL) applied(state, d, direction_names, a, c("__cg_scale", g, r, d), into = into)
   info = moments(table, columns, r)
   checked = fetch(paste0("SELECT COUNT(*) AS n,SUM(CASE WHEN __cg_scale IS NULL OR NOT ", sql_is_finite(conn, "__cg_scale"), if (allow_zero) " OR __cg_scale<0 THEN 1 ELSE 0 END) AS bad FROM " else " OR __cg_scale<=0 THEN 1 ELSE 0 END) AS bad FROM ", info), 2L)
   if (!isTRUE(as.numeric(checked[["bad"]]) == 0) || !isTRUE(as.numeric(checked[["n"]]) > 0)) projection_abort("singular", "SQL CG has invalid group scales.")
@@ -101,7 +153,22 @@ fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, con
     projection_abort("system_limit", "SQL CG coefficient state exceeds its resource budget.")
   }
   restarts = 0L
-  state = create(paste("SELECT *,", paste(c(paste(r, "AS", d), paste("0.0 AS", g)), collapse = ","), "FROM", info))
+  spare = NULL
+  joined = if (is.null(start)) advance(state_of(info, rep("0.0", length(columns)), r, r)) else {
+    # Warm start from earlier coefficients (`start$table`, columns c1..cn,
+    # NA multipliers keep a zero start). The residual b-A*g0 is formed as at
+    # a restart; convergence still requires the same certificate.
+    ratio = start[["ratio"]]
+    if (length(ratio) != length(columns) || any(!is.na(ratio) & !is.finite(ratio))) {
+      stop("Invalid SQL CG warm start.", call. = FALSE)
+    }
+    g0 = ifelse(is.na(ratio), "0.0", sprintf("COALESCE(c%d*(%s),0.0)*__cg_scale", index, number(ratio)))
+    source = paste(info, "LEFT JOIN", start[["table"]], "USING (", key, ")")
+    certified = applied(state_of(source, g0), g, columns, r, c("__cg_scale", g), subtract = TRUE)
+    warm = advance(state_of(certified, g, r, r))
+    drop(certified)
+    warm
+  }
   active = rep(TRUE, length(columns))
   floor_rr = (32 * .Machine[["double.eps"]] * scales)^2
   # Restart interval. Restarting every few cycles discards the Krylov space and
@@ -110,10 +177,6 @@ fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, con
   restart_every = control[["restart"]]
   zero_steps = 0L
   for (cycle in seq_len(control[["fe_max_iter"]])) {
-    direction = rows(state, d, direction_names)
-    applied = moments(direction, direction_names, a, info)
-    drop(direction)
-    joined = create(paste0("SELECT s.*,", paste(paste0("a.", a), collapse = ","), " FROM ", state, " s JOIN ", applied, " a USING (", key, ")"))
     moment = fetch(paste("SELECT", paste(c(
       paste(sum_sql(sprintf("%1$s*%1$s", r)), "AS", paste0("rr", index)),
       paste(sum_sql(sprintf("%s*%s", d, a)), "AS", paste0("da", index))
@@ -125,61 +188,61 @@ fe_sql_cg = function(conn, table, columns, identifiers, ops, scales, target, con
     }
     alpha = ifelse(active & da > 0 & rr > floor_rr, rr / da, 0)
     if (any(!is.finite(alpha))) projection_abort("singular", "SQL CG produced a nonfinite step.")
-    updated = create(paste("SELECT", paste(c(
-      key, "__cg_scale",
-      sprintf("(%s+(%s)*%s) AS %s", g, number(alpha), d, g),
-      sprintf("(%s-(%s)*%s) AS %s", r, number(alpha), a, r), d
-    ), collapse = ","), "FROM", joined))
-    drop(joined)
-    drop(applied)
-    drop(state)
-    state = updated
+    # The updated coordinates stay inline until the next materialized state.
+    gx = sprintf("(%s+(%s)*%s)", g, number(alpha), d)
+    rx = sprintf("(%s-(%s)*%s)", r, number(alpha), a)
     zero_steps = if (all(alpha == 0)) zero_steps + 1L else 0L
     restart = cycle %% restart_every == 0L || all(alpha == 0)
     if (cycle %% 4L == 0L || cycle == 1L || cycle == control[["fe_max_iter"]] || restart) {
-      projected = rows(state, g, columns, subtract = TRUE)
-      certificate = moments(projected, columns, r, info)
-      row = fetch(paste("SELECT", paste(sprintf("MAX(ABS(%s))/%s AS r%d", r, number(scales), index), collapse = ","), "FROM", certificate), length(index))
+      settled = state_of(joined, gx)
+      maximum = paste("SELECT", paste(sprintf("MAX(ABS(%s))/%s AS r%d", r, number(scales), index), collapse = ","), "FROM")
+      certified = NULL
+      if (restart) {
+        # A restart seeds the next direction with the certified residual.
+        certified = applied(settled, g, columns, r, c("__cg_scale", g), subtract = TRUE)
+        row = fetch(paste(maximum, certified), length(index))
+      } else {
+        parts = applied_parts(settled, g, columns, r, character(), subtract = TRUE)
+        row = fetch(paste0("WITH ", paste(c(parts[["ctes"]], paste0("cg_certificate AS (", parts[["select"]], ")")),
+          collapse = ","), " ", maximum, " cg_certificate"), length(index))
+      }
       residual_columns = as.numeric(row[1, ])
       residual = max(residual_columns)
       active = residual_columns > target
       if (!is.finite(residual)) projection_abort("singular", "Nonfinite SQL CG certificate.")
       if (residual <= target) {
+        # Only the converged state materializes observation rows, optionally
+        # multiplied back by the caller's column scales.
+        projected = rows(settled, g, columns, subtract = TRUE, unscale = output_scales)
         coefficients = if (retain_coefficients) {
-          fields = sprintf("%s/NULLIF(__cg_scale,0) AS c%d", g, index)
-          create(paste("SELECT", paste(c(key, fields), collapse = ","), "FROM", state))
+          fields = sprintf("%s/NULLIF(__cg_scale,0) AS c%d", gx, index)
+          create(paste("SELECT", paste(c(key, fields), collapse = ","), "FROM", joined))
         } else NULL
-        drop(certificate)
-        drop(state)
+        if (!is.null(certified)) drop(certified)
+        if (!is.null(spare)) drop(spare)
+        drop(joined)
         drop(info)
         return(list(table = projected, cycles = cycle, residual = residual,
           restarts = restarts, method = "cg", coefficients = coefficients))
       }
-      drop(projected)
       if (zero_steps >= 2L) projection_abort("nonconverged", "SQL CG stalled above its equation tolerance.", list(residual = residual, target = target))
       if (restart) {
         restarts = restarts + 1L
-        restarted = create(paste0(
-          "SELECT s.__cg_op,s.__cg_group,s.__cg_scale,", paste(paste0("s.", g), collapse = ","), ",",
-          paste(c(paste0("c.", r, " AS ", r), paste0("c.", r, " AS ", d)), collapse = ","),
-          " FROM ", state, " s JOIN ", certificate, " c USING (", key, ")"
-        ))
-        drop(state)
-        state = restarted
+        restarted = advance(state_of(certified, g, r, r), spare)
+        drop(certified)
+        spare = joined
+        joined = restarted
       }
-      drop(certificate)
     }
     if (!restart) {
-      new_rr = as.numeric(fetch(paste("SELECT", paste(paste(sum_sql(sprintf("%1$s*%1$s", r)), "AS", paste0("r", index)), collapse = ","), "FROM", state), length(index))[1, ])
+      new_rr = as.numeric(fetch(paste("SELECT", paste(paste(sum_sql(sprintf("%1$s*%1$s", rx)), "AS", paste0("r", index)), collapse = ","), "FROM", joined), length(index))[1, ])
       if (any(!is.finite(new_rr)) || any(new_rr < 0)) projection_abort("singular", "SQL CG lost its residual norm.")
       beta = ifelse(active & rr > floor_rr, new_rr / rr, 0)
       if (any(!is.finite(beta))) projection_abort("singular", "SQL CG produced a nonfinite direction.")
-      next_state = create(paste(
-        "SELECT ", paste(c("__cg_op", "__cg_group", "__cg_scale", g, r), collapse = ","), ",",
-        paste(sprintf("((%s)*%s+(%s)*%s) AS %s", number(as.numeric(active)), r, number(beta), d, d), collapse = ","), "FROM", state
-      ))
-      drop(state)
-      state = next_state
+      next_state = advance(state_of(joined, gx, rx,
+        sprintf("((%s)*%s+(%s)*%s)", number(as.numeric(active)), rx, number(beta), d)), spare)
+      spare = joined
+      joined = next_state
     }
   }
   projection_abort("nonconverged", "SQL CG did not converge within its iteration cap.", list(iterations = control[["fe_max_iter"]], target = target))
@@ -207,11 +270,11 @@ dbreg_cg_projections = function(inputs, x_sql, x_names, tol) {
   ops = lapply(fe_columns, function(key) list(f = key, v = "1.0"))
   iterations = restarts = 0L
   for (attempt in 1:2) {
-    projected = fe_sql_cg(conn, centered, columns, identifiers, ops, rep(1, length(columns)), target, control, create, drop, budget, limits)
+    projected = fe_sql_cg(conn, centered, columns, identifiers, ops, rep(1, length(columns)), target, control, create, drop, budget, limits,
+      replace = manager[["replace"]], output_scales = scale)
     iterations = iterations + projected[["cycles"]]
     restarts = restarts + projected[["restarts"]]
-    scaled = create(paste("SELECT", paste(c(identifiers, "w", paste0(columns, "*(", sprintf("%.17e", scale), ") AS ", columns)), collapse = ","), "FROM", projected[["table"]]))
-    drop(projected[["table"]])
+    scaled = projected[["table"]]
     certificate = fe_projection_certificate(conn, scaled, fe_columns, columns, nobs, original_scale)
     shortfall = fe_certificate_shortfall(certificate, tol)
     if (is.finite(shortfall) && shortfall <= 1) break

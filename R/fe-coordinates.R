@@ -684,25 +684,14 @@ dbreg_varying_projections = function(inputs, x_sql, x_names, max_iter, tol) {
         drop,
         budget,
         limits,
-        allow_zero = TRUE
+        allow_zero = TRUE,
+        replace = manager[["replace"]],
+        output_scales = scale
       )
       iterations = iterations + cg[["cycles"]]
       restarts = restarts + cg[["restarts"]]
       retries = retry - 1L
-      projected = create(paste(
-        "SELECT",
-        paste(
-          c(
-            identifiers,
-            "w",
-            paste0(columns, "*(", sprintf("%.17e", scale), ") AS ", columns)
-          ),
-          collapse = ","
-        ),
-        "FROM",
-        cg[["table"]]
-      ))
-      drop(cg[["table"]])
+      projected = cg[["table"]]
       certificate = fe_coordinate_certificate(
         conn,
         projected,

@@ -44,6 +44,8 @@ New features
 
 Bug fixes
 
+- Confidence intervals and predictions validate the requested confidence level.
+
 - `dbbinsreg()` now works on non-DuckDB backends (e.g. Spark, SQLite) for
   unconstrained binscatters. Previously it errored with "In-memory data frames
   are only supported with DuckDB connections".

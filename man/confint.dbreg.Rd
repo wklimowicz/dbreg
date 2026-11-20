@@ -13,7 +13,8 @@
 intervals, either a vector of numbers or a vector of names. If missing,
 all parameters are considered.}
 
-\item{level}{the confidence level required. Default is 0.95.}
+\item{level}{One finite numeric confidence level strictly between zero and
+one. Default is 0.95.}
 
 \item{fe}{Should the fixed effects be included? Default is `FALSE`.}
 

@@ -65,7 +65,8 @@ coef.dbreg = function(object, fe = FALSE, ...) {
 #'   reflect uncertainty in the estimated mean, while `"prediction"` intervals
 #'   additionally account for residual variance. See
 #'   \code{\link[stats]{predict.lm}} for details.
-#' @param level Confidence level for intervals. Default is 0.95.
+#' @param level One finite numeric confidence level strictly between zero and
+#'   one. Default is 0.95.
 #' @param ... Additional arguments (currently unused).
 #' 
 #' @section Predicting on "demean" strategy objects:
@@ -99,6 +100,7 @@ predict.dbreg = function(
   ...
 ) {
   interval = match.arg(interval)
+  if (interval != "none") validate_confidence_level(level)
   strategy = object[["strategy"]] 
 
   # Demean strategy doesn't support intervals (FE uncertainty not available)
@@ -264,7 +266,8 @@ vcov.dbreg = function(object, ...) {
 #' @param parm a specification of which parameters are to be given confidence
 #'   intervals, either a vector of numbers or a vector of names. If missing,
 #'   all parameters are considered.
-#' @param level the confidence level required. Default is 0.95.
+#' @param level One finite numeric confidence level strictly between zero and
+#'   one. Default is 0.95.
 #' @param fe Should the fixed effects be included? Default is `FALSE`.
 #' @param ... Additional arguments. Currently unused, except to capture
 #' superseded arguments.
@@ -272,6 +275,7 @@ vcov.dbreg = function(object, ...) {
 #' @importFrom stats qt
 #' @export
 confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...) {
+  validate_confidence_level(level)
 
   # superseded args handled through ...
   dots = list(...)
@@ -312,3 +316,9 @@ confint.dbreg = function(object, parm, level = 0.95, fe = FALSE, ...) {
   ci
 }
 
+validate_confidence_level = function(level) {
+  if (!is.numeric(level) || length(level) != 1L || !is.finite(level) || level <= 0 || level >= 1) {
+    stop("`level` must lie strictly between zero and one.", call. = FALSE)
+  }
+  invisible(NULL)
+}

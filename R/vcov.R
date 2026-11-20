@@ -25,7 +25,7 @@ compute_vcov = function(
       stop("HC1 requires meat matrix for non-compress strategies")
     }
     scale_hc1 = nobs_orig / df_res
-    vcov_mat = scale_hc1 * (XtX_inv %*% meat %*% XtX_inv)
+    vcov_mat = as.matrix(scale_hc1 * (XtX_inv %*% meat %*% XtX_inv))
     attr(vcov_mat, "type") = "hc1"
   } else if (vcov_type == "cluster") {
     # Cluster-robust (CR1) standard errors

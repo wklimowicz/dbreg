@@ -498,8 +498,12 @@ execute_compress_strategy = function(inputs) {
     v %in% names(compressed_dat) && (is.factor(compressed_dat[[v]]) || is.character(compressed_dat[[v]]))
   }, logical(1))
   register_factor_display(inputs, lapply(setNames(nm = c(design_vars, fe)[is_cat]), function(v) unique(compressed_dat[[v]])))
+  # A fixed effect with one observed level spans exactly the constant.
+  constant_fe = fe[vapply(compressed_dat[fe], nlevels, integer(1)) == 1L]
+  terms = setdiff(c(design_vars, fe), constant_fe)
+  formula = if (length(terms)) reformulate(terms, intercept = intercept || length(constant_fe) > 0L) else ~1
   X = sparse.model.matrix(
-    reformulate(c(design_vars, fe), intercept = intercept),
+    formula,
     compressed_dat
   )
   if (ncol(X) == 0) {

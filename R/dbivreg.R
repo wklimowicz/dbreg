@@ -389,7 +389,7 @@ dbivreg_run_frame = function(inputs, frame, label) {
   dbivreg_finalize_fit(
     inputs = inputs,
     S = cross_moments(moments_df, union_names, yvar, intercept = frame[["intercept"]]),
-    n_total = moments_df[["n_total"]],
+    n_total = as.numeric(moments_df[["n_total"]]),
     n_fe_levels = setNames(
       vapply(seq_along(fe), function(k) as.numeric(moments_df[[sprintf("n_fe%d", k)]]), numeric(1)),
       fe
@@ -435,7 +435,7 @@ execute_iv_compress_strategy = function(inputs) {
   if (verbose) {
     message(if (!is.null(weights)) "[dbivreg] Executing weighted compressed IV SQL\n" else "[dbivreg] Executing compressed IV SQL\n")
   }
-  dat = dbGetQuery(conn, compress_sql)
+  dat = decode_compressed_moments(dbGetQuery(conn, compress_sql))
   if (data_only) {
     dat[["dbreg_cell"]] = NULL
     return(dat)

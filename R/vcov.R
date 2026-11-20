@@ -161,10 +161,12 @@ compute_score_meat = function(
       for (k in seq_len(nrow(pairs))) {
         i = pairs[k, 1]
         j = pairs[k, 2]
-        meat[i, j] = meat[j, i] = res[[sprintf("meat_%d_%d_%d", r, i, j)]]
+        meat[i, j] = meat[j, i] = as.numeric(res[[sprintf("meat_%d_%d_%d", r, i, j)]])
       }
     } else {
-      scores = as.matrix(res[, sprintf("score_%d_%d", r, idx), drop = FALSE])
+      scores = res[, sprintf("score_%d_%d", r, idx), drop = FALSE]
+      scores[] = lapply(scores, as.numeric)
+      scores = as.matrix(scores)
       meat = crossprod(scores)
       dimnames(meat) = list(s_names, s_names)
       attr(meat, "n_clusters") = nrow(res)
@@ -256,10 +258,10 @@ compute_meat_cluster_compress_sql = function(inputs, cells_from, group_cols, cel
     paste(sprintf("SUM(u%d_%d * u%d_%d) AS m%d_%d_%d", fij[["f"]], fij[["i"]], fij[["f"]], fij[["j"]], fij[["f"]], fij[["i"]], fij[["j"]]), collapse = ", "),
     "\nFROM scores"
   )
-  res = dbGetQuery(conn, sql)
+  res = lapply(dbGetQuery(conn, sql), as.numeric)
   lapply(fits, function(f) {
     meat = matrix(0, ncol(Z), ncol(Z), dimnames = list(colnames(Z), colnames(Z)))
-    meat[ij] = unlist(res[1, sprintf("m%d_%d_%d", f, ij[, 1], ij[, 2])], use.names = FALSE)
+    meat[ij] = unlist(res[sprintf("m%d_%d_%d", f, ij[, 1], ij[, 2])], use.names = FALSE)
     meat[ij[, 2:1]] = meat[ij]
     attr(meat, "n_clusters") = res[["n_clusters"]]
     meat
@@ -282,7 +284,10 @@ query_cluster_cells = function(inputs, from_statement, group_cols) {
     from_statement, "\n",
     "GROUP BY ", cluster_var, ", ", group_cols_sql
   )
-  dbGetQuery(conn, sql)
+  cells = dbGetQuery(conn, sql)
+  fields = c("sum_w_gc", "sum_wy_gc")
+  cells[fields] = lapply(cells[fields], as.numeric)
+  cells
 }
 
 #' Cluster meat from cluster-by-cell statistics

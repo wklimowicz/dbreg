@@ -889,7 +889,7 @@ choose_strategy = function(inputs) {
     total_sql = glue(
       "SELECT CAST(COUNT(*) AS BIGINT) AS n FROM (SELECT * {from_statement}) t"
     )
-    total_n = dbGetQuery(conn, total_sql)[["n"]]
+    total_n = as.numeric(dbGetQuery(conn, total_sql)[["n"]])
 
     # Helper to count distinct tuples (works for single or multi-column)
     count_distinct_tuples = function(cols) {
@@ -898,7 +898,7 @@ choose_strategy = function(inputs) {
       sql = glue(
         "SELECT CAST(COUNT(*) AS BIGINT) AS g FROM (SELECT DISTINCT {cols_expr} {from_statement}) t"
       )
-      dbGetQuery(conn, sql)[["g"]]
+      as.numeric(dbGetQuery(conn, sql)[["g"]])
     }
 
     if (length(fe)) {

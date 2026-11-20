@@ -42,7 +42,7 @@ execute_moments_strategy = function(inputs) {
   if (data_only) {
     return(moments_df)
   }
-  n_total = moments_df[["n_total"]]
+  n_total = as.numeric(moments_df[["n_total"]])
 
   S = cross_moments(moments_df, xvar_names, yvar, intercept = frame[["intercept"]])
   vars_all = c(if (frame[["intercept"]]) "(Intercept)", xvar_names)
@@ -134,11 +134,11 @@ execute_demean_strategy = function(inputs) {
   if (data_only) {
     return(demean_df)
   }
-  n_total = demean_df[["n_total"]]
+  n_total = as.numeric(demean_df[["n_total"]])
   n_fe_levels = vapply(seq_along(fe), function(k) {
     val = demean_df[[sprintf("n_fe%d", k)]]
-    if (is.null(val)) 1L else as.integer(val)
-  }, integer(1))
+    if (is.null(val)) 1 else as.numeric(val)
+  }, numeric(1))
 
   S = cross_moments(demean_df, xvar_names, yvar, intercept = FALSE)
   fit = fit_ols(S, yvar, xvar_names, drop_collinear = TRUE, verbose = verbose)
@@ -333,9 +333,9 @@ execute_mundlak_strategy = function(inputs) {
     return(mundlak_df)
   }
 
-  n_total = mundlak_df[["n_total"]]
-  n_fe1 = mundlak_df[["n_fe1"]]
-  n_fe2 = mundlak_df[["n_fe2"]]
+  n_total = as.numeric(mundlak_df[["n_total"]])
+  n_fe1 = as.numeric(mundlak_df[["n_fe1"]])
+  n_fe2 = as.numeric(mundlak_df[["n_fe2"]])
 
   S = cross_moments(mundlak_df, all_regressors, yvar)
   vars_all = c("(Intercept)", all_regressors)
@@ -464,7 +464,7 @@ execute_compress_strategy = function(inputs) {
   if (verbose) {
     message(if (!is.null(weights)) "[dbreg] Executing weighted compress strategy SQL\n" else "[dbreg] Executing compress strategy SQL\n")
   }
-  compressed_dat = dbGetQuery(conn, query_string)
+  compressed_dat = decode_compressed_moments(dbGetQuery(conn, query_string))
   nobs_orig = sum(compressed_dat[["n"]])
   nobs_comp = nrow(compressed_dat)
   compression_ratio = nobs_comp / max(nobs_orig, 1)
@@ -663,7 +663,7 @@ nested_fe_df = function(inputs, from_statement = inputs[["from_statement"]]) {
         0L
       }
     )
-    nested_df = nested_df + max(as.integer(n_levels) - 1L, 0L)
+    nested_df = nested_df + max(as.numeric(n_levels) - 1, 0)
   }
   nested_df
 }

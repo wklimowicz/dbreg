@@ -19,6 +19,8 @@
 #' @param intercept Logical. Include the constant (requires the linear sums).
 #' @keywords internal
 cross_moments = function(moment_df, vars, y, intercept = TRUE) {
+  # Decode DBI integer64 aggregates before assignment drops their class.
+  moment_df = lapply(moment_df, as.numeric)
   nms = c(if (intercept) "(Intercept)", vars, y)
   S = matrix(0, length(nms), length(nms), dimnames = list(nms, nms))
   S[y, y] = moment_df[["sum_wy_sq"]]
@@ -183,4 +185,12 @@ fit_meats = function(fits, frame, ys, inputs) {
 #' @param fit,y A single fit and its outcome name.
 fit_meat = function(fit, frame, y, inputs) {
   fit_meats(list(fit), frame, y, inputs)[[1]]
+}
+
+# Grouping keys must retain their native type, including 64-bit identifiers.
+decode_compressed_moments = function(data) {
+  fields = intersect(c("n", "dbreg_cell", "sum_w", "sum_wy", "sum_wy_sq",
+    "sum_w2", "sum_w2y", "sum_w2y_sq"), names(data))
+  data[fields] = lapply(data[fields], as.numeric)
+  data
 }

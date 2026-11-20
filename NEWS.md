@@ -44,6 +44,8 @@ New features
 
 Bug fixes
 
+- Generated SQL identifiers avoid existing and case-insensitive names.
+
 - `dbbinsreg()` now works on non-DuckDB backends (e.g. Spark, SQLite) for
   unconstrained binscatters. Previously it errored with "In-memory data frames
   are only supported with DuckDB connections".

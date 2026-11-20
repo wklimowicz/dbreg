@@ -154,10 +154,11 @@ predict.dbreg = function(
     }
     terms_rhs = c(terms_rhs, paste0("`", i_cols[["name"]], "`"))
   }
-  unsupported = rep(FALSE, nrow(newdata))
+  unsupported = NULL
   if (strategy == "compress" && length(fe)) {
     stored = object[["data"]][fe]
     constant_fe = fe[vapply(stored, nlevels, integer(1)) == 1L]
+    if (length(constant_fe)) unsupported = rep(FALSE, nrow(newdata))
     for (f in constant_fe) {
       unsupported = unsupported | !(newdata[[f]] %in% levels(stored[[f]]))
     }
@@ -230,7 +231,10 @@ predict.dbreg = function(
 
   # Generate predictions
   fit = as.vector(mm %*% betas)
-  fit[unsupported] = NA_real_
+  if (length(unsupported)) {
+    rows = match(rownames(mm), rownames(newdata))
+    fit[which(unsupported[rows])] = NA_real_
+  }
   if (strategy == "demean") {
     fit = fit + y_group_mean
   }

@@ -9,3 +9,11 @@ for (f in list(y ~ x | g, y ~ 0 + x | g, y ~ x | g + h, y ~ 0 + x | g + h)) {
   other$g[1:2] = c("unseen", NA)
   expect_true(all(is.na(predict(fit, other)[1:2])))
 }
+# Keep the model matrix's row selection when another predictor is missing.
+fit = dbreg(y ~ x | g, data = d, strategy = "compress")
+newdata = d[1:4, ]
+newdata$x[1] = NA_real_
+newdata$g[3] = "unseen"
+expected = unname(predict(lm(y ~ x, d), newdata[-1, ]))
+expected[2] = NA_real_
+expect_equal(predict(fit, newdata), expected)

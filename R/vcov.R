@@ -127,17 +127,33 @@ compute_score_meat = function(
 
   if (vcov_type == "hc1") {
     w_sq = if (is.null(weights_expr)) NULL else as_double(sprintf("(%s) * (%s)", weights_expr, weights_expr))
+    # Project each expression once: a wide residual otherwise repeats twice
+    # in every upper-triangle entry. Keep the original multiplication order.
+    resid_alias = paste0("__dbreg_hc1_r", seq_along(resid))
+    score_alias = rep(NA_character_, length(s_term))
+    present = !is.na(s_term)
+    score_alias[present] = paste0("__dbreg_hc1_s", idx[present])
+    weight_alias = if (is.null(w_sq)) NULL else "__dbreg_hc1_w_sq"
+    row_terms = c(
+      paste(resid, "AS", resid_alias),
+      if (any(present)) paste(s_term[present], "AS", score_alias[present]),
+      if (!is.null(w_sq)) paste(w_sq, "AS", weight_alias)
+    )
+    rows_sql = paste0(
+      ",\ndbreg_hc1_rows AS (SELECT ", paste(row_terms, collapse = ", "),
+      " FROM ", cte_name, ")"
+    )
     pairs = which(upper.tri(diag(length(idx)), diag = TRUE), arr.ind = TRUE)
     terms = unlist(lapply(seq_along(resid), function(r) {
       sprintf(
         "SUM(%s) AS meat_%d_%d_%d",
         vapply(seq_len(nrow(pairs)), function(k) {
-          sql_prod(resid[r], resid[r], s_term[pairs[k, 1]], s_term[pairs[k, 2]], w_sq)
+          sql_prod(resid_alias[r], resid_alias[r], score_alias[pairs[k, 1]], score_alias[pairs[k, 2]], weight_alias)
         }, character(1)),
         r, pairs[, 1], pairs[, 2]
       )
     }))
-    sql = paste0(cte_sql, ",\nmeat AS (SELECT ", paste(terms, collapse = ", "), " FROM ", cte_name, ")\nSELECT * FROM meat")
+    sql = paste0(cte_sql, rows_sql, ",\nmeat AS (SELECT ", paste(terms, collapse = ", "), " FROM dbreg_hc1_rows)\nSELECT * FROM meat")
   } else {
     w = if (is.null(weights_expr)) NULL else as_double(weights_expr)
     terms = unlist(lapply(seq_along(resid), function(r) {

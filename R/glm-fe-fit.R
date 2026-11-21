@@ -246,7 +246,9 @@ dbglm_fe_irls = function(conn, base, x, fe, sizes, nobs, beta, effects,
         Map(function(a, b) a + step * b, effects, delta)
       next_state = dbglm_fe_trial(conn, base, x, fe, next_beta, next_effects, link, newton, cell,
         ops, lookup_manager, materialize = duckdb_bounded)
-      if (isTRUE(next_state[["bad"]] == 0) && is.finite(next_state[["deviance"]]) &&
+      # A clamped trial can lower deviance overall while saturating against
+      # observed outcomes. Backtrack before projecting its working rows.
+      if (dbglm_valid_start(next_state, link) &&
           next_state[["deviance"]] <= current[["deviance"]] +
             dbglm_deviance_allowance(current[["deviance"]])) {
         accepted = TRUE

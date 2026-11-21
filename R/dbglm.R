@@ -844,6 +844,10 @@ predict.dbglm = function(object, newdata = NULL, type = c("link", "response"), .
   type = match.arg(type)
   sample = match.arg(sample)
   if (missing(newdata)) newdata = NULL
+  field = if (type == "link") "__dbglm_saved_eta" else "__dbglm_saved_mu"
+  if (!is.null(prediction_table) && is.null(newdata) && is.null(table) && is.null(path)) {
+    return(export_retained_glm_predictions(object, conn, row_id, prediction_table, field, sample))
+  }
   sql = sql_prediction_requested(conn, table, path, row_id, prediction_table)
   if (sample == "original" && (!is.null(newdata) || sql)) {
     stop("Original-sample prediction uses the retained fitting source.", call. = FALSE)
@@ -851,7 +855,6 @@ predict.dbglm = function(object, newdata = NULL, type = c("link", "response"), .
   if (sql) return(predict_keyed_sql(object, newdata, conn, table, path, row_id, prediction_table, type))
   if (sample == "original") require_inference_rows(object)
   if (is.null(newdata) && !is.null(object[["retained_rows"]])) {
-    field = if (type == "link") "__dbglm_saved_eta" else "__dbglm_saved_mu"
     return(retained_row_values(object, field, if (type == "link") ".link" else ".fitted",
       na.rm = sample == "estimation"))
   }

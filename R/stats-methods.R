@@ -88,7 +88,7 @@ coef.dbreg = function(object, fe = FALSE, ..., collin = FALSE) {
 #'   \code{\link[stats]{predict.lm}} for details.
 #' @param level Confidence level for intervals. Default is 0.95.
 #' @param conn,table,path Optional connection and database prediction source.
-#'   Provide exactly one of newdata, table or path.
+#'   For prediction on new data, provide exactly one of newdata, table or path.
 #' @param row_id Unique nonmissing source key columns for database output.
 #' @param prediction_table Optional new session table owned by the caller.
 #' @param sample Without `newdata`, a retained fit returns the estimation
@@ -116,6 +116,14 @@ coef.dbreg = function(object, fe = FALSE, ..., collin = FALSE) {
 #' are uploaded with explicit SQL types under the prediction upload budget.
 #' Mundlak and IV database output are unavailable.
 #' Use \code{\link{dbreg-prediction}} to preview, collect or close results.
+#' With `dbglm()`, supply `prediction_table` without new data to export
+#' retained fitted values directly. Fit with `retain = "inference"` or
+#' `"all"`, explicit `row_id` columns, and a caller-owned connection.
+#' The export uses the fitted session and keys, honors `sample` and `type`,
+#' and survives closing the fit or prediction result. Drop it explicitly
+#' when finished. Its value column is named `prediction` unless that name
+#' conflicts with a key. Read `prediction_column` from the returned result
+#' for the actual column name.
 #'
 #' Learned character categories use R's `as.character()` labels for R prediction
 #' inputs, preserving the original row keys. Database sources for those categories

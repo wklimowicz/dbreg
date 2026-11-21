@@ -334,8 +334,12 @@ predict_keyed_sql = function(object, newdata, conn, table, path, row_id, predict
     name = prediction_table
     lease = retain_fit_resources(resources, character(), session = inherited[["session"]])
   }
+  keyed_prediction_result(conn, name, row_id, prediction, lease)
+}
+
+keyed_prediction_result = function(conn, table, row_id, prediction, lease) {
   attr(conn, "dbreg_resource_lease") = lease
-  structure(list(conn = conn, table = name, row_id = row_id, prediction_column = prediction,
+  structure(list(conn = conn, table = table, row_id = row_id, prediction_column = prediction,
     resource_state = lease), class = "dbreg_prediction")
 }
 

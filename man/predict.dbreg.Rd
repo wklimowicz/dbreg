@@ -56,7 +56,7 @@ For demeaned models, the available outcome is adjusted before projection.
 Nonfinite offsets return `NA`; group projections omit those rows.}
 
 \item{conn, table, path}{Optional connection and database prediction source.
-Provide exactly one of newdata, table or path.}
+For prediction on new data, provide exactly one of newdata, table or path.}
 
 \item{row_id}{Unique nonmissing source key columns for database output.}
 
@@ -93,6 +93,14 @@ Date columns or canonical ISO date strings; malformed strings produce missing
 predictions.
 Mundlak and IV database output are unavailable.
 Use \code{\link{dbreg-prediction}} to preview, collect or close results.
+With `dbglm()`, supply `prediction_table` without new data to export
+retained fitted values directly. Fit with `retain = "inference"` or
+`"all"`, explicit `row_id` columns, and a caller-owned connection.
+The export uses the fitted session and keys, honors `sample` and `type`,
+and survives closing the fit or prediction result. Drop it explicitly
+when finished. Its value column is named `prediction` unless that name
+conflicts with a key. Read `prediction_column` from the returned result
+for the actual column name.
 }
 
 \section{Learned fixed effects}{

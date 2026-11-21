@@ -99,6 +99,40 @@ materialize_glm_rows = function(conn, session, sql, keys, row_id, label) {
     row_id = row_id, label = label, resource_state = lease), class = "dbreg_glm_rows")
 }
 
+export_retained_glm_predictions = function(object, conn, row_id, prediction_table, field, sample) {
+  require_inference_rows(object)
+  fit_keys = object[["row_id"]]
+  if (is.null(fit_keys) || (!is.null(row_id) && !identical(row_id, fit_keys))) {
+    stop("Retained prediction exports require the fit's explicit row_id columns.", call. = FALSE)
+  }
+  fit_lease = object[["resource_state"]]
+  owner = retained_fit_connection(fit_lease)
+  if (!is.null(conn) && !resource_same_connection(conn, owner)) {
+    stop("Retained prediction exports require the fitted owning session.", call. = FALSE)
+  }
+  conn = owner
+  session = fit_lease[["session"]]
+  if (isTRUE(session[["own_conn"]])) {
+    stop("Prediction exports require a caller-owned connection.", call. = FALSE)
+  }
+  validate_sample_args(fit_keys, prediction_table, conn, NULL, FALSE, FALSE)
+  if (sample_table_exists(conn, prediction_table)) {
+    stop("Prediction export table already exists.", call. = FALSE)
+  }
+  rows = object[["retained_rows"]]
+  q = function(x) as.character(DBI::dbQuoteIdentifier(conn, x))
+  prediction = safe_identifiers("prediction", taken = fit_keys, fold_case = folds_identifier_case(conn))
+  fields = c(fit_keys, prediction)
+  select = c(paste(q(rows[["keys"]]), "AS", q(fit_keys)), paste(q(field), "AS", q(prediction)))
+  sql = paste("SELECT", paste(select, collapse = ","), "FROM", rows[["table"]],
+    if (sample == "estimation") "WHERE __dbglm_estimated")
+  resources = fit_resources()
+  resources[["conn"]] = conn
+  DBI::dbExecute(conn, sql_sample_table(conn, prediction_table, sql, fields))
+  lease = retain_fit_resources(resources, character(), session)
+  keyed_prediction_result(conn, prediction_table, fit_keys, prediction, lease)
+}
+
 #' @rdname fitted.dbreg
 #' @export
 fitted.dbglm = function(object, ...) {
